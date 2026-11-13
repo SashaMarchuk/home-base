@@ -1,0 +1,50 @@
+name: base-checks
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+      - name: No secrets in the tree or the history
+        run: gitleaks git --no-banner --redact .
+      - name: No home-directory paths
+        run: |
+          pat='/Us''ers/'
+          if git grep -nI -e "$pat" -e '/home/runner' -- .; then echo "A home-directory path is tracked."; exit 1; fi
+      - name: No email other than a noreply address
+        run: |
+          hits=$(git grep -hoIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -vE '(@users\.noreply\.github\.com|^noreply@[A-Za-z0-9.-]+)$' || true)
+          if [ -n "$hits" ]; then echo "Emails that are not noreply addresses:"; echo "$hits"; exit 1; fi
+      - name: Every tracked path is listed in base.manifest
+        run: |
+          fail=0
+          while IFS= read -r p; do
+            ok=0
+            while read -r kind path; do
+              case "$kind" in shared|flows|base-only) ;; *) continue ;; esac
+              case "$path" in
+                */) case "$p" in "$path"*) ok=1 ;; esac ;;
+                *\**) case "$p" in $path|$path/*) ok=1 ;; esac ;;
+                *) if [ "$p" = "$path" ]; then ok=1; else case "$p" in "$path"/*) ok=1 ;; esac; fi ;;
+              esac
+              [ $ok = 1 ] && break
+            done < base.manifest
+            [ $ok = 1 ] || { echo "Not listed in base.manifest: $p"; fail=1; }
+          done < <(git ls-files)
+          exit $fail
+      - name: Tests
+        run: scripts/tests/run.sh
+      - name: Home checks stay silent here
+        run: |
+          test ! -f home.config
+          scripts/home-sweep --same-repo

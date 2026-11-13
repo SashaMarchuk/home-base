@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""Fake `gh` for tests and replays. No network.
+
+Implements the REST routes the home scripts use through `gh api`, plus
+`gh label create` and `gh api user`. State lives in $GH_STUB_DIR (required):
+  <dir>/<owner>__<repo>/issues/<n>.json   one issue with its comments
+  <dir>/calls.log                          one JSON line per call
+Login: $GH_STUB_LOGIN (default "owner"). Errors exit 1 with a message on stderr,
+like the real CLI.
+"""
+import fcntl, json, os, re, subprocess, sys, time
+from datetime import datetime, timezone
+from urllib.parse import urlsplit, parse_qs, unquote
+
+D = os.environ.get("GH_STUB_DIR")
+if not D:
+    sys.stderr.write("gh stub: GH_STUB_DIR is not set\n"); sys.exit(1)
+os.makedirs(D, exist_ok=True)
+LOGIN = os.environ.get("GH_STUB_LOGIN", "owner")
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def log(argv, verdict):
+    line = json.dumps({"ts": now(), "tool": "gh", "argv": argv, "verdict": verdict})
+    for p in [os.path.join(D, "calls.log"), os.environ.get("STUB_CALLS_JSONL")]:
+        if p:
+            with open(p, "a") as f:
+                f.write(line + "\n")
+
+
+def die(msg, code=1):
+    sys.stderr.write(msg.rstrip() + "\n"); sys.exit(code)
+
+
+class Store:
+    def __init__(self):
+        self.lockf = open(os.path.join(D, ".lock"), "w")
+        fcntl.flock(self.lockf, fcntl.LOCK_EX)
+
+    def rdir(self, owner, repo):
+        p = os.path.join(D, f"{owner}__{repo}", "issues")
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    def next_id(self, name):
+        p = os.path.join(D, name)
+        n = int(open(p).read()) + 1 if os.path.exists(p) else 1
+        open(p, "w").write(str(n))
+        return n
+
+    def issues(self, owner, repo):
+        p = self.rdir(owner, repo)
+        out = []
+        for f in sorted(os.listdir(p), key=lambda x: int(x.split(".")[0])):
+            out.append(json.load(open(os.path.join(p, f))))
+        return out
+
+    def get(self, owner, repo, n):
+        p = os.path.join(self.rdir(owner, repo), f"{n}.json")
+        if not os.path.exists(p):
+            die("gh: Not Found (HTTP 404)")
+        return json.load(open(p))
+
+    def put(self, owner, repo, issue):
+        p = os.path.join(self.rdir(owner, repo), f"{issue['number']}.json")
+        json.dump(issue, open(p, "w"), indent=1)
+
+    def labels_path(self, owner, repo):
+        return os.path.join(D, f"{owner}__{repo}", "labels.json")
+
+    def labels(self, owner, repo):
+        p = self.labels_path(owner, repo)
+        return json.load(open(p)) if os.path.exists(p) else []
+
+    def set_labels(self, owner, repo, labels):
+        os.makedirs(os.path.dirname(self.labels_path(owner, repo)), exist_ok=True)
+        json.dump(labels, open(self.labels_path(owner, repo), "w"), indent=1)
+
+    def find_comment(self, owner, repo, cid):
+        for i in self.issues(owner, repo):
+            for c in i["comments"]:
+                if c["id"] == cid:
+                    return i, c
+        die("gh: Not Found (HTTP 404)")
+
+
+def public_issue(owner, repo, i):
+    o = {k: v for k, v in i.items() if k != "comments"}
+    o["comments"] = len(i["comments"])
+    o["labels"] = [{"name": n} for n in i["labels"]]
+    o["html_url"] = f"https://github.com/{owner}/{repo}/issues/{i['number']}"
+    o["repository_url"] = f"https://api.github.com/repos/{owner}/{repo}"
+    o["user"] = {"login": i.get("author", LOGIN)}
+    return o
+
+
+def public_comment(owner, repo, i, c):
+    o = dict(c)
+    o["user"] = {"login": c.get("author", LOGIN)}
+    o["html_url"] = f"https://github.com/{owner}/{repo}/issues/{i['number']}#issuecomment-{c['id']}"
+    o["issue_url"] = f"https://api.github.com/repos/{owner}/{repo}/issues/{i['number']}"
+    return o
+
+
+def typed(v):
+    if v in ("true", "false"):
+        return v == "true"
+    if v == "null":
+        return None
+    if re.fullmatch(r"-?\d+", v):
+        return int(v)
+    if v.startswith("@"):
+        return open(v[1:]).read()
+    return v
+
+
+def parse_fields(pairs):
+    body = {}
+    for raw, kind in pairs:
+        k, _, v = raw.partition("=")
+        val = typed(v) if kind == "F" else v
+        if k.endswith("[]"):
+            body.setdefault(k[:-2], []).append(val)
+        else:
+            body[k] = val
+    return body
+
+
+def api(argv):
+    method, fields, jq, inp, endpoint = None, [], None, None, None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-X", "--method"):
+            method = argv[i + 1].upper(); i += 2; continue
+        if a in ("-f", "--raw-field"):
+            fields.append((argv[i + 1], "f")); i += 2; continue
+        if a in ("-F", "--field"):
+            fields.append((argv[i + 1], "F")); i += 2; continue
+        if a in ("-q", "--jq"):
+            jq = argv[i + 1]; i += 2; continue
+        if a in ("-H", "--header", "--hostname", "--cache", "-t", "--template"):
+            i += 2; continue
+        if a == "--input":
+            inp = argv[i + 1]; i += 2; continue
+        if a in ("--paginate", "--slurp", "--silent", "-i", "--include", "--verbose"):
+            i += 1; continue
+        if a.startswith("-"):
+            die(f"gh stub: unsupported flag {a}")
+        endpoint = a; i += 1
+    if endpoint is None:
+        die("gh stub: api needs an endpoint")
+    body = parse_fields(fields)
+    if inp:
+        body.update(json.load(sys.stdin if inp == "-" else open(inp)))
+    if method is None:
+        method = "POST" if body else "GET"
+    url = urlsplit(endpoint.lstrip("/"))
+    path, q = url.path, {k: v[-1] for k, v in parse_qs(url.query).items()}
+    st = Store()
+    out = route(st, method, path, q, body)
+    if out is None:
+        return
+    text = json.dumps(out)
+    if jq:
+        r = subprocess.run(["jq", "-r", jq], input=text, capture_output=True, text=True)
+        sys.stdout.write(r.stdout)
+        if r.returncode:
+            die(r.stderr)
+    else:
+        sys.stdout.write(text + "\n")
+
+
+def route(st, method, path, q, body):
+    if path == "user":
+        return {"login": LOGIN}
+    m = re.fullmatch(r"search/issues", path)
+    if m:
+        return search(st, q.get("q", ""))
+    m = re.fullmatch(r"repos/([^/]+)/([^/]+)(/.*)?", path)
+    if not m:
+        die(f"gh stub: unsupported endpoint {path}")
+    owner, repo, rest = m.group(1), m.group(2), m.group(3) or ""
+    if rest == "":
+        return {"full_name": f"{owner}/{repo}", "private": True, "visibility": "private"}
+    if rest == "/issues" and method == "GET":
+        state = q.get("state", "open")
+        want = [x for x in q.get("labels", "").split(",") if x]
+        out = []
+        for i in st.issues(owner, repo):
+            if state != "all" and i["state"] != state:
+                continue
+            if any(w not in i["labels"] for w in want):
+                continue
+            out.append(public_issue(owner, repo, i))
+        return sorted(out, key=lambda x: -x["number"])
+    if rest == "/issues" and method == "POST":
+        if not body.get("title"):
+            die("gh: Validation Failed (HTTP 422)")
+        n = st.next_id(f"{owner}__{repo}.issue_counter")
+        i = {"number": n, "title": body["title"], "body": body.get("body", ""), "state": "open",
+             "state_reason": None, "labels": list(dict.fromkeys(body.get("labels", []))),
+             "created_at": now(), "updated_at": now(), "closed_at": None, "author": LOGIN, "comments": []}
+        for lb in i["labels"]:
+            ensure_label(st, owner, repo, lb)
+        st.put(owner, repo, i)
+        return public_issue(owner, repo, i)
+    m = re.fullmatch(r"/issues/(\d+)", rest)
+    if m:
+        i = st.get(owner, repo, int(m.group(1)))
+        if method == "GET":
+            return public_issue(owner, repo, i)
+        if method == "PATCH":
+            for k in ("title", "body", "state", "state_reason"):
+                if k in body:
+                    i[k] = body[k]
+            if "labels" in body:
+                i["labels"] = list(body["labels"])
+            i["closed_at"] = now() if i["state"] == "closed" else None
+            i["updated_at"] = now()
+            st.put(owner, repo, i)
+            return public_issue(owner, repo, i)
+    m = re.fullmatch(r"/issues/(\d+)/comments", rest)
+    if m:
+        i = st.get(owner, repo, int(m.group(1)))
+        if method == "GET":
+            return [public_comment(owner, repo, i, c) for c in i["comments"]]
+        if method == "POST":
+            c = {"id": st.next_id("comment_counter"), "body": body.get("body", ""),
+                 "created_at": now(), "updated_at": now(), "author": LOGIN}
+            i["comments"].append(c); i["updated_at"] = now()
+            st.put(owner, repo, i)
+            return public_comment(owner, repo, i, c)
+    m = re.fullmatch(r"/issues/comments/(\d+)", rest)
+    if m:
+        i, c = st.find_comment(owner, repo, int(m.group(1)))
+        if method == "GET":
+            return public_comment(owner, repo, i, c)
+        if method == "PATCH":
+            c["body"] = body.get("body", c["body"]); c["updated_at"] = now()
+            st.put(owner, repo, i)
+            return public_comment(owner, repo, i, c)
+        if method == "DELETE":
+            i["comments"] = [x for x in i["comments"] if x["id"] != c["id"]]
+            st.put(owner, repo, i)
+            return None
+    m = re.fullmatch(r"/issues/(\d+)/labels", rest)
+    if m and method == "POST":
+        i = st.get(owner, repo, int(m.group(1)))
+        for lb in body.get("labels", []):
+            if lb not in i["labels"]:
+                i["labels"].append(lb)
+            ensure_label(st, owner, repo, lb)
+        st.put(owner, repo, i)
+        return [{"name": n} for n in i["labels"]]
+    m = re.fullmatch(r"/issues/(\d+)/labels/(.+)", rest)
+    if m and method == "DELETE":
+        i = st.get(owner, repo, int(m.group(1)))
+        name = unquote(m.group(2))
+        if name not in i["labels"]:
+            die("gh: Label does not exist (HTTP 404)")
+        i["labels"].remove(name)
+        st.put(owner, repo, i)
+        return [{"name": n} for n in i["labels"]]
+    if rest == "/labels" and method == "GET":
+        return st.labels(owner, repo)
+    if rest == "/labels" and method == "POST":
+        ensure_label(st, owner, repo, body["name"], body.get("color", "ededed"), body.get("description", ""))
+        return {"name": body["name"]}
+    if rest == "/pulls" and method == "GET":
+        p = os.path.join(D, f"{owner}__{repo}", "pulls.json")
+        return json.load(open(p)) if os.path.exists(p) else []
+    die(f"gh stub: unsupported route {method} {path}")
+
+
+def ensure_label(st, owner, repo, name, color="ededed", desc=""):
+    labels = st.labels(owner, repo)
+    for lb in labels:
+        if lb["name"] == name:
+            lb["color"], lb["description"] = color or lb["color"], desc or lb.get("description", "")
+            break
+    else:
+        labels.append({"name": name, "color": color, "description": desc})
+    st.set_labels(owner, repo, labels)
+
+
+def search(st, query):
+    terms = query.split()
+    repos, labels, state, kind = [], [], None, None
+    for t in terms:
+        if t.startswith("repo:"):
+            repos.append(t[5:])
+        elif t.startswith("label:"):
+            labels.append(t[6:].strip('"'))
+        elif t in ("is:open", "state:open"):
+            state = "open"
+        elif t in ("is:closed", "state:closed"):
+            state = "closed"
+        elif t == "is:issue":
+            kind = "issue"
+    items = []
+    for full in repos:
+        owner, repo = full.split("/", 1)
+        for i in st.issues(owner, repo):
+            if state and i["state"] != state:
+                continue
+            if any(lb not in i["labels"] for lb in labels):
+                continue
+            items.append(public_issue(owner, repo, i))
+    return {"total_count": len(items), "items": items}
+
+
+def label_create(argv):
+    name, repo, color, desc = argv[0], os.environ.get("GH_REPO"), "ededed", ""
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-R", "--repo"):
+            repo = argv[i + 1]; i += 2
+        elif a in ("-c", "--color"):
+            color = argv[i + 1]; i += 2
+        elif a in ("-d", "--description"):
+            desc = argv[i + 1]; i += 2
+        else:
+            i += 1
+    if not repo:
+        die("gh stub: label create needs --repo")
+    owner, r = repo.split("/", 1)
+    ensure_label(Store(), owner, r, name, color, desc)
+
+
+def main():
+    argv = sys.argv[1:]
+    fail = os.environ.get("GH_STUB_FAIL_MATCH")
+    if fail and re.search(fail, " ".join(argv)):
+        log(argv, "injected-failure")
+        die("gh: Server Error (HTTP 502)")
+    log(argv, "ok")
+    if argv[:1] == ["api"]:
+        return api(argv[1:])
+    if argv[:2] == ["label", "create"]:
+        return label_create(argv[2:])
+    if argv[:2] == ["auth", "status"]:
+        sys.stdout.write(f"Logged in to github.com account {LOGIN} (stub)\n"); return
+    if argv[:2] == ["auth", "switch"]:
+        die("gh stub: refused")
+    die(f"gh stub: unsupported command: {' '.join(argv[:3])}")
+
+
+main()

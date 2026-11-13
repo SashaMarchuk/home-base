@@ -1,0 +1,178 @@
+#!/usr/bin/env perl
+# One definition of the personal-value patterns. Used by the sensitive guard,
+# scripts/checks/run and scripts/home-log.
+#
+# usage: sensitive-patterns [--private FILE] [--terms FILE] [--allow FILE]
+#                           [--name LABEL] [--quiet] [FILE...]
+#   No FILE: reads stdin (reported as LABEL, default "stdin").
+#   Prints "<file>:<line>: <kind> <masked>" per hit; exit 1 on any hit, 0 if none.
+#
+# Kinds: token, card (Luhn), iban (mod 97), phone, document, private, term.
+# URLs are removed before the value patterns run, so links and their ids pass.
+# --private FILE : every non-empty line is a literal that must never appear
+#                  (case-insensitive). The value itself is never printed.
+# --terms FILE   : one entry per line, '#' comments:
+#                  w:<token>   whole word, case-insensitive, raw text
+#                  n:<token>   substring of the normalised line (lower case,
+#                              spaces - _ . removed); store the token normalised
+#                  r:<regex>   perl regex, case-sensitive (use (?i) to ignore case), raw text
+#                  Terms are matched on the raw line, URLs included.
+# --allow FILE   : lines "<path>\t<exact string>\t<reason>"; the exact string is
+#                  removed from lines of that path before the terms run.
+use strict;
+use warnings;
+use utf8;
+
+my ($private_f, $terms_f, $allow_f, $label, $quiet) = (undef, undef, undef, 'stdin', 0);
+my @files;
+while (@ARGV) {
+  my $a = shift @ARGV;
+  if    ($a eq '--private') { $private_f = shift @ARGV; }
+  elsif ($a eq '--terms')   { $terms_f = shift @ARGV; }
+  elsif ($a eq '--allow')   { $allow_f = shift @ARGV; }
+  elsif ($a eq '--name')    { $label = shift @ARGV; }
+  elsif ($a eq '--quiet')   { $quiet = 1; }
+  elsif ($a eq '--')        { push @files, @ARGV; last; }
+  else                      { push @files, $a; }
+}
+
+sub slurp_lines {
+  my ($f) = @_;
+  open(my $fh, '<:encoding(UTF-8)', $f) or die "sensitive-patterns: cannot read $f\n";
+  my @l = map { s/\r?\n$//r } <$fh>;
+  close $fh;
+  return @l;
+}
+
+my @private;
+if (defined $private_f) {
+  die "sensitive-patterns: private-values file missing: $private_f\n" unless -f $private_f;
+  @private = grep { length } map { s/^\s+|\s+$//gr } slurp_lines($private_f);
+}
+
+my (@w, @n, @r);
+if (defined $terms_f) {
+  die "sensitive-patterns: terms file missing: $terms_f\n" unless -f $terms_f;
+  for my $t (slurp_lines($terms_f)) {
+    $t =~ s/^\s+|\s+$//g;
+    next if $t eq '' || $t =~ /^#/;
+    if    ($t =~ /^w:(.+)$/) { push @w, $1; }
+    elsif ($t =~ /^n:(.+)$/) { push @n, lc($1) =~ s/[\s._-]//gr; }
+    elsif ($t =~ /^r:(.+)$/) { push @r, $1; }
+  }
+}
+
+my %allow;
+if (defined $allow_f && -f $allow_f) {
+  for my $l (slurp_lines($allow_f)) {
+    next if $l =~ /^\s*(#|$)/;
+    my ($p, $s) = split /\t/, $l;
+    next unless defined $s && length $s;
+    push @{ $allow{$p} }, $s;
+  }
+}
+
+sub luhn_ok {
+  my ($d) = @_;
+  my ($sum, $alt) = (0, 0);
+  for my $c (reverse split //, $d) {
+    my $x = $c;
+    if ($alt) { $x *= 2; $x -= 9 if $x > 9; }
+    $sum += $x; $alt = !$alt;
+  }
+  return $sum % 10 == 0;
+}
+
+sub iban_ok {
+  my ($s) = @_;
+  my $r = substr($s, 4) . substr($s, 0, 4);
+  $r =~ s/([A-Z])/ord($1) - 55/ge;
+  my $m = 0;
+  $m = ($m * 10 + $_) % 97 for split //, $r;
+  return $m == 1;
+}
+
+sub mask { my ($v) = @_; my $l = length $v; return $l <= 4 ? '****' : substr($v, 0, 2) . ('*' x ($l - 2)); }
+
+my $hits = 0;
+sub hit {
+  my ($file, $ln, $kind, $shown) = @_;
+  $hits++;
+  print "$file:$ln: $kind $shown\n" unless $quiet;
+}
+
+my @token_re = (
+  qr/\bAKIA[0-9A-Z]{16}\b/,
+  qr/\bgh[pousr]_[A-Za-z0-9]{36,}\b/,
+  qr/\bgithub_pat_[A-Za-z0-9_]{40,}\b/,
+  qr/\bglpat-[A-Za-z0-9_-]{20,}\b/,
+  qr/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}\b/,
+  qr/\b[sr]k_live_[A-Za-z0-9]{16,}\b/,
+  qr/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/,
+  qr/\bAIza[0-9A-Za-z_-]{35}\b/,
+  qr/-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  qr/\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._~+\/=-]{20,}/i,
+);
+
+sub scan_line {
+  my ($file, $ln, $raw) = @_;
+  my $line = $raw;
+  # Value patterns ignore link URLs.
+  (my $v = $line) =~ s{\b(?:https?|ftp)://\S+}{ }gi;
+
+  for my $re (@token_re) { hit($file, $ln, 'token', '[masked]') if $v =~ $re; }
+
+  while ($v =~ /(?<![\d\w])((?:\d[ -]?){12,18}\d)(?![\d\w])/g) {
+    my $d = $1 =~ s/[ -]//gr;
+    next if length($d) < 13 || length($d) > 19;
+    hit($file, $ln, 'card', mask($d)) if luhn_ok($d);
+  }
+  while ($v =~ /\b([A-Z]{2}\d{2}[A-Z0-9]{11,30})\b/g) {
+    my $s = $1;
+    hit($file, $ln, 'iban', mask($s)) if iban_ok($s);
+  }
+  while ($v =~ /(\+\d[\d \-()]{8,22}\d)/g) {
+    my $d = $1 =~ s/\D//gr;
+    hit($file, $ln, 'phone', mask($d)) if length($d) >= 10 && length($d) <= 14;
+  }
+  if ($v =~ /\b(?:passport|tax\s+id|id\s+card|licen[cs]e\s+no)\b(.*)$/i) {
+    my $rest = $1;
+    while ($rest =~ /\b([A-Za-z0-9]{6,})\b/g) {
+      my $t = $1;
+      my $digits = () = $t =~ /\d/g;
+      if ($digits >= 2) { hit($file, $ln, 'document', mask($t)); last; }
+    }
+  }
+  for my $p (@private) {
+    hit($file, $ln, 'private', '[private value]') if index(lc $line, lc $p) >= 0;
+  }
+
+  if (@w || @n || @r) {
+    my $t = $line;
+    if (my $al = $allow{$file}) { for my $s (@$al) { $t =~ s/\Q$s\E/ /g; } }
+    for my $x (@w) { hit($file, $ln, 'term', "w:$x") if $t =~ /(?<![A-Za-z0-9_])\Q$x\E(?![A-Za-z0-9_])/i; }
+    my $norm = lc($t) =~ s/[\s._-]//gr;
+    for my $x (@n) { hit($file, $ln, 'term', "n:$x") if index($norm, $x) >= 0; }
+    for my $x (@r) { hit($file, $ln, 'term', "r:$x") if $t =~ /$x/; }
+  }
+}
+
+sub scan_fh {
+  my ($fh, $name) = @_;
+  my $ln = 0;
+  while (my $l = <$fh>) { $ln++; $l =~ s/\r?\n$//; scan_line($name, $ln, $l); }
+}
+
+if (@files) {
+  for my $f (@files) {
+    next if -d $f || !-e $f;
+    next if -B $f && -s $f;            # binary files are not scanned here
+    open(my $fh, '<:encoding(UTF-8)', $f) or next;
+    scan_fh($fh, $f);
+    close $fh;
+  }
+} else {
+  binmode STDIN, ':encoding(UTF-8)';
+  scan_fh(\*STDIN, $label);
+}
+exit($hits ? 1 : 0);

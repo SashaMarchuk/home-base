@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Runs the repo checks on staged content. Enabled by: git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/checks/run" --staged

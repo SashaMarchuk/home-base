@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# home-log: the only writer of task state. The GitHub issue is the record.
+#
+#   home-log new --title T (--body B | --body-file F) [--label L]... [--ready | --status NAME]
+#   home-log start <n> [--resume CMD] [--text T]
+#   home-log checkpoint <n> [--text T | --text-file F] [--park | --blocked REASON |
+#                           --delegated OWNER/REPO#M] [--question Q] [--clear-question]
+#   home-log finish <n> [--text T | --text-file F] [--review | --release REASON]
+#     (on the standing issue labelled dreams: one final comment per run; it stays open)
+#   home-log stub <n> --run-id ID          (used by the session-end hook)
+# Common: --repo OWNER/REPO (default: repo in home.config), --run-id ID.
+#
+# One comment per run, found by its hidden marker:
+#   <!-- home-log run=<id> state=<active|parked|blocked|delegated|final|released|stub> -->
+# A comment without a marker was written by a person.
+# Exit: 0 ok, 2 usage, 3 already claimed, 4 sensitive text, 5 already finished, 6 gh error.
+set -u
+set -o pipefail
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/lib/config"
+
+die() { local c=$1; shift; echo "home-log: $*" >&2; exit "$c"; }
+[ $# -ge 1 ] || die 2 "usage: home-log new|start|checkpoint|finish <n> ... (see the header of this script)"
+VERB=$1; shift
+
+N=""
+case "$VERB" in
+  new) ;;
+  start|checkpoint|finish|stub)
+    [ $# -ge 1 ] || die 2 "$VERB needs the issue number"
+    N=$1; shift
+    case "$N" in ''|*[!0-9]*) die 2 "issue number must be a number, got '$N'" ;; esac ;;
+  *) die 2 "unknown verb '$VERB'" ;;
+esac
+
+REPO=$HOME_REPO; RUN_ARG=""; TEXT=""; TEXT_SET=0; RESUME=""; TITLE=""; BODY=""; BODY_SET=0
+LABELS=(); READY=0; STATUS_NEW=""; PARK=0; BLOCKED=""; DELEGATED=""; QUESTION=""; CLEARQ=0; REVIEW=0; RELEASE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO=$2; shift 2 ;;
+    --run-id) RUN_ARG=$2; shift 2 ;;
+    --text) TEXT=$2; TEXT_SET=1; shift 2 ;;
+    --text-file) TEXT=$(cat "$2") || die 2 "cannot read $2"; TEXT_SET=1; shift 2 ;;
+    --resume) RESUME=$2; shift 2 ;;
+    --title) TITLE=$2; shift 2 ;;
+    --body) BODY=$2; BODY_SET=1; shift 2 ;;
+    --body-file) BODY=$(cat "$2") || die 2 "cannot read $2"; BODY_SET=1; shift 2 ;;
+    --label) LABELS+=("$2"); shift 2 ;;
+    --ready) READY=1; shift ;;
+    --status) STATUS_NEW=$2; shift 2 ;;
+    --park) PARK=1; shift ;;
+    --blocked) BLOCKED=$2; shift 2 ;;
+    --delegated) DELEGATED=$2; shift 2 ;;
+    --question) QUESTION=$2; shift 2 ;;
+    --clear-question) CLEARQ=1; shift ;;
+    --review) REVIEW=1; shift ;;
+    --release) RELEASE=$2; shift 2 ;;
+    *) die 2 "unknown option '$1'" ;;
+  esac
+done
+[ -n "$REPO" ] || die 2 "no repo: set repo=<owner>/<name> in home.config or pass --repo"
+command -v gh >/dev/null 2>&1 || die 6 "gh not found on PATH"
+NEEDS_LABEL=$(cfg labels.needs_owner needs-owner)
+
+gh_api() { gh api "$@" || die 6 "gh api $* failed"; }
+
+# --- sensitive text check (same patterns as the guard and the checks) ---
+scan_text() { # scan_text <text>; exits 4 on a hit
+  local args=() pv bt out
+  pv=$(cfg guard.private_values); [ -n "$pv" ] && [ -f "$pv" ] && args+=(--private "$pv")
+  bt=$(cfg guard.boundary_terms); [ -n "$bt" ] && [ -f "$bt" ] && args+=(--terms "$bt")
+  if ! out=$(printf '%s\n' "$1" | "$HERE/lib/sensitive-patterns" --name text ${args[@]+"${args[@]}"}); then
+    printf '%s\n' "$out" >&2
+    die 4 "text not written: it matches a personal-value or boundary pattern; change the text"
+  fi
+}
+
+# --- run identity ---
+if [ "$REPO" = "$HOME_REPO" ]; then RUNFILE="$HOME_ROOT/.local/runs/$N"
+else RUNFILE="$HOME_ROOT/.local/runs/$(printf '%s' "$REPO" | tr '/' '_')_$N"; fi
+stored_run() { [ -f "$RUNFILE" ] && sed -n 's/^run=//p' "$RUNFILE" | head -1; }
+STORED=""; [ -n "$N" ] && STORED=$(stored_run)
+# start: --run-id > the surface's session id > stored > new UUID.
+# Every later verb: --run-id > the run stored by start (.local/runs/<n>) > session id.
+if [ -n "$RUN_ARG" ]; then RUN=$RUN_ARG
+elif [ "$VERB" != start ] && [ -n "$STORED" ]; then RUN=$STORED
+elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then RUN=$CLAUDE_CODE_SESSION_ID
+elif [ -n "${CODEX_THREAD_ID:-}" ]; then RUN=$CODEX_THREAD_ID
+elif [ -n "$STORED" ]; then RUN=$STORED
+else RUN=$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z'); [ -n "$RUN" ] || RUN="run-$$-$(date +%s)"; fi
+case "$RUN" in *[!A-Za-z0-9._-]*) die 2 "run id may hold only letters, digits, . _ -" ;; esac
+
+if [ -n "${CLAUDECODE:-}" ]; then SURFACE=claude-code
+elif [ -n "${CODEX_THREAD_ID:-}${CODEX_SANDBOX:-}${CODEX_HOME:-}" ]; then SURFACE=codex
+else SURFACE=other; fi
+CWD_SHOWN=${PWD/#$HOME/\~}
+HOSTN=$(hostname -s 2>/dev/null || echo host)
+if [ -z "$RESUME" ]; then
+  case "$SURFACE" in
+    claude-code) RESUME="cd $CWD_SHOWN && claude --resume $RUN" ;;
+    codex) RESUME="cd $CWD_SHOWN && codex resume $RUN" ;;
+    *) RESUME="-" ;;
+  esac
+fi
+
+# --- GitHub reads ---
+comments_json() { gh api --paginate "repos/$REPO/issues/$N/comments?per_page=100" | jq -s 'add // []' || { echo "home-log: cannot read comments of $REPO#$N" >&2; return 6; }; }
+# marker fields of every agent comment: id \t run \t state
+markers() { # markers <comments-json>
+  printf '%s' "$1" | jq -r '.[] | select(.body | test("^<!-- home-log run=")) |
+    (.body | capture("^<!-- home-log run=(?<run>[^ ]+) state=(?<state>[a-z]+) -->")) as $m |
+    "\(.id)\t\($m.run)\t\($m.state)"'
+}
+own_comment_id() { markers "$1" | awk -F'\t' -v r="$RUN" '$2 == r { print $1; exit }'; }
+comment_body() { printf '%s' "$1" | jq -r --argjson id "$2" '.[] | select(.id == $id) | .body'; }
+issue_labels() { gh api "repos/$REPO/issues/$N" --jq '.labels[].name' || { echo "home-log: cannot read $REPO#$N" >&2; return 6; }; }
+issue_state() { gh api "repos/$REPO/issues/$N" --jq '.state' || { echo "home-log: cannot read $REPO#$N" >&2; return 6; }; }
+
+# --- label helpers ---
+add_label() { gh_api -X POST "repos/$REPO/issues/$N/labels" -f "labels[]=$1" >/dev/null; }
+remove_label() { # only if present
+  issue_labels | grep -qxF "$1" || return 0
+  del_label "$1"
+}
+del_label() { # a concurrent run may have removed it already; that is fine
+  gh api -X DELETE "repos/$REPO/issues/$N/labels/$(jq -rn --arg s "$1" '$s|@uri')" >/dev/null 2>&1 || true
+}
+set_status() { # set_status <status-name|none>
+  local l
+  for l in $(issue_labels | grep '^status:'); do
+    [ "$l" = "status:$1" ] && continue
+    del_label "$l"
+  done
+  [ "$1" = none ] || issue_labels | grep -qxF "status:$1" || add_label "status:$1"
+}
+
+# --- comment body ---
+# Keeps the previous text, question and delegation unless replaced.
+old_field() { printf '%s\n' "$1" | sed -n "s/^- $2: //p" | head -1; }
+old_text() { printf '%s\n' "$1" | awk 'f { print } /^$/ && !f { f = 1 }'; }
+build_body() { # build_body <state> <old-body-or-empty>
+  local st=$1 old=$2 q d t
+  q=$(old_field "$old" "Open question for the owner"); d=$(old_field "$old" "delegated"); t=$(old_text "$old")
+  [ -n "$QUESTION" ] && q=$QUESTION
+  [ "$CLEARQ" = 1 ] && q=""
+  [ -n "$DELEGATED" ] && d=$DELEGATED
+  [ "$TEXT_SET" = 1 ] && t=$TEXT
+  printf '<!-- home-log run=%s state=%s -->\n' "$RUN" "$st"
+  printf '**home-log** · %s\n' "$st"
+  printf -- '- run: %s\n- runner: %s · %s · %s\n- resume: %s\n- updated: %s\n' \
+    "$RUN" "$HOSTN" "$SURFACE" "$CWD_SHOWN" "$RESUME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  [ -n "$d" ] && printf -- '- delegated: %s\n' "$d"
+  [ -n "$q" ] && printf -- '- Open question for the owner: %s\n' "$q"
+  printf '\n%s\n' "$t"
+}
+post_comment() { gh_api -X POST "repos/$REPO/issues/$N/comments" -f "body=$1" --jq '.id'; }
+patch_comment() { gh_api -X PATCH "repos/$REPO/issues/comments/$1" -f "body=$2" >/dev/null; }
+save_run() { mkdir -p "$(dirname "$RUNFILE")"; printf 'run=%s\nrepo=%s\n' "$RUN" "$REPO" > "$RUNFILE"; }
+drop_run() { [ "$(stored_run)" = "$RUN" ] && rm -f "$RUNFILE"; return 0; }
+
+[ "$TEXT_SET" = 1 ] && scan_text "$TEXT"
+[ -n "$QUESTION" ] && scan_text "$QUESTION"
+[ -n "$BLOCKED" ] && scan_text "$BLOCKED"
+[ -n "$RELEASE" ] && scan_text "$RELEASE"
+
+case "$VERB" in
+new)
+  [ -n "$TITLE" ] || die 2 "new needs --title"
+  [ "$BODY_SET" = 1 ] || die 2 "new needs --body or --body-file"
+  scan_text "$TITLE"; scan_text "$BODY"
+  st=status:inbox; [ "$READY" = 1 ] && st=status:ready
+  [ -n "$STATUS_NEW" ] && st="status:${STATUS_NEW#status:}"
+  for l in ${LABELS[@]+"${LABELS[@]}"}; do [ "$l" = dreams ] && st=""; done   # the standing Dreams issue is not a task
+  args=(-X POST "repos/$REPO/issues" -f "title=$TITLE" -f "body=$BODY")
+  [ -n "$st" ] && args+=(-f "labels[]=$st")
+  for l in ${LABELS[@]+"${LABELS[@]}"}; do args+=(-f "labels[]=$l"); done
+  gh_api "${args[@]}" --jq '.number'
+  ;;
+
+start)
+  IST=$(issue_state) || exit 6
+  [ "$IST" = open ] || die 2 "$REPO#$N is closed; reopen it or open a new issue"
+  if [ -n "$STORED" ] && [ "$STORED" != "$RUN" ]; then
+    C=$(comments_json) || exit 6
+    if markers "$C" | awk -F'\t' -v r="$STORED" '$2 == r && $3 == "active" { f = 1 } END { exit !f }'; then
+      die 3 "already claimed by run $STORED (see .local/runs/$N)"
+    fi
+  fi
+  C=$(comments_json) || exit 6
+  OWN=$(own_comment_id "$C")
+  if [ -n "$OWN" ]; then
+    ST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+    if [ "$ST" = active ]; then save_run; echo "home-log: $REPO#$N already claimed by this run"; exit 0; fi
+    case "$ST" in final|released) die 5 "this run already finished $REPO#$N" ;; esac
+  fi
+  OTHER=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 != r && $3 == "active" { print $2; exit }')
+  [ -n "$OTHER" ] && die 3 "already claimed by run $OTHER"
+  if [ -n "$OWN" ]; then  # resume of a parked or blocked run
+    patch_comment "$OWN" "$(build_body active "$(comment_body "$C" "$OWN")")"
+  else
+    OWN=$(post_comment "$(build_body active "")") || exit 6
+  fi
+  issue_labels | grep -qxF dreams || set_status claimed
+  sleep "${HOME_LOG_SETTLE:-3}"
+  C=$(comments_json) || exit 6
+  WIN=$(markers "$C" | awk -F'\t' '$3 == "active" { print $1 "\t" $2 }' | sort -n | head -1)
+  if [ -n "$WIN" ] && [ "$(printf '%s' "$WIN" | cut -f2)" != "$RUN" ]; then
+    gh api -X DELETE "repos/$REPO/issues/comments/$OWN" >/dev/null 2>&1
+    die 3 "already claimed by run $(printf '%s' "$WIN" | cut -f2)"
+  fi
+  save_run   # only the winner records the run
+  echo "home-log: claimed $REPO#$N (run $RUN)"
+  ;;
+
+checkpoint)
+  C=$(comments_json) || exit 6
+  OWN=$(own_comment_id "$C")
+  [ -n "$OWN" ] || die 2 "no comment of run $RUN on $REPO#$N; run 'home-log start $N' first"
+  OWNST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+  case "$OWNST" in final|released|stub) die 5 "run $RUN on $REPO#$N is $OWNST; run 'home-log start $N' to work on it again" ;; esac
+  NEWST=active; END=0
+  if [ "$PARK" = 1 ]; then NEWST=parked; END=1
+  elif [ -n "$BLOCKED" ]; then NEWST=blocked; END=1; [ "$TEXT_SET" = 1 ] || { TEXT="Blocked: $BLOCKED"; TEXT_SET=1; }
+  elif [ -n "$DELEGATED" ]; then NEWST=delegated; END=1; fi
+  patch_comment "$OWN" "$(build_body "$NEWST" "$(comment_body "$C" "$OWN")")"
+  case "$NEWST" in parked) set_status parked ;; blocked) set_status blocked ;; delegated) set_status delegated ;; esac
+  [ -n "$QUESTION" ] && add_label "$NEEDS_LABEL"
+  [ "$CLEARQ" = 1 ] && remove_label "$NEEDS_LABEL"
+  [ "$END" = 1 ] && drop_run || save_run
+  echo "home-log: checkpoint $REPO#$N ($NEWST)"
+  ;;
+
+finish)
+  C=$(comments_json) || exit 6
+  OWN=$(own_comment_id "$C")
+  STANDING=0; issue_labels | grep -qxF dreams && STANDING=1   # the standing Dreams issue: one final comment per run, stays open
+  ACTIVE=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 != r && $3 == "active" { print $2; exit }')
+  [ -n "$ACTIVE" ] && die 3 "run $ACTIVE holds an active claim on $REPO#$N; finish from that run, or pass --run-id $ACTIVE to release a dead claim"
+  # A final of another run counts only when it is newer than this run's comment (a reopened issue starts over).
+  OTHERFINAL=$(markers "$C" | awk -F'\t' -v r="$RUN" -v own="${OWN:-0}" '$2 != r && $3 == "final" && $1 + 0 > own + 0 { print $2; exit }')
+  if [ -n "$OTHERFINAL" ] && [ -z "$RELEASE" ] && [ "$STANDING" = 0 ]; then die 5 "already finished by run $OTHERFINAL"; fi
+  NEWST=final; [ -n "$RELEASE" ] && NEWST=released
+  [ -n "$RELEASE" ] && [ "$TEXT_SET" = 0 ] && { TEXT="Released: $RELEASE"; TEXT_SET=1; }
+  OLD=""; [ -n "$OWN" ] && OLD=$(comment_body "$C" "$OWN")
+  CLEARQ=1   # a finished run has no open question
+  if [ -n "$OWN" ]; then patch_comment "$OWN" "$(build_body "$NEWST" "$OLD")"
+  else post_comment "$(build_body "$NEWST" "")" >/dev/null || exit 6; fi
+  remove_label needs-summary
+  remove_label "$NEEDS_LABEL"
+  if [ "$STANDING" = 1 ]; then :
+  elif [ -n "$RELEASE" ]; then set_status ready
+  elif [ "$REVIEW" = 1 ]; then set_status review
+  else
+    set_status none
+    [ "$(issue_state)" = closed ] || gh_api -X PATCH "repos/$REPO/issues/$N" -f state=closed -f state_reason=completed >/dev/null
+  fi
+  drop_run
+  echo "home-log: finished $REPO#$N ($NEWST)"
+  ;;
+
+stub)
+  [ -n "$RUN_ARG" ] || die 2 "stub needs --run-id"
+  C=$(comments_json) || exit 6
+  OWN=$(own_comment_id "$C")
+  [ -n "$OWN" ] || exit 0
+  ST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+  [ "$ST" = active ] || exit 0
+  TEXT="Session ended without a final summary."; TEXT_SET=1
+  patch_comment "$OWN" "$(build_body stub "$(comment_body "$C" "$OWN")")"
+  add_label needs-summary
+  drop_run
+  echo "home-log: stub written on $REPO#$N"
+  ;;
+esac

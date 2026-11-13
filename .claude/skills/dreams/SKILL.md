@@ -1,0 +1,16 @@
+---
+name: dreams
+description: Review past sessions for what this home missed and propose fixes in one PR. Use when the owner says "dreams", "run dreams", "what did the home miss", "learn from past sessions", or when session-start says "dreams: due" with dreams.mode=daily.
+---
+
+# dreams
+
+Reads; proposes; never applies. Merging the PR is the owner's yes.
+
+1. **Standing issue.** Find the open issue labelled `dreams` (`gh api "repos/<repo>/issues?state=open&labels=dreams" --jq '.[] | select(.pull_request|not) | .number'`). None: create it with `scripts/home-log new --title "Dreams" --body "Standing issue: one comment per Dreams run." --label dreams` (the `dreams` label keeps it out of the queue).
+2. **Watermark.** The newest run comment's `read-until: <UTC ISO>` line. No run yet: now minus `dreams.first_window_days` (default 14).
+3. **Input.** Local transcripts under `transcripts.paths` modified after the watermark, skipping any session whose working directory starts with a prefix in `transcripts.exclude`. Where none exist (cloud), the comments of issues closed since the watermark. Nothing newer than the watermark: stop, write nothing.
+4. **Extract** with one subagent on a mid-size model (bulk reading: in an attended run, ask first). Look for: rules the owner stated that are not in `CLAUDE.md`'s home section, a skill or the wiki; corrections the owner repeated; wiki pages contradicted by later sessions. Each finding: one-line reason and the session id, never transcript text.
+5. **PR.** If an open PR labelled `dreams` exists, update its branch; else branch `dreams/<date>`, edit existing pages in place (search before adding), commit, `gh pr create --label dreams`. Never commit to `main`.
+6. **Personal facts.** Never into a PR, issue or commit; the PR may state only how many candidates were found. Attended local run with `facts.sink` set: show the candidates (up to four through the ask tool; more through one private yes/no page) and, on each yes, send it to the sink (the sink's propose and save tools). Unattended or cloud: skip.
+7. **Run comment** on the standing issue, every run that read something: write `scratch/dreams-run.md` with the lines `read-until: <UTC ISO of the newest input read>`, `result: <PR link | no findings>`, `facts: <shown>/<saved>`; then `scripts/home-log start <n>` and `scripts/home-log finish <n> --text-file scratch/dreams-run.md`. On the standing issue `finish` writes this run's final comment and leaves the issue open with no status label; the next run writes a new comment.

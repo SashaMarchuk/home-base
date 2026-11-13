@@ -1,0 +1,144 @@
+# shellcheck shell=bash
+# Fake terminal backend for scripts/term/term.sh. Sourced when TERM_SH_BACKEND=fake.
+# Every tab is a folder $TERM_FAKE_DIR/tabs/<tty>/ holding small files:
+#   tab     tab id                     mode    claude | shell | closed
+#   body    text above the input box   box     what is typed in the box
+#   ghost   a suggestion shown while the box is empty (typing replaces it)
+#   dialog  an open dialog (rows "N. label"); free-text focus in "freetext", typed text in "answer"
+#   headsup a notice with "0: Dismiss" busy  a running turn ("esc to interrupt")
+#   status  status line under the box  swallow  how many next Enters are lost
+#   linger  the process survives /exit pid  the process of the session
+#   drop-typing  typed text is lost (a silently dropped write)
+# Logs: keys (every keystroke), sent (submitted lines), answered (dialog answers).
+# Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd; kills go to $TERM_FAKE_DIR/kills.
+
+[ -n "${TERM_FAKE_DIR:-}" ] || { echo "term-fake: TERM_FAKE_DIR is not set" >&2; exit 2; }
+mkdir -p "$TERM_FAKE_DIR/tabs" "$TERM_FAKE_DIR/proc"
+
+fake_tab() { printf '%s/tabs/%s' "$TERM_FAKE_DIR" "$1"; }
+fake_get() { cat "$(fake_tab "$1")/$2" 2>/dev/null; }
+fake_put() { printf '%s' "$3" > "$(fake_tab "$1")/$2"; }
+fake_live() { # fake_live <tty> <tab>
+  local d; d=$(fake_tab "$1")
+  [ -d "$d" ] && [ "$(fake_get "$1" mode)" != closed ] || return 1
+  [ -z "$2" ] || [ "$(fake_get "$1" tab)" = "$2" ]
+}
+
+be_screen() {
+  local d mode box ghost
+  fake_live "$1" "$2" || return 4
+  d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  [ -f "$d/body" ] && cat "$d/body"
+  if [ "$mode" = shell ]; then printf '$ %s\n' "$(fake_get "$1" box)"; return 0; fi
+  [ -f "$d/headsup" ] && cat "$d/headsup"
+  if [ -f "$d/dialog" ]; then
+    cat "$d/dialog"
+    [ -f "$d/freetext" ] && printf '   > %s\n' "$(fake_get "$1" answer)"
+    return 0
+  fi
+  [ -f "$d/busy" ] && printf '* Working... (esc to interrupt)\n'
+  box=$(fake_get "$1" box); ghost=$(fake_get "$1" ghost)
+  [ -z "$box" ] && [ -n "$ghost" ] && box=$ghost
+  printf '%s\n' "--------------------------------------------------" | sed "s/-/$RULE/g"
+  printf '%s %s\n' "$PROMPT" "$box"
+  printf '%s\n' "--------------------------------------------------" | sed "s/-/$RULE/g"
+  printf '  %s\n' "$(fake_get "$1" status)"
+  printf '\n\n'
+}
+
+be_type() {
+  local d mode n
+  fake_live "$1" "$2" || return 4
+  d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  printf 'type:%s\n' "$3" >> "$d/keys"
+  [ -f "$d/drop-typing" ] && return 0
+  if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
+    if [ -f "$d/freetext" ]; then fake_put "$1" answer "$(fake_get "$1" answer)$3"; return 0; fi
+    case "$3" in
+      [0-9]) n=$3
+        grep -Eq "^[^0-9]*$n\.[[:space:]]+(Type something|Other)" "$d/dialog" && : > "$d/freetext" ;;
+    esac
+    return 0
+  fi
+  if [ "$mode" = claude ] && [ -f "$d/headsup" ] && [ "$3" = 0 ]; then rm -f "$d/headsup"; return 0; fi
+  rm -f "$d/ghost"
+  fake_put "$1" box "$(fake_get "$1" box)$3"
+}
+
+be_key() {
+  local d mode line s pid
+  fake_live "$1" "$2" || return 4
+  d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  printf 'key:%s\n' "$3" >> "$d/keys"
+  case "$3" in
+    bs)
+      if [ -f "$d/freetext" ]; then line=$(fake_get "$1" answer); fake_put "$1" answer "${line%?}"
+      else line=$(fake_get "$1" box); fake_put "$1" box "${line%?}"; fi ;;
+    esc)
+      if [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"; echo cancelled >> "$d/dialog-log"
+      else rm -f "$d/busy"; fi ;;
+    cr)
+      if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
+        if [ -f "$d/freetext" ]; then fake_get "$1" answer >> "$d/answered"; echo >> "$d/answered"
+        else echo "option-1" >> "$d/answered"; fi
+        rm -f "$d/dialog" "$d/freetext" "$d/answer"; return 0
+      fi
+      s=$(fake_get "$1" swallow); s=${s:-0}
+      if [ "$s" -gt 0 ]; then fake_put "$1" swallow "$((s - 1))"; return 0; fi
+      line=$(fake_get "$1" box)
+      printf '%s\n' "$line" >> "$d/sent"
+      fake_put "$1" box ""; rm -f "$d/ghost"
+      if [ "$mode" = claude ] && [ "$line" = /exit ]; then
+        fake_put "$1" mode shell
+        pid=$(fake_get "$1" pid)
+        [ -f "$d/linger" ] || rm -rf "$TERM_FAKE_DIR/proc/$pid"
+      elif [ "$mode" = shell ] && [ "$line" = exit ]; then
+        fake_put "$1" mode closed
+      fi ;;
+  esac
+}
+
+be_open() { # mirrors the real launch: "cd '<dir>' && <command>"
+  local n=1 tty pid cmd cwd d
+  [ -f "$TERM_FAKE_DIR/open-fails" ] && return 1
+  while ! mkdir "$TERM_FAKE_DIR/tabs/ttyf$n" 2>/dev/null; do n=$((n + 1)); done
+  tty=ttyf$n; d=$(fake_tab "$tty"); pid=$((60000 + n))
+  printf 'fake-%s' "$n" > "$d/tab"; printf 'claude' > "$d/mode"; : > "$d/box"
+  printf '%s\n' "$1" >> "$TERM_FAKE_DIR/launches"
+  printf '%s' "$1" > "$d/launch"
+  cmd=${1#* && }
+  cwd=$(printf '%s' "$1" | sed -n "s/^cd '\\([^']*\\)' && .*/\\1/p")
+  printf '%s' "$pid" > "$d/pid"
+  if [ ! -f "$TERM_FAKE_DIR/no-process" ]; then
+    mkdir -p "$TERM_FAKE_DIR/proc/$pid"
+    printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
+    printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$pid/tty"
+    printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$pid/cwd"
+  fi
+  echo "fake-$n $tty"
+}
+
+be_tabs() {
+  local d t
+  for d in "$TERM_FAKE_DIR"/tabs/*; do
+    [ -d "$d" ] || continue
+    t=${d##*/}
+    [ "$(fake_get "$t" mode)" = closed ] && continue
+    [ -f "$d/tab" ] || continue
+    echo "$(cat "$d/tab") $t"
+  done
+}
+
+be_procs() {
+  local d
+  for d in "$TERM_FAKE_DIR"/proc/*; do
+    [ -d "$d" ] || continue
+    echo "${d##*/} $(cat "$d/tty") $(cat "$d/cmd")"
+  done
+}
+be_pid_cmd() { [ -f "$TERM_FAKE_DIR/proc/$1/cmd" ] || return 1; cat "$TERM_FAKE_DIR/proc/$1/cmd"; echo; }
+be_pid_tty() { cat "$TERM_FAKE_DIR/proc/$1/tty" 2>/dev/null; }
+be_pid_cwd() { cat "$TERM_FAKE_DIR/proc/$1/cwd" 2>/dev/null; }
+be_kill() { echo "$1" >> "$TERM_FAKE_DIR/kills"; rm -rf "$TERM_FAKE_DIR/proc/$1"; }
+be_mem_free() { cat "$TERM_FAKE_DIR/mem_free" 2>/dev/null || echo 80; }
+be_uuid() { printf '%08x-0000-4000-8000-%012x\n' "$$" "$RANDOM$RANDOM"; }

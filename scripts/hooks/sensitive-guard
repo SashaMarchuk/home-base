@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# PreToolUse hook for Write, Edit and MultiEdit. Blocks (exit 2) writing a
+# personal value (scripts/lib/sensitive-patterns, plus the private literals of
+# guard.private_values) into any file inside this repo that git does not ignore.
+# New files count. Gitignored paths (.local/, scratch/) and files outside the
+# repo are not checked here.
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd -P)
+. "$HERE/lib/config"
+IN=$(cat)
+FP=$(printf '%s' "$IN" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+[ -n "$FP" ] || exit 0
+case "$FP" in /*) ;; *) FP="$PWD/$FP" ;; esac
+# Resolve the parent directory (the file may not exist yet).
+dir=$(dirname "$FP"); while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+rdir=$(cd "$dir" && pwd -P); RFP="$rdir/${FP#"$dir"/}"
+case "$RFP" in "$HOME_ROOT"/*) ;; *) exit 0 ;; esac
+REL=${RFP#"$HOME_ROOT"/}
+case "$REL" in .git/*) exit 0 ;; esac
+git -C "$HOME_ROOT" check-ignore -q --no-index -- "$REL" 2>/dev/null && exit 0
+TEXT=$(printf '%s' "$IN" | jq -r '[.tool_input.content, .tool_input.new_string, (.tool_input.edits // [] | .[].new_string)] | map(select(. != null)) | join("\n")')
+[ -n "$TEXT" ] || exit 0
+args=()
+pv=$(cfg guard.private_values); [ -n "$pv" ] && [ -f "$pv" ] && args+=(--private "$pv")
+if ! out=$(printf '%s\n' "$TEXT" | "$HERE/lib/sensitive-patterns" --name "$REL" ${args[@]+"${args[@]}"}); then
+  echo "sensitive-guard: blocked writing a personal value into $REL:" >&2
+  printf '%s\n' "$out" >&2
+  echo "Personal values never go into the repo (rule 11). Keep a link, or put it in .local/." >&2
+  exit 2
+fi
+exit 0

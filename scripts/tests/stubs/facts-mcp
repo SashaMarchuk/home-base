@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Fake facts-sink MCP server (stdio, JSON-RPC 2.0) for tests and replays.
+
+Tools: fact_propose(category, key, value, source) -> a normalised proposal with an id;
+       fact_save(proposal_id, confirmed) -> stores only when confirmed is true.
+All values are whatever the caller sends; tests send invented values only.
+Every call is appended to $FACTS_STUB_LOG (default ./facts-stub.log) as one JSON line.
+Saved facts live in $FACTS_STUB_STORE (default ./facts-stub.json).
+"""
+import json, os, sys, uuid
+
+LOG = os.environ.get("FACTS_STUB_LOG", "facts-stub.log")
+STORE = os.environ.get("FACTS_STUB_STORE", "facts-stub.json")
+PROP_FILE = STORE + ".proposals"
+
+
+def proposals():
+    return json.load(open(PROP_FILE)) if os.path.exists(PROP_FILE) else {}
+
+TOOLS = [
+    {"name": "fact_propose",
+     "description": "Propose one personal fact. Returns a normalised proposal; nothing is saved.",
+     "inputSchema": {"type": "object", "required": ["category", "key", "value"],
+                     "properties": {"category": {"type": "string"}, "key": {"type": "string"},
+                                    "value": {"type": "string"}, "source": {"type": "string"}}}},
+    {"name": "fact_save",
+     "description": "Save a proposal after the owner confirmed it.",
+     "inputSchema": {"type": "object", "required": ["proposal_id", "confirmed"],
+                     "properties": {"proposal_id": {"type": "string"}, "confirmed": {"type": "boolean"}}}},
+]
+
+
+def log(entry):
+    with open(LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def load():
+    return json.load(open(STORE)) if os.path.exists(STORE) else []
+
+
+def call(name, args):
+    log({"tool": name, "args": args})
+    if name == "fact_propose":
+        pid = uuid.uuid4().hex[:12]
+        p = {"proposal_id": pid, "category": args["category"].strip().lower(),
+             "key": args["key"].strip().lower().replace(" ", "_"), "value": args["value"].strip(),
+             "source": args.get("source", "")}
+        existing = [f for f in load() if f["category"] == p["category"] and f["key"] == p["key"]]
+        p["duplicate_of"] = existing[0]["key"] if existing else None
+        allp = proposals(); allp[pid] = p; json.dump(allp, open(PROP_FILE, "w"))
+        return p
+    if name == "fact_save":
+        p = proposals().get(args["proposal_id"])
+        if not p:
+            return {"saved": False, "reason": "unknown proposal"}
+        if not args.get("confirmed"):
+            return {"saved": False, "reason": "not confirmed"}
+        facts = [f for f in load() if not (f["category"] == p["category"] and f["key"] == p["key"])]
+        facts.append({k: p[k] for k in ("category", "key", "value", "source")})
+        json.dump(facts, open(STORE, "w"), indent=1)
+        return {"saved": True, "key": p["key"]}
+    raise KeyError(name)
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        msg = json.loads(line)
+        mid, method = msg.get("id"), msg.get("method")
+        if mid is None:
+            continue  # notification
+        try:
+            if method == "initialize":
+                res = {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2025-06-18"),
+                       "capabilities": {"tools": {}}, "serverInfo": {"name": "facts-stub", "version": "0"}}
+            elif method == "tools/list":
+                res = {"tools": TOOLS}
+            elif method == "tools/call":
+                p = msg["params"]
+                out = call(p["name"], p.get("arguments", {}))
+                res = {"content": [{"type": "text", "text": json.dumps(out)}], "isError": False}
+            elif method == "ping":
+                res = {}
+            else:
+                raise KeyError(method)
+            reply = {"jsonrpc": "2.0", "id": mid, "result": res}
+        except Exception as e:  # noqa: BLE001
+            reply = {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": str(e)}}
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+
+
+main()

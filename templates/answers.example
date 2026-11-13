@@ -1,0 +1,88 @@
+# answers.example: every key scripts/configure reads, filled in for an invented
+# persona. Copy it, change the values, then run:
+#   scripts/configure --answers <file> [--labels]
+# Format: flat "key=value" lines. A line starting with '#' is a comment. Inline
+# '#' is kept as part of the value. Repeatable keys: one line per value.
+# REQUIRED keys must be present and non-empty; PRESENT keys must be present
+# (empty is a valid answer); every other key falls back to the default shown.
+
+# ---------- the home ----------
+# REQUIRED. This home's GitHub repo.
+repo=example-org/garden-home
+# REQUIRED. Who owns this home (comma list of display names, no addresses).
+owner.names=Robin Example
+# REQUIRED. What this home covers, one line.
+home.domain=Community garden co-op: planting plans, volunteer rota, supplier orders
+# REQUIRED. What must never enter this home, one line.
+home.boundary=Anything from the owner's day job; members' personal contact details
+# Repeatable. The owner's own rules for surfaces where user-level instructions do not load.
+home.rules=Ask questions in plain words, recommended option first.
+home.rules=Never contact a supplier without the owner's yes; prepare a draft instead.
+
+# ---------- languages ----------
+# REQUIRED. Language of files and briefs / language used with the owner.
+lang.files=en
+lang.owner=en
+
+# ---------- tracker ----------
+# Default github.
+tracker.backend=github
+# REQUIRED. none | clickup
+tracker.board=none
+# REQUIRED when tracker.board is not none: ask-first | yes | read-only
+tracker.board_write=ask-first
+# REQUIRED. Label for questions waiting on the owner.
+labels.needs_owner=needs-owner
+
+# ---------- base and related homes ----------
+# Where the base lives (empty: no base remote is added).
+base.url=https://github.com/example-org/home-base.git
+# Repeatable per <name>; role is parent | child | peer; path is the local clone.
+homes.allotment.repo=example-org/allotment-home
+homes.allotment.path=~/homes/allotment-home
+homes.allotment.role=child
+
+# ---------- behaviour ----------
+# REQUIRED. none | soft | hard
+limits.mode=none
+limits.threshold=90
+# REQUIRED. assigned | off | watch
+proactivity.mode=assigned
+proactivity.sources=
+proactivity.every_minutes=60
+# REQUIRED. manual | daily
+dreams.mode=manual
+dreams.first_window_days=14
+# none | <MCP server name>
+facts.sink=none
+sweep.stale_hours=6
+# Repeatable. Extra command patterns the bash guard blocks here.
+guard.extra=docker compose down
+
+# ---------- plugins ----------
+# PRESENT (may be empty). Comma list written to enabledPlugins in .claude/settings.json.
+plugins=example-notes@example-marketplace
+
+# ---------- accounts ----------
+# REQUIRED. yes | no: more than one CLI profile or workspace account?
+accounts.multi=yes
+# REQUIRED when accounts.multi=yes. Repeatable: "label | what it serves | where the mapping lives".
+# Labels only: an address (anything with '@') is refused.
+accounts.rows=garden | the co-op's shared workspace | the workspace CLI's own config
+accounts.rows=personal | everything else | the GitHub CLI config directory
+
+# ---------- this machine (written to .local/config) ----------
+# REQUIRED. on | off. "on" is kept only when the device check passes (iTerm2 present, osascript works).
+terminal_helpers=off
+gh.config_dir=
+transcripts.paths=~/.claude/projects,~/.codex/sessions
+transcripts.exclude=
+limits.reader=none
+launch.profile.orchestrator=
+launch.profile.worker=
+launch.model=
+# The command a new tab runs (one word) and the flag that passes a profile to it (empty: no profile is passed).
+launch.command=claude
+launch.profile_flag=
+guard.private_values=
+guard.boundary_terms=

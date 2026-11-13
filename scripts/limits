@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# limits: prints "ok|soft|hard <reset>" for this home.
+# Mode precedence: .local/limits (the owner's live word, "mode=soft" and optional
+# "until=<ISO time>") > LIMITS_MODE env (a "Limits:" line in a brief) > limits.mode.
+#   none  never stops work            soft  at the threshold start nothing new
+#   hard  at the threshold park every running task and start nothing
+# The usage reader is a hook point (limits.reader in .local/config): an executable
+# that prints three fields: <5-hour %> <weekly %> <next reset time>. With no reader,
+# or when it fails, this prints "ok" and one warning line; a broken reader never
+# blocks work.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/lib/config"
+MODE=$(cfg limits.mode none)
+[ -n "${LIMITS_MODE:-}" ] && MODE=$LIMITS_MODE
+LIVE="$HOME_ROOT/.local/limits"
+if [ -f "$LIVE" ]; then
+  lm=$(sed -n 's/^mode=//p' "$LIVE" | head -1); until=$(sed -n 's/^until=//p' "$LIVE" | head -1)
+  if [ -n "$lm" ]; then
+    if [ -z "$until" ] || [[ "$(date -u +%Y-%m-%dT%H:%M:%SZ)" < "$until" ]]; then MODE=$lm; fi
+  fi
+fi
+case "$MODE" in none|soft|hard) ;; *) echo "limits: unknown mode '$MODE', using none" >&2; MODE=none ;; esac
+[ "$MODE" = none ] && { echo "ok -"; exit 0; }
+TH=$(cfg limits.threshold 90)
+RD=$(cfg limits.reader none)
+if [ "$RD" = none ] || [ ! -x "$RD" ]; then
+  echo "limits: no usage reader on this machine (limits.reader); not checking" >&2; echo "ok -"; exit 0
+fi
+if ! out=$("$RD" 2>/dev/null) || [ -z "$out" ]; then
+  echo "limits: the usage reader failed; not checking" >&2; echo "ok -"; exit 0
+fi
+read -r p5 pw reset <<<"$out"
+over=$(awk -v a="${p5:-0}" -v b="${pw:-0}" -v t="$TH" 'BEGIN { print ((a + 0 >= t || b + 0 >= t) ? 1 : 0) }')
+if [ "$over" = 1 ]; then echo "$MODE ${reset:--}"; else echo "ok ${reset:--}"; fi

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Creates or updates this home's label set. Safe to run twice.
+#   scripts/labels [--repo OWNER/REPO]
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/lib/config"
+REPO=$HOME_REPO
+[ "${1:-}" = "--repo" ] && REPO=$2
+[ -n "$REPO" ] || { echo "labels: no repo in home.config" >&2; exit 2; }
+gh api "repos/$REPO" --jq .full_name >/dev/null 2>&1 || { echo "labels: cannot reach $REPO on GitHub (does it exist, and is this the right account?)" >&2; exit 1; }
+NEEDS=$(cfg labels.needs_owner needs-owner)
+rc=0
+mk() { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null || rc=1; }
+mk status:inbox     c5def5 "Captured; not clear enough to work yet"
+mk status:ready     0e8a16 "Clear; any dispatcher may start it"
+mk status:claimed   1d76db "One session owns it; see its home-log comment"
+mk status:parked    fbca04 "Closed on purpose; the comment holds the resume command"
+mk status:blocked   b60205 "Waiting on something that is not the owner"
+mk status:delegated 5319e7 "Handed to another home; the comment links the child issue"
+mk status:review    0052cc "Finished; the owner should look"
+mk "$NEEDS"         d93f0b "A question or blocker waits on the owner"
+mk needs-summary    e99695 "Finished or dead work with no final comment"
+mk base-sync        bfdadc "A home's dropped diff after a base update"
+mk dreams           f9d0c4 "The standing Dreams issue and Dreams pull requests"
+[ $rc = 0 ] && echo "labels: ok ($REPO)"
+exit $rc

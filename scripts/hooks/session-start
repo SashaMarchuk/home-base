@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# SessionStart hook: what a new session in this home must know first.
+# Prints a short report; never blocks the session (always exits 0).
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd -P)
+. "$HERE/lib/config"
+cat >/dev/null 2>&1 || true   # the surface's JSON on stdin is not needed
+cfg_has_home || exit 0
+cd "$HOME_ROOT" || exit 0
+[ "$(git config --local core.hooksPath 2>/dev/null)" = .githooks ] || git config --local core.hooksPath .githooks 2>/dev/null
+NEEDS=$(cfg labels.needs_owner needs-owner)
+echo "== home: ${HOME_REPO:-?} =="
+q=$(gh api "repos/$HOME_REPO/issues?state=open&labels=$NEEDS&per_page=20" --jq '.[] | "- \(.html_url | sub(".*/issues/"; "#")) \(.title)"' 2>/dev/null)
+[ -n "$q" ] && { echo "Open owner questions ($NEEDS):"; printf '%s\n' "$q"; }
+for name in $(grep -hoE '^homes\.[A-Za-z0-9_-]+\.repo' home.config .local/config 2>/dev/null | cut -d. -f2 | sort -u); do
+  role=$(cfg "homes.$name.role"); [ "$role" = child ] || continue
+  crepo=$(cfg "homes.$name.repo"); cpath=$(cfg "homes.$name.path")
+  clabel=needs-owner
+  [ -n "$cpath" ] && [ -f "$cpath/home.config" ] && clabel=$(HOME_ROOT=$cpath bash -c '. "$0"; cfg labels.needs_owner needs-owner' "$HERE/lib/config")
+  cq=$(gh api "repos/$crepo/issues?state=open&labels=$clabel&per_page=20" --jq '.[] | "- \(.html_url | sub("https://github.com/"; "") | sub("/issues/"; "#")) \(.title)"' 2>/dev/null)
+  [ -n "$cq" ] && { echo "Open questions in $name ($clabel):"; printf '%s\n' "$cq"; }
+done
+( "$HERE/home-sweep" > "$HOME_ROOT/.local/sweep.out" 2>/dev/null ) & sp=$!
+i=0; while kill -0 "$sp" 2>/dev/null && [ $i -lt 40 ]; do sleep 1; i=$((i + 1)); done
+if kill -0 "$sp" 2>/dev/null; then kill "$sp" 2>/dev/null; echo "sweep: timed out (run scripts/home-sweep)"; fi
+[ -s .local/sweep.out ] && { echo "Sweep:"; sed -n '1,12p' .local/sweep.out; }
+echo "limits: $(cfg limits.mode none) ($("$HERE/limits" 2>/dev/null | cut -d' ' -f1))"
+if [ "$(cfg dreams.mode manual)" = daily ]; then
+  last=$(gh api "repos/$HOME_REPO/issues?state=open&labels=dreams&per_page=1" --jq '.[0].updated_at // empty' 2>/dev/null)
+  if [ -z "$last" ] || [ "$(( $(date -u +%s) - $(date -u -j -f %Y-%m-%dT%H:%M:%SZ "$last" +%s 2>/dev/null || date -u -d "$last" +%s) ))" -gt 86400 ]; then
+    echo "dreams: due (run the dreams skill in the background)"
+  fi
+fi
+exit 0

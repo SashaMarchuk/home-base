@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# SessionEnd hook. One case only: this session holds a claim (.local/runs/<n>)
+# whose comment is still active and has no final text. It rewrites that comment
+# as a stub (session id, resume command) and adds needs-summary. Never blocks.
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd -P)
+. "$HERE/lib/config"
+IN=$(cat 2>/dev/null)
+SID=$(printf '%s' "$IN" | jq -r '.session_id // empty' 2>/dev/null)
+[ -n "$SID" ] || SID=${CLAUDE_CODE_SESSION_ID:-}
+[ -n "$SID" ] || exit 0
+CWD=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$CWD" ] || CWD=$PWD
+for f in "$HOME_ROOT"/.local/runs/*; do
+  [ -f "$f" ] || continue
+  [ "$(sed -n 's/^run=//p' "$f")" = "$SID" ] || continue
+  repo=$(sed -n 's/^repo=//p' "$f"); n=${f##*/}; n=${n##*_}
+  "$HERE/home-log" stub "$n" --repo "$repo" --run-id "$SID" --resume "cd ${CWD/#$HOME/~} && claude --resume $SID" >/dev/null 2>&1 || true
+done
+exit 0

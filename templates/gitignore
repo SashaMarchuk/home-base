@@ -1,0 +1,4 @@
+.local/
+scratch/
+.env*
+.DS_Store

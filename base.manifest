@@ -1,0 +1,29 @@
+# base.manifest: which paths the base owns. One path per line: "<kind> <path>".
+#   shared     base block and buffer flow down; the home section below them is the home's
+#   flows      owned by the base, present in every home, never edited in a home
+#   base-only  present in the base repo only; removed from every home by base-update
+# A path ending in "/" is a folder; "*" is a git pathspec glob. Every path tracked in the base is covered by a line here.
+shared CLAUDE.md
+flows AGENTS.md
+flows .agents/skills
+flows .claude/skills/orchestrate/
+flows .claude/skills/task/
+flows .claude/skills/status/
+flows .claude/skills/wiki/
+flows .claude/skills/decide/
+flows .claude/skills/configure/
+flows .claude/skills/dreams/
+flows .claude/skills/base-update/
+flows scripts/
+flows templates/
+flows base.manifest
+flows .githooks/
+flows .github/workflows/home-checks.yml
+flows .github/workflows/home-sweep.yml
+flows .github/ISSUE_TEMPLATE/task.yml
+base-only openspec/
+# OpenSpec tool folders: not in the base; listed so they can never flow into a home.
+base-only .claude/commands/opsx/
+base-only .claude/skills/openspec-*
+base-only README.md
+base-only .github/workflows/base-checks.yml

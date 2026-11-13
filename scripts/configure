@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+# configure: makes this repo the owner's own home from flat answers.
+#   scripts/configure --answers <file> [--labels]
+# The configure skill asks the questions, writes the answers to .local/answers and
+# calls this script; an unattended build writes the file itself. Same code path.
+# templates/answers.example documents every key.
+#
+# Writes (and only these): home.config (committed keys), .local/config (machine
+# keys; other lines there are kept), the home section of CLAUDE.md (below the
+# BUFFER lines; the base block is never touched), .claude/settings.json
+# (enabledPlugins from the answers), .gitignore (missing template lines added),
+# wiki/index.md and DECISIONS.md (only when absent), wiki/howto/accounts.md
+# (when accounts.multi=yes), git config core.hooksPath and the base remote
+# (push disabled). --labels also runs scripts/labels.
+# Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready,
+# 4 files written but --labels failed (the repo does not exist or is not reachable yet).
+# Running it twice with the same answers gives the same files.
+set -u
+ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
+HOME_ROOT=$ROOT; export HOME_ROOT
+T="$ROOT/templates"
+
+die() { local c=$1; shift; echo "configure: $*" >&2; exit "$c"; }
+ANS=""; LABELS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
+    --labels) LABELS=1; shift ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
+  esac
+done
+[ -n "$ANS" ] || die 2 "usage: configure --answers <file> [--labels]"
+[ -f "$ANS" ] || die 2 "answers file not found: $ANS"
+command -v jq >/dev/null 2>&1 || die 3 "jq is required"
+
+# ---------- reading answers (no '~' expansion: values are written as given) ----------
+ans_all() { # every value of a key, in order
+  awk -v k="$1" '
+    /^[[:space:]]*#/ { next }
+    { i = index($0, "="); if (i == 0) next
+      key = substr($0, 1, i - 1); val = substr($0, i + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      if (key == k) print val }' "$ANS"
+}
+ans_has() { awk -v k="$1" '/^[[:space:]]*#/ { next } { i = index($0, "="); if (i == 0) next
+  key = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key == k) f = 1 } END { exit !f }' "$ANS"; }
+ans() { ans_all "$1" | tail -1; }
+ans_keys() { awk '/^[[:space:]]*#/ { next } { i = index($0, "="); if (i == 0) next
+  key = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key != "") print key }' "$ANS" | sort -u; }
+
+# ---------- key tables ----------
+REQUIRED="repo owner.names home.domain home.boundary lang.files lang.owner tracker.board labels.needs_owner limits.mode proactivity.mode dreams.mode accounts.multi terminal_helpers"
+PRESENT="plugins"
+REPEATABLE="home.rules guard.extra accounts.rows"
+# committed keys and their defaults (order = order in home.config)
+COMMITTED_DEFAULTS="repo=
+lang.files=en
+lang.owner=en
+tracker.backend=github
+tracker.board=none
+tracker.board_write=ask-first
+labels.needs_owner=needs-owner
+base.url=
+limits.mode=none
+limits.threshold=90
+proactivity.mode=assigned
+proactivity.sources=
+proactivity.every_minutes=60
+dreams.mode=manual
+dreams.first_window_days=14
+facts.sink=none
+sweep.stale_hours=6"
+MACHINE_DEFAULTS="gh.config_dir=
+terminal_helpers=off
+transcripts.paths=~/.claude/projects,~/.codex/sessions
+transcripts.exclude=
+limits.reader=none
+launch.profile.orchestrator=
+launch.profile.worker=
+launch.model=
+launch.command=claude
+launch.profile_flag=
+guard.private_values=
+guard.boundary_terms="
+HOME_FIELDS="owner.names home.domain home.boundary plugins accounts.multi"
+
+val() { # val <key>: the answer when non-empty, else the default
+  local d v
+  v=$(ans "$1")
+  if [ -z "$v" ]; then
+    d=$(printf '%s\n%s\n' "$COMMITTED_DEFAULTS" "$MACHINE_DEFAULTS" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }')
+    v=$d
+  fi
+  printf '%s' "$v"
+}
+src() { [ -n "$(ans "$1")" ] && echo answer || echo default; }
+
+# ---------- validation: collect every problem, write nothing on any ----------
+MISSING=(); BAD=()
+for k in $REQUIRED; do [ -n "$(ans "$k")" ] || MISSING+=("$k"); done
+for k in $PRESENT; do ans_has "$k" || MISSING+=("$k"); done
+BOARD=$(val tracker.board)
+[ "$BOARD" != none ] && [ -z "$(ans tracker.board_write)" ] && MISSING+=("tracker.board_write")
+MULTI=$(ans accounts.multi)
+[ "$MULTI" = yes ] && [ -z "$(ans_all accounts.rows | grep -v '^$')" ] && MISSING+=("accounts.rows")
+
+enum() { # enum <key> <allowed...>
+  local k=$1 v a; shift; v=$(ans "$k"); [ -n "$v" ] || return 0
+  for a in "$@"; do [ "$v" = "$a" ] && return 0; done
+  BAD+=("$k=$v (allowed: $*)")
+}
+num() { local v; v=$(ans "$1"); [ -n "$v" ] || return 0
+  case "$v" in *[!0-9]*) BAD+=("$1=$v (a whole number)") ;; esac; }
+enum tracker.backend github
+enum tracker.board_write ask-first yes read-only
+enum limits.mode none soft hard
+enum proactivity.mode assigned off watch
+enum dreams.mode manual daily
+enum accounts.multi yes no
+enum terminal_helpers on off
+for k in limits.threshold proactivity.every_minutes dreams.first_window_days sweep.stale_hours; do num "$k"; done
+v=$(ans repo); [ -z "$v" ] || printf '%s' "$v" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || BAD+=("repo=$v (owner/name)")
+case "$(ans tracker.board)" in *[!a-z0-9-]*) BAD+=("tracker.board=$(ans tracker.board) (none or a lower-case board name)") ;; esac
+case "$(ans labels.needs_owner)" in *[!A-Za-z0-9:_-]*) BAD+=("labels.needs_owner=$(ans labels.needs_owner) (letters, digits, : _ -)") ;; esac
+
+# accounts rows: three fields, labels only
+ROWS=()
+if [ "$MULTI" = yes ]; then
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    case "$r" in *@*) BAD+=("accounts.rows: '$r' holds an address; write a label only"); continue ;; esac
+    n=$(printf '%s' "$r" | awk -F'|' '{ print NF }')
+    [ "$n" = 3 ] || { BAD+=("accounts.rows: '$r' (label | what it serves | where the mapping lives)"); continue; }
+    ROWS+=("$r")
+  done < <(ans_all accounts.rows)
+fi
+
+# related homes
+HOMES=$(ans_keys | sed -n 's/^homes\.\([A-Za-z0-9_-]*\)\.[a-z]*$/\1/p' | sort -u)
+for h in $HOMES; do
+  [ -n "$(ans "homes.$h.repo")" ] || MISSING+=("homes.$h.repo")
+  r=$(ans "homes.$h.role")
+  case "$r" in parent|child|peer) ;; '') MISSING+=("homes.$h.role") ;; *) BAD+=("homes.$h.role=$r (parent, child or peer)") ;; esac
+done
+for k in $(ans_keys); do
+  case "$k" in homes.*.repo|homes.*.path|homes.*.role) continue ;; esac
+  case " $REQUIRED $PRESENT $REPEATABLE $HOME_FIELDS " in *" $k "*) continue ;; esac
+  printf '%s\n%s\n' "$COMMITTED_DEFAULTS" "$MACHINE_DEFAULTS" | grep -q "^$k=" && continue
+  echo "configure: warning: unknown key '$k' ignored" >&2
+done
+
+if [ ${#MISSING[@]} -gt 0 ] || [ ${#BAD[@]} -gt 0 ]; then
+  for k in ${MISSING[@]+"${MISSING[@]}"}; do echo "configure: missing answer: $k" >&2; done
+  for k in ${BAD[@]+"${BAD[@]}"}; do echo "configure: invalid answer: $k" >&2; done
+  echo "configure: nothing written; see templates/answers.example" >&2
+  exit 2
+fi
+
+# repo must already hold the base files
+for f in home.config settings.json gitignore CLAUDE.home-section.md wiki/index.md wiki/howto/accounts.md DECISIONS.md; do
+  [ -f "$T/$f" ] || die 3 "template missing: templates/$f"
+done
+BUF4='<!-- BUFFER 4/4: the home section starts on the next line. -->'
+[ -f "$ROOT/CLAUDE.md" ] && grep -qxF "$BUF4" "$ROOT/CLAUDE.md" \
+  || die 3 "CLAUDE.md with the base block and the four BUFFER lines is required; take it from the base first"
+
+# ---------- terminal helpers: on only after the device check ----------
+HELPERS=$(ans terminal_helpers)
+HELPERS_NOTE=""
+device_ok() {
+  [ "$(uname -s)" = Darwin ] || return 1
+  command -v osascript >/dev/null 2>&1 || return 1
+  [ "$(osascript -e 'return "ok"' 2>/dev/null)" = ok ] || return 1
+  osascript -e 'id of application "iTerm"' >/dev/null 2>&1   # resolves the app without launching it
+}
+if [ "$HELPERS" = on ] && ! device_ok; then
+  HELPERS=off; HELPERS_NOTE=" (asked on; device check failed: needs macOS, osascript and iTerm2)"
+fi
+
+# ---------- writers ----------
+put() { # put <relative path> <content>; writes only when it changes
+  local p="$ROOT/$1"
+  mkdir -p "$(dirname "$p")"
+  if [ -f "$p" ] && [ "$(cat "$p")" = "$2" ]; then return 0; fi
+  printf '%s\n' "$2" > "$p"
+  echo "configure: wrote $1"
+}
+subst() { # subst <template file>: replaces {{NAME}} with $S_NAME, literally
+  awk '{
+    line = $0; out = ""
+    while ((i = index(line, "{{")) > 0) {
+      j = index(substr(line, i + 2), "}}")
+      if (j == 0) break
+      name = substr(line, i + 2, j - 1)
+      out = out substr(line, 1, i - 1) ENVIRON["S_" name]
+      line = substr(line, i + 2 + j + 1)
+    }
+    print out line
+  }' "$1"
+}
+
+# home.config, from the template with the answers filled in
+GUARD_LINES=$(ans_all guard.extra | grep -v '^$' | sed 's/^/guard.extra=/')
+HOMES_LINES=""
+for h in $HOMES; do
+  for f in repo path role; do
+    v=$(ans "homes.$h.$f"); [ -n "$v" ] && HOMES_LINES="$HOMES_LINES"$'\n'"homes.$h.$f=$v"
+  done
+done
+HOMES_LINES=${HOMES_LINES#$'\n'}
+VALUES=""
+while IFS= read -r line; do
+  k=${line%%=*}; VALUES="$VALUES$k"$'\t'"$(val "$k")"$'\n'
+done <<EOF
+$COMMITTED_DEFAULTS
+EOF
+HC=$(V_VALUES=$VALUES V_GUARD=$GUARD_LINES V_HOMES=$HOMES_LINES awk '
+  BEGIN { n = split(ENVIRON["V_VALUES"], a, "\n")
+          for (i = 1; i <= n; i++) { t = index(a[i], "\t"); if (t) v[substr(a[i], 1, t - 1)] = substr(a[i], t + 1) } }
+  /^#@guard\.extra$/ { if (ENVIRON["V_GUARD"] != "") print ENVIRON["V_GUARD"]; next }
+  /^#@homes$/ { if (ENVIRON["V_HOMES"] != "") print ENVIRON["V_HOMES"]; next }
+  /^[a-z][a-z._]*=/ { k = substr($0, 1, index($0, "=") - 1); if (k in v) { print k "=" v[k]; next } }
+  { print }' "$T/home.config")
+put home.config "$HC"
+
+# .local/config: managed machine keys; any other line there is kept
+LC_OLD=""; [ -f "$ROOT/.local/config" ] && LC_OLD=$(cat "$ROOT/.local/config")
+MANAGED=$(printf '%s\n' "$MACHINE_DEFAULTS" | cut -d= -f1)
+KEPT=$(printf '%s\n' "$LC_OLD" | V_M="$MANAGED" awk '
+  BEGIN { n = split(ENVIRON["V_M"], a, "\n"); for (i = 1; i <= n; i++) m[a[i]] = 1 }
+  /^[[:space:]]*#/ || !/=/ { next }
+  { k = substr($0, 1, index($0, "=") - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", k); if (!(k in m)) print }')
+LC="# .local/config: this machine only (gitignored). Overrides home.config.
+# Machine keys below are written by scripts/configure; other key lines are kept."
+[ -n "$KEPT" ] && LC="$LC"$'\n'"$KEPT"
+for k in $MANAGED; do
+  if [ "$k" = terminal_helpers ]; then v=$HELPERS; else v=$(val "$k"); fi
+  [ -n "$v" ] && LC="$LC"$'\n'"$k=$v"
+done
+put .local/config "$LC"
+
+# CLAUDE.md: base block and buffer untouched, home section replaced
+RULES=$(ans_all home.rules | grep -v '^$' | sed 's/^/- /')
+[ -n "$RULES" ] || RULES="- (none yet)"
+SECTION=$(S_OWNER_NAMES=$(ans owner.names) S_HOME_DOMAIN=$(ans home.domain) S_HOME_BOUNDARY=$(ans home.boundary) \
+  S_HOME_RULES=$RULES subst "$T/CLAUDE.home-section.md")
+HEAD=$(awk -v b="$BUF4" '{ print } $0 == b { exit }' "$ROOT/CLAUDE.md")
+put CLAUDE.md "$HEAD"$'\n'"$SECTION"
+
+# .claude/settings.json: template (or the existing file) with enabledPlugins from the answers
+SBASE="$T/settings.json"; [ -f "$ROOT/.claude/settings.json" ] && SBASE="$ROOT/.claude/settings.json"
+ST=$(jq --arg p "$(ans plugins)" '
+  ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $l
+  | if ($l | length) > 0 then .enabledPlugins = ($l | map({(.): true}) | add) else del(.enabledPlugins) end' "$SBASE") \
+  || die 3 "cannot read $SBASE as JSON"
+put .claude/settings.json "$ST"
+
+# .gitignore: the template lines, added when missing
+GI=""; [ -f "$ROOT/.gitignore" ] && GI=$(cat "$ROOT/.gitignore")
+while IFS= read -r l; do
+  [ -n "$l" ] || continue
+  printf '%s\n' "$GI" | grep -qxF "$l" || GI="${GI:+$GI$'\n'}$l"
+done < "$T/gitignore"
+put .gitignore "$GI"
+
+# wiki/index.md and DECISIONS.md: created once, never overwritten
+[ -f "$ROOT/wiki/index.md" ] || put wiki/index.md "$(S_HOME_DOMAIN=$(ans home.domain) subst "$T/wiki/index.md")"
+[ -f "$ROOT/DECISIONS.md" ] || put DECISIONS.md "$(cat "$T/DECISIONS.md")"
+
+# wiki/howto/accounts.md: labels only
+if [ "$MULTI" = yes ]; then
+  AR=""
+  for r in "${ROWS[@]}"; do
+    AR="${AR:+$AR$'\n'}| $(printf '%s' "$r" | awk -F'|' '{ for (i = 1; i <= 3; i++) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i) } print $1 " | " $2 " | " $3 }') |"
+  done
+  put wiki/howto/accounts.md "$(S_ACCOUNT_ROWS=$AR subst "$T/wiki/howto/accounts.md")"
+fi
+
+# git: hooks path and the base remote (repo-local only; push disabled)
+if [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ]; then
+  [ "$(git -C "$ROOT" config --local core.hooksPath)" = .githooks ] || { git -C "$ROOT" config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
+  BURL=$(ans base.url)
+  if [ -n "$BURL" ]; then
+    if ! git -C "$ROOT" remote get-url base >/dev/null 2>&1; then
+      git -C "$ROOT" remote add base "$BURL"; echo "configure: added remote base"
+    elif [ "$(git -C "$ROOT" remote get-url base)" != "$BURL" ]; then
+      git -C "$ROOT" remote set-url base "$BURL"; echo "configure: updated remote base"
+    fi
+    [ "$(git -C "$ROOT" remote get-url --push base)" = DISABLED ] || git -C "$ROOT" remote set-url --push base DISABLED
+  fi
+else
+  echo "configure: warning: $ROOT is not a git repo root; hooks path and base remote not set" >&2
+fi
+
+if [ "$LABELS" = 1 ]; then
+  "$ROOT/scripts/labels" --repo "$(ans repo)" || die 4 "the files are written, but creating labels failed: does the repo $(ans repo) exist and can this GitHub account reach it? Create it, then run: scripts/configure --answers <file> --labels"
+fi
+
+# ---------- completeness check: every key this run used ----------
+echo "configure: keys used"
+for k in owner.names home.domain home.boundary plugins accounts.multi; do echo "  $k=$(ans "$k") (answer)"; done
+for k in $(printf '%s\n' "$COMMITTED_DEFAULTS" | cut -d= -f1); do echo "  $k=$(val "$k") ($(src "$k"))"; done
+for k in $MANAGED; do
+  if [ "$k" = terminal_helpers ]; then echo "  $k=$HELPERS (answer)$HELPERS_NOTE"; else echo "  $k=$(val "$k") ($(src "$k"))"; fi
+done
+ans_all home.rules | grep -v '^$' | sed 's/^/  home.rules=/'
+ans_all guard.extra | grep -v '^$' | sed 's/^/  guard.extra=/'
+[ "$MULTI" = yes ] && for r in "${ROWS[@]}"; do echo "  accounts.rows=$r"; done
+[ -n "$HOMES_LINES" ] && printf '%s\n' "$HOMES_LINES" | sed 's/^/  /'
+[ "$LABELS" = 1 ] && echo "  labels: created" || echo "  labels: not run (pass --labels)"
+echo "configure: done"

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# PreToolUse hook for Bash. Blocks (exit 2, reason on stderr):
+#   pkill, killall, kill with anything but numeric PIDs; gh auth switch;
+#   a force push to the default branch; gh repo delete; a repo visibility change;
+#   git push base ... ; and every extended regex in guard.extra (home.config).
+# Usage outside a hook: echo '{"tool_input":{"command":"..."}}' | bash-guard
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd -P)
+. "$HERE/lib/config"
+CMD=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+[ -n "$CMD" ] || exit 0
+block() { echo "bash-guard: blocked: $1. $2" >&2; exit 2; }
+# pkill and killall anywhere (a path prefix, bash -c, sudo, xargs) are kills by pattern.
+printf '%s\n' "$CMD" | grep -qE '(^|[^A-Za-z0-9_.-])(pkill|killall)([^A-Za-z0-9_-]|$)' && block "kill by pattern" "Kill exact PIDs only (rule 9)."
+# Kill with a computed PID list is a kill by pattern.
+printf '%s\n' "$CMD" | grep -qE '(^|[;&|([:space:]])kill([[:space:]]+-[^[:space:]]+)*[[:space:]]+[^;&|]*(\$\(|`|pgrep|pidof)' && block "kill with a computed PID list" "Kill exact numeric PIDs only (rule 9)."
+printf '%s\n' "$CMD" | grep -qE 'xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+kill([[:space:]]|$)' && block "kill through xargs" "Kill exact numeric PIDs only (rule 9)."
+# Look at each simple command separately.
+segs=$(printf '%s\n' "$CMD" | sed -E 's/(\|\||&&|;|\||\$\(|`)/\n/g')
+while IFS= read -r s; do
+  s=$(printf '%s' "$s" | sed -E 's/^[[:space:](]*//; s/^(sudo|command|exec|env|nohup|time)[[:space:]]+//')
+  [ -n "$s" ] || continue
+  case "$s" in
+    pkill*|killall*) block "kill by pattern" "Kill exact PIDs only (rule 9)." ;;
+  esac
+  if printf '%s' "$s" | grep -qE '^kill([[:space:]]|$)'; then
+    args=$(printf '%s' "$s" | sed -E 's/^kill[[:space:]]*//')
+    skip=0
+    for a in $args; do
+      [ "$skip" = 1 ] && { skip=0; continue; }
+      case "$a" in
+        -s|-n) skip=1; continue ;;
+        -[0-9]*|-[A-Z]*|-l|--) continue ;;
+        *[!0-9]*) block "kill with '$a'" "Kill exact numeric PIDs only (rule 9)." ;;
+      esac
+    done
+  fi
+  printf '%s' "$s" | grep -qE '^gh[[:space:]]+auth[[:space:]]+switch' && block "gh auth switch" "Use the account this home's config names (rule 12)."
+  printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+delete' && block "gh repo delete" "Deleting a repository needs the owner."
+  printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+(edit|create)[[:space:]].*--visibility' && printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+edit' && block "visibility change" "Changing repository visibility needs the owner."
+  printf '%s' "$s" | grep -qE '^gh[[:space:]]+api.*(-f|-F|--field|--raw-field)[[:space:]]+(private|visibility)=' && block "visibility change" "Changing repository visibility needs the owner."
+  printf '%s' "$s" | grep -qE '^git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+push[[:space:]]+(.*[[:space:]])?base([[:space:]]|$)' && block "git push base" "Never push to the base from a home; fix the base in its own checkout."
+  if printf '%s' "$s" | grep -qE '^git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)' && printf '%s' "$s" | grep -qE '(^|[[:space:]])(-f|--force|--force-with-lease(=[^[:space:]]*)?|\+[^[:space:]]+)([[:space:]]|$)'; then
+    if printf '%s' "$s" | grep -qE '(^|[[:space:]:+])(main|master)([[:space:]]|$)' || ! printf '%s' "$s" | grep -qE 'push[[:space:]]+(-[^[:space:]]+[[:space:]]+)*[^-[:space:]][^[:space:]]*[[:space:]]+[^-[:space:]]'; then
+      block "force push to the default branch" "Never force-push main."
+    fi
+  fi
+done <<<"$segs"
+while IFS= read -r re; do
+  [ -n "$re" ] || continue
+  printf '%s\n' "$CMD" | grep -qE -- "$re" && block "matches guard.extra '$re'" "This home blocks it; ask the owner."
+done < <(cfg_all guard.extra)
+exit 0

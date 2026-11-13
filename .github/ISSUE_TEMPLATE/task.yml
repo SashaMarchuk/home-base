@@ -1,0 +1,11 @@
+name: New task
+description: Capture a task for this home. The orchestrator clarifies it before work starts.
+labels: ["status:inbox"]
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: What do you want done?
+      description: Plain words are fine. Links welcome.
+    validations:
+      required: true

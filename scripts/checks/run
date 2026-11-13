@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Repo checks. Pre-commit runs them on the staged content; CI runs them on all
+# tracked files.
+#   scripts/checks/run            all tracked files (CI, manual)
+#   scripts/checks/run --staged   staged content only (git pre-commit)
+# Checks: secrets (gitleaks, regex fallback), personal-value patterns, file size,
+# CLAUDE.md size and buffer, symlinks, DECISIONS.md ids, base-only paths in a home.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/../lib/config"
+cd "$HOME_ROOT" || exit 1
+
+MODE=all
+[ "${1:-}" = "--staged" ] && MODE=staged
+FAIL=0
+fail() { echo "checks: FAIL $*" >&2; FAIL=1; }
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/home-checks.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT
+
+# 1. Materialise the content under test into $TMP/tree (same relative paths).
+mkdir -p "$TMP/tree"
+if [ "$MODE" = staged ]; then
+  git diff --cached --name-only --diff-filter=ACMR -z > "$TMP/list"
+  while IFS= read -r -d '' f; do
+    mkdir -p "$TMP/tree/$(dirname "$f")"
+    if [ "$(git ls-files -s -- "$f" | awk '{print $1}')" = 120000 ]; then continue; fi
+    git show ":$f" > "$TMP/tree/$f" 2>/dev/null
+  done < "$TMP/list"
+else
+  git ls-files -z > "$TMP/list"
+  while IFS= read -r -d '' f; do
+    [ -L "$f" ] && continue
+    [ -f "$f" ] || continue
+    mkdir -p "$TMP/tree/$(dirname "$f")"
+    cp "$f" "$TMP/tree/$f"
+  done < "$TMP/list"
+fi
+
+# 2. Secrets.
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks dir "$TMP/tree" --no-banner --redact >"$TMP/gl.out" 2>&1; then
+    fail "gitleaks found a secret:"; sed -n '1,20p' "$TMP/gl.out" | sed "s#$TMP/tree/##" >&2
+  fi
+fi
+
+# 3. Personal-value patterns (token families are the regex fallback for gitleaks).
+SP_ARGS=()
+pv=$(cfg guard.private_values)
+[ -n "$pv" ] && [ -f "$pv" ] && SP_ARGS+=(--private "$pv")
+bt=$(cfg guard.boundary_terms)
+[ -n "$bt" ] && [ -f "$bt" ] && SP_ARGS+=(--terms "$bt")
+( cd "$TMP/tree" && find . -type f | sed 's#^\./##' | tr '\n' '\0' ) > "$TMP/files"
+if [ -s "$TMP/files" ]; then
+  ( cd "$TMP/tree" && xargs -0 "$HOME_ROOT/scripts/lib/sensitive-patterns" ${SP_ARGS[@]+"${SP_ARGS[@]}"} < "$TMP/files" ) > "$TMP/sp.out" 2>&1 \
+    || { fail "personal-value pattern hits:"; sed -n '1,20p' "$TMP/sp.out" >&2; }
+fi
+
+# 4. File size.
+while IFS= read -r -d '' f; do
+  s=$(wc -c < "$TMP/tree/$f" | tr -d ' ')
+  [ "$s" -gt 512000 ] && fail "$f is larger than 500 KB"
+done < "$TMP/files"
+
+# 5. CLAUDE.md size and buffer (always on the working copy plus staged copy).
+check_claude_md() {
+  local f=$1
+  [ -f "$f" ] || return 0
+  local s; s=$(wc -c < "$f" | tr -d ' ')
+  [ "$s" -gt 16384 ] && fail "CLAUDE.md is $s bytes; the limit is 16 KiB"
+  awk '
+    /^<!-- BASE:END/ { e = NR }
+    e && NR == e + 1 && $0 == "<!-- BUFFER 1/4: these four lines are fixed and identical in the base and in every home. -->" { b1 = 1 }
+    e && NR == e + 2 && $0 == "<!-- BUFFER 2/4: never edit, move or delete them. -->" { b2 = 1 }
+    e && NR == e + 3 && $0 == "<!-- BUFFER 3/4: they keep a base edit above and a home edit below from touching in a merge. -->" { b3 = 1 }
+    e && NR == e + 4 && $0 == "<!-- BUFFER 4/4: the home section starts on the next line. -->" { b4 = 1 }
+    /^<!-- BASE:BEGIN/ { s = 1 }
+    END { exit (s && e && b1 && b2 && b3 && b4) ? 0 : 1 }
+  ' "$f" || fail "CLAUDE.md: the BASE markers or the four BUFFER lines are missing or changed"
+}
+if [ "$MODE" = staged ]; then check_claude_md "$TMP/tree/CLAUDE.md"; else check_claude_md CLAUDE.md; fi
+
+# 6. Symlinks: relative and resolving.
+check_link() { # path expected-target
+  if [ "$MODE" = staged ] && git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    [ "$(git ls-files -s -- "$1" | awk '{print $1}')" = 120000 ] || { fail "$1 must be a symlink to $2 (staged)"; return; }
+    [ "$(git cat-file -p ":$1")" = "$2" ] || fail "$1 must point to $2 (staged)"
+    return
+  fi
+  if [ ! -L "$1" ]; then fail "$1 must be a symlink to $2"; return; fi
+  [ "$(readlink "$1")" = "$2" ] || fail "$1 must point to $2 (relative), not $(readlink "$1")"
+  [ -e "$1" ] || fail "$1 does not resolve"
+}
+check_link AGENTS.md CLAUDE.md
+check_link .agents/skills ../.claude/skills
+
+# 7. DECISIONS.md ids are unique.
+DEC=DECISIONS.md; [ "$MODE" = staged ] && DEC="$TMP/tree/DECISIONS.md"
+if [ -f "$DEC" ]; then
+  d=$(grep -oE '^### [A-Za-z][A-Za-z0-9-]*' "$DEC" | sort | uniq -d)
+  [ -n "$d" ] && fail "DECISIONS.md has duplicate ids: $(echo $d)"
+fi
+
+# 8. In a home: no base-only path.
+if cfg_has_home && [ -f base.manifest ]; then
+  while read -r kind path; do
+    [ "$kind" = base-only ] || continue
+    if git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || [ -n "$(git ls-files -- "$path")" ]; then
+      fail "base-only path present in a home: $path"
+    fi
+  done < <(grep -E '^base-only[[:space:]]' base.manifest)
+fi
+
+[ "$FAIL" = 0 ] && { [ "$MODE" = all ] && echo "checks: ok"; exit 0; }
+exit 1

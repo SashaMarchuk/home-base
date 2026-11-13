@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# home-sweep: reports problems in the record; never repairs them.
+#   scripts/home-sweep [--same-repo]
+# Prints one line per finding:  SWEEP <kind> <repo>#<n> <detail>
+#   closed-no-final        closed issue whose comments hold no final home-log comment
+#   stale-claim            status:claimed issue whose active comment is older than sweep.stale_hours
+#   pr-no-final            merged pull request naming an issue that has no final comment
+#   delegated-child-closed status:delegated issue whose child issue is closed
+#   drift <path>           a flows-down path differs from base/main
+#   base-ahead <N>         base/main has N commits this home does not have
+# Adds the label needs-summary to closed-no-final and pr-no-final issues.
+# --same-repo (CI): only checks that need this repo's own issues.
+# Exits 0 when there is no home.config (the base) and on any network error.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/lib/config"
+cfg_has_home || exit 0
+[ -n "$HOME_REPO" ] || exit 0
+SAME=0; [ "${1:-}" = "--same-repo" ] && SAME=1
+STALE_H=$(cfg sweep.stale_hours 6)
+LOOKBACK_DAYS=$(cfg sweep.lookback_days 14)
+R=$HOME_REPO
+
+since_iso() { # now minus N days, UTC ISO (GNU and BSD date)
+  date -u -d "-$1 days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-"$1"d +%Y-%m-%dT%H:%M:%SZ
+}
+epoch_of() { # ISO -> epoch (GNU and BSD date)
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$1" +%s
+}
+NOW=$(date -u +%s)
+SINCE=$(since_iso "$LOOKBACK_DAYS")
+
+has_final() { # has_final <repo> <n> -> 0 when a final home-log comment exists
+  gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
+    | jq -e '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=final -->"))] | length > 0' >/dev/null
+}
+label_summary() { gh api -X POST "repos/$1/issues/$2/labels" -f "labels[]=needs-summary" >/dev/null 2>&1 || true; }
+
+# 1. Closed issues (recent) with no final comment. Issues labelled dreams are not tasks.
+CLOSED=$(gh api "repos/$R/issues?state=closed&since=$SINCE&per_page=100" 2>/dev/null) || exit 0
+printf '%s' "$CLOSED" | jq -r '.[] | select(has("pull_request") | not) | select([.labels[].name] | index("dreams") | not) | .number' |
+while read -r n; do
+  [ -n "$n" ] || continue
+  if ! has_final "$R" "$n"; then echo "SWEEP closed-no-final $R#$n"; label_summary "$R" "$n"; fi
+done
+
+# 2. Stale claims and 3. delegated issues whose child closed.
+OPEN=$(gh api "repos/$R/issues?state=open&per_page=100" 2>/dev/null) || exit 0
+printf '%s' "$OPEN" | jq -r '.[] | select(has("pull_request") | not) | select([.labels[].name] | index("status:claimed")) | .number' |
+while read -r n; do
+  [ -n "$n" ] || continue
+  upd=$(gh api --paginate "repos/$R/issues/$n/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
+        | jq -r '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=active -->"))] | last | .updated_at // empty')
+  if [ -z "$upd" ]; then echo "SWEEP stale-claim $R#$n no active home-log comment"; continue; fi
+  age=$(( (NOW - $(epoch_of "$upd")) / 3600 ))
+  [ "$age" -ge "$STALE_H" ] && echo "SWEEP stale-claim $R#$n silent for ${age}h"
+done
+if [ "$SAME" = 0 ]; then
+  printf '%s' "$OPEN" | jq -r '.[] | select([.labels[].name] | index("status:delegated")) | .number' |
+  while read -r n; do
+    [ -n "$n" ] || continue
+    child=$(gh api --paginate "repos/$R/issues/$n/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
+            | jq -r '[.[] | select(.body | test("^<!-- home-log run=")) | .body | capture("\n- delegated: (?<c>[^\n]+)").c] | last // empty')
+    [ -n "$child" ] || continue
+    crepo=${child%#*}; cn=${child##*#}
+    st=$(gh api "repos/$crepo/issues/$cn" --jq .state 2>/dev/null) || continue
+    [ "$st" = closed ] && echo "SWEEP delegated-child-closed $R#$n child $child"
+  done
+fi
+
+# 4. Merged pull requests that name an issue with no final comment.
+gh api "repos/$R/pulls?state=closed&per_page=30" 2>/dev/null \
+  | jq -r --arg s "$SINCE" '.[] | select(.merged_at != null and .merged_at >= $s) | "\(.number)\t\(.body // "")"' 2>/dev/null |
+while IFS=$'\t' read -r pr body; do
+  for n in $(printf '%s' "$body" | grep -oE '#[0-9]+' | tr -d '#' | sort -u); do
+    has_final "$R" "$n" || { echo "SWEEP pr-no-final $R#$n named by pull request #$pr"; label_summary "$R" "$n"; }
+  done
+done
+
+[ "$SAME" = 1 ] && exit 0
+
+# 5. Base remote: drift in flows-down paths, and commits the home does not have.
+cd "$HOME_ROOT" || exit 0
+burl=$(cfg base.url)
+if ! git remote get-url base >/dev/null 2>&1 && [ -n "$burl" ]; then
+  git remote add base "$burl" 2>/dev/null && git remote set-url --push base DISABLED
+fi
+if git remote get-url base >/dev/null 2>&1; then
+  ( git fetch -q base >/dev/null 2>&1 ) & fp=$!
+  i=0; while kill -0 "$fp" 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
+  kill -0 "$fp" 2>/dev/null && kill "$fp" 2>/dev/null
+  if git rev-parse -q --verify base/main >/dev/null; then
+    ahead=$(git rev-list --count HEAD..base/main 2>/dev/null || echo 0)
+    [ "$ahead" -gt 0 ] && echo "SWEEP base-ahead $R base/main is $ahead commits ahead"
+    mb=$(git merge-base HEAD base/main 2>/dev/null)
+    if [ -n "$mb" ] && [ -f base.manifest ]; then
+      grep -E '^flows[[:space:]]' base.manifest | awk '{print $2}' | while read -r p; do
+        git cat-file -e "base/main:${p%/}" 2>/dev/null || continue
+        git diff --quiet "$mb" HEAD -- "$p" 2>/dev/null || echo "SWEEP drift $R $p"
+      done
+    fi
+  fi
+fi
+exit 0

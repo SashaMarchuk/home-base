@@ -1,0 +1,67 @@
+# shellcheck shell=bash
+# Config reader for a home. Source it; do not execute it.
+#   . "$(dirname "$0")/lib/config"          (from scripts/)
+#   cfg <key> [default]
+# Two flat files of key=value lines: .local/config (this machine, gitignored)
+# overrides home.config (committed). '#' starts a comment. A leading '~/' is
+# expanded to "$HOME/". No other syntax.
+
+if [ -z "${HOME_ROOT:-}" ]; then
+  HOME_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+fi
+export HOME_ROOT
+
+cfg_read_file() { # cfg_read_file <file> <key> -> prints value, returns 1 when absent
+  [ -f "$1" ] || return 1
+  awk -v k="$2" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      i = index(line, "=")
+      if (i == 0) next
+      key = substr(line, 1, i - 1); val = substr(line, i + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      if (key != k) next
+      sub(/[[:space:]]+#.*$/, "", val)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+      found = 1; out = val
+    }
+    END { if (found) { print out; exit 0 } exit 1 }
+  ' "$1"
+}
+
+cfg() { # cfg <key> [default]
+  local v
+  if v=$(cfg_read_file "$HOME_ROOT/.local/config" "$1") || v=$(cfg_read_file "$HOME_ROOT/home.config" "$1"); then
+    case "$v" in "~/"*) v="$HOME/${v#\~/}" ;; "~") v="$HOME" ;; esac
+    printf '%s\n' "$v"
+  else
+    [ $# -ge 2 ] && printf '%s\n' "$2"
+  fi
+  return 0
+}
+
+cfg_all() { # cfg_all <key> -> every value of a repeatable key, from both files
+  local f
+  for f in "$HOME_ROOT/home.config" "$HOME_ROOT/.local/config"; do
+    [ -f "$f" ] || continue
+    awk -v k="$1" '
+      /^[[:space:]]*#/ { next }
+      { i = index($0, "="); if (i == 0) next
+        key = substr($0, 1, i - 1); val = substr($0, i + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+        if (key == k && val != "") print val }
+    ' "$f"
+  done
+}
+
+cfg_has_home() { [ -f "$HOME_ROOT/home.config" ]; }
+
+cfg_gh_dir=$(cfg gh.config_dir)
+if [ -n "$cfg_gh_dir" ]; then
+  export GH_CONFIG_DIR="$cfg_gh_dir"
+fi
+unset cfg_gh_dir
+
+HOME_REPO=$(cfg repo)
+export HOME_REPO
