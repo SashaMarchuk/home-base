@@ -125,6 +125,10 @@ The session-end hook SHALL, for each claim of the ending session whose comment i
 - **WHEN** the scheduled `home-sweep` workflow runs in a home
 - **THEN** it runs the sweep with `--same-repo` and writes the findings to the job summary
 
+#### Scenario: The workflow file changes
+- **WHEN** a push changes the `home-sweep` workflow file
+- **THEN** the workflow runs once on that push, as it does on its schedule
+
 ### Requirement: HOME-009 Repair by the orchestrator
 The orchestrator SHALL close each gap the sweep reports with `home-log finish`, using a pull request link when one holds the result, else a summary of at most ten lines from the local transcript, else the text "No transcript or PR found; nothing recorded.", and treat a claim as dead only when both its tab and its process are gone.
 

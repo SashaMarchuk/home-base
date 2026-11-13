@@ -1,6 +1,10 @@
 name: home-sweep
 # Daily report-only sweep of this repo's issues (scripts/home-sweep --same-repo).
 on:
+  # A push that changes this file runs it once, which also makes GitHub register it.
+  push:
+    paths:
+      - .github/workflows/home-sweep.yml
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -12,7 +16,7 @@ jobs:
   sweep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Sweep this repo's issues (report only)
         env:
           GH_TOKEN: ${{ github.token }}
