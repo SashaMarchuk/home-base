@@ -50,3 +50,21 @@ The `decide` skill SHALL append each owner decision to `DECISIONS.md` as `### D-
 #### Scenario: A default is not a decision
 - **WHEN** a session picks a default the owner did not choose
 - **THEN** nothing is appended and the point goes to an owner issue instead
+
+### Requirement: HOME-080 A question is asked, never only written
+A session SHALL ask the owner only through the ask tool, or with the owner away park its run with the question on the issue (`home-log checkpoint <n> --park --question <text>`), and SHALL never leave a question only in its final message.
+
+#### Scenario: The owner is away
+- **WHEN** a session needs the owner's decision and the owner is not present
+- **THEN** it runs `home-log checkpoint <n> --park --question <text>` and stops waiting
+
+#### Scenario: A free and reversible choice
+- **WHEN** the recommended option is free and reversible
+- **THEN** the session takes it, says so, and asks nothing
+
+### Requirement: HOME-081 Every request gets an issue and a short report
+A session SHALL open an issue for every owner request that needs more than a one-line answer before working on it, and SHALL end with a report of at most five plain lines: done, waiting for the owner, next.
+
+#### Scenario: A short planning request
+- **WHEN** the owner asks for a plan or an explanation that takes real work
+- **THEN** an issue is opened in the home that owns it and the session reports on it in at most five lines

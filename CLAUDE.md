@@ -9,16 +9,16 @@
 - A home may hand work to other homes (parent, child, peer). The topology is in `home.config` (`homes.*`).
 
 ## Hard rules
-1. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist.
+1. Every owner request that needs more than a one-line answer gets an issue in the home that owns it before work starts, even when this session does the work itself. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist.
 2. One session per task. Check open claims before launching anything.
-3. Anything that needs the owner goes through the surface's ask tool, context first, recommended option first.
-4. Never ask what is already answered. Search `DECISIONS.md`, the issue and earlier answers first.
-5. A question lives in one place: the terminal when the owner is present, the issue when not (`home-log checkpoint <n> --question`). After a resume, re-ask it once and never answer it yourself.
+3. Anything that needs the owner goes through the surface's ask tool, context first, recommended option first. A question written only in your final message is not asked: ask with the tool, then continue.
+4. Never ask what is already answered. Search `DECISIONS.md`, the issue and earlier answers first. When the recommended option is free and reversible, take it and say so; ask only what only the owner can decide.
+5. A question lives in one place: the terminal when the owner is present, the issue when not (`home-log checkpoint <n> --park --question "<question>"`). After a resume, re-ask it once and never answer it yourself.
 6. Nothing external without the owner's explicit yes: messages, posts, invitations, purchases, production changes. Prepare a draft instead.
 7. Money: prepare everything; the owner clicks pay.
 8. Production is read-only unless the task says otherwise.
 9. Kill exact PIDs only, never by pattern.
-10. Never type into a busy tab, never answer another session's dialog, never erase an unsent draft.
+10. Never type into a busy tab, never answer another session's dialog on your own (relaying the owner's own words into its free-text row is allowed), never erase an unsent draft.
 11. No personal values, secrets, call copies or raw data in git. Links only.
 12. Use the GitHub account this home's config names. Never switch the CLI account.
 13. Model aliases only, never pinned versions.
@@ -26,6 +26,7 @@
 15. Files, briefs and worker prompts are written in the configured file language (`lang.files`); questions to the owner in `lang.owner`.
 16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them).
 17. Never change global agent settings from a home.
+18. The final message reports in at most five plain lines: what is done, what waits for the owner, what is next.
 
 ## Where things live
 | What | Where |

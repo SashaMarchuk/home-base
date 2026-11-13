@@ -47,3 +47,10 @@ The sweep, when run without `--same-repo`, SHALL report `SWEEP delegated-child-c
 #### Scenario: Child finished
 - **WHEN** the child issue is closed
 - **THEN** the sweep reports it and the orchestrator finishes the parent with "Done in <child link>: <one line>"
+
+### Requirement: HOME-082 The parent never works the child's issue
+The sending orchestrator SHALL never claim, checkpoint, finish or label an issue in the target home, and SHALL only read it.
+
+#### Scenario: A child issue is open
+- **WHEN** the child issue is still open
+- **THEN** the parent writes nothing to it and waits for the sweep to report it closed

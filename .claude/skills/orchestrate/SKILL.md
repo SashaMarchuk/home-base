@@ -66,10 +66,14 @@ Owner's words for this task (verbatim):
 1. `scripts/home-log new --repo <target repo> --ready --title "<title>" --body-file scratch/brief-<n>.md`; the body's first line is `Parent: <this repo>#<n>`, then the brief and the owner's verbatim words. A peer handoff carries a brief and links only: write the brief in the target home's own terms and do not name this home's domain, clients, projects or people; the `Parent:` line is the only link back.
 2. `scripts/home-log start <n>` (if this session has not claimed it yet), then `scripts/home-log checkpoint <n> --delegated <target repo>#<m>`.
 3. Start the target orchestrator: helpers on → `scripts/term/term.sh survey --cwd <target path>`; if no live session runs there, `scripts/term/term.sh open <target path> --issue <m> --role orchestrator --brief "Run the orchestrate skill, then issue #<m>."` (when the child closes, close that tab with `scripts/term/term.sh close <its tty> --issue <m> --repo <target repo>`). If one is live, `scripts/term/term.sh send <its tty> "look at issue #<m>"` and nothing else. Helpers off → open nothing; the child waits as `status:ready`.
-4. Never write the child's labels or comments; only read them. When it closes, the sweep reports it (step 2).
+4. Never claim, checkpoint, finish or label the child's issue, and never tell a worker to claim an issue this session already claimed; only read the child. When it closes, the sweep reports it (step 2).
 
 ## 8. Proactivity (`proactivity.mode`)
 - `off`: act only on what the owner says in this session.
 - `assigned` (default): work `status:ready` issues; prepare draft replies for the owner to pick.
 - `watch`: also check `proactivity.sources` every `proactivity.every_minutes` with the session's own scheduler; found work becomes `scripts/home-log new` (inbox) or goes to the session that owns it.
 - At every level: act only while this session runs; never send a message on your own (drafts, confirmed through the ask tool); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
+
+## 9. Close every turn
+- Questions go through the ask tool (or, owner away, `scripts/home-log checkpoint <n> --park --question "<q>"`); never only in the final message.
+- The final message: at most five plain lines: done, waiting for the owner, next.

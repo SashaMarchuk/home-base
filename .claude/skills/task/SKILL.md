@@ -20,4 +20,4 @@ description: Turn a plain request into a clear task issue. Use when the owner sa
    Links only: no personal values, no call copies, no raw data.
 5. Create it: `scripts/home-log new --title "<short title>" --body-file scratch/task-body.md --ready` (leave out `--ready` when still unclear: it stays `status:inbox`). Exit 4 means the text matched a personal-value pattern: change the text.
 6. For an existing inbox issue: edit its body with the result (`gh api -X PATCH repos/<repo>/issues/<n> -F body=@scratch/task-body.md`) and move it to `status:ready` (`gh api -X DELETE repos/<repo>/issues/<n>/labels/status:inbox`, then `gh api -X POST repos/<repo>/issues/<n>/labels -f 'labels[]=status:ready'`).
-7. Reply with the issue number and title, one line.
+7. Reply with the issue number and title, one line. Ask clarifying questions only with the ask tool (owner away: `scripts/home-log checkpoint <n> --park --question "<q>"`), never only in the reply.
