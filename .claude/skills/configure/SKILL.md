@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Make this repo the user's own home from the base. Use when someone says "configure", "set up my home", "make a home from this base", "onboard me", after cloning the base, or with an answers file ("configure --answers <file>") for an unattended setup.
+description: Make this repo the user's own home from the base. Use when someone says "configure", "set up my home", "make a home from this base", "onboard me", after cloning the base, "finish the setup", or with an answers file ("configure --answers <file>") for an unattended setup.
 ---
 
 # configure
@@ -15,10 +15,10 @@ Run `scripts/configure --answers <file> --labels` from `<root>`. Exit 2 lists ev
 - "was not found on GitHub": the repository does not exist yet. This is the normal first run: go straight to the closing list.
 - "no permission to manage labels": give the fix for this surface (on a computer `gh auth refresh -s repo`; in a cloud or web session the browser action from Finish), then the status tags.
 - Anything else: the line above names what GitHub refused; the status tags can be added once it is fixed.
-Never say the labels exist after exit 4.
+Never say the labels exist after exit 4. After "no permission", do not run `scripts/labels` again in this session.
 
 ## Before asking: where is this session?
-- Cloud or web session (`CLAUDE_CODE_REMOTE` is set, or the person says they have no terminal or work only in the browser): `terminal_helpers=off`; never mention terminals, tabs or this machine; do the remaining steps yourself.
+- Check `CLAUDE_CODE_REMOTE` first. Cloud or web session (it is set, or the person says they have no terminal or work only in the browser): `terminal_helpers=off`; run no `uname` or application-folder checks; never mention terminals, tabs or this machine; do the remaining steps yourself.
 - Otherwise run `uname -s` first. Not `Darwin`: `terminal_helpers=off`, and never mention iTerm2. `Darwin` with iTerm2: `on` (the script's device check keeps `off` if it fails). `Darwin` without iTerm2: `off`. Do not ask.
 - If the person asks about Codex: in a cloud or web session say "the home works with Codex as-is when the same repository is opened with Codex; nothing to install here". On a computer run `command -v codex` and answer from it: the home works with Codex because `AGENTS.md` is the same file as `CLAUDE.md` and the skills folder is shared.
 
@@ -55,4 +55,8 @@ In the person's language and plain words, without key names or session tooling.
    - "Save and upload the files to your repository": `cd <root> && git add -A && git commit -m "Configure home" && git push -u origin HEAD` as one line. If you tried it and it failed, say in one plain sentence that it did not go through, then give that line.
    - "Add the status tags the home uses to track tasks on GitHub": `scripts/labels`; leave it out after `labels: ok`; after "no permission" put the fix first.
    - "Open a session in `<root>` and say "status"" (accept the trust prompt once).
-4. Cloud or web session: do the steps yourself and never hand over a command. If one fails, say in one plain sentence what is not done and the one browser action: give the GitHub app access to the repository, then start a new session on it and say "finish the setup".
+4. Cloud or web session: do the steps yourself and never hand over a command. For each step that failed, one short sentence of what is not done ("the files are saved in this session but not uploaded yet: they exist only in this session until uploaded"; "the status tags are not added yet"), then exactly one action: create the repository if it is missing, give the GitHub app access to it, start a new session on it and say "finish the setup". Give no other instruction about network or session settings.
+
+## "Finish the setup"
+- `home.config` exists in `<root>`: run only what is pending: upload the files if the remote is behind, then `scripts/labels`; report what is now done in one or two lines.
+- The repository is empty and `home.config` is missing: this is a new session without the files. If `.local/answers` exists, run `scripts/configure --answers .local/answers --labels`; otherwise run the two ask calls again. Then continue with Finish.

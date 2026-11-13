@@ -188,3 +188,10 @@ After `scripts/configure` exits 4, the `configure` skill SHALL state only the ca
 #### Scenario: No permission
 - **WHEN** the last line says this login has no permission to manage labels
 - **THEN** the person hears that cause and the fix for their surface, and nothing about other possible causes
+
+### Requirement: HOME-089 Finishing the setup in a later session
+When asked to "finish the setup", the `configure` skill SHALL run only the steps still pending (upload, status tags) in a configured home, and in an empty repository rebuild the home from `.local/answers` or the two question rounds.
+
+#### Scenario: Upload failed in a web session
+- **WHEN** the files could not be uploaded in a web session and the person starts a new session on the repository and says "finish the setup"
+- **THEN** the new session rebuilds the home from the saved answers or asks the two rounds again, and does not ask about anything already answered
