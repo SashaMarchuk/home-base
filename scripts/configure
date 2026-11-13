@@ -9,6 +9,7 @@
 # keys; other lines there are kept), the home section of CLAUDE.md (below the
 # BUFFER lines; the base block is never touched), .claude/settings.json
 # (enabledPlugins from the answers), .gitignore (missing template lines added),
+# the terminal_helpers line of the answers file (when the device check turns it off),
 # wiki/index.md and DECISIONS.md (only when absent), wiki/howto/accounts.md
 # (when accounts.multi=yes), git config core.hooksPath, the base-only paths of
 # base.manifest (git rm when still tracked) and the remotes: when origin is the
@@ -17,7 +18,7 @@
 # Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready or
 # a write or git step failed (the file or step is named), 4 files written but
 # --labels failed (the last line says whether the repo was not found or this
-# login may not create labels).
+# login may not manage labels).
 # Running it twice with the same answers gives the same files.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -30,7 +31,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
     --labels) LABELS=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
   esac
 done
@@ -63,7 +64,7 @@ lang.files=en
 lang.owner=en
 tracker.backend=github
 tracker.board=none
-tracker.board_write=ask-first
+tracker.board_write=
 labels.needs_owner=needs-owner
 base.url=
 limits.mode=none
@@ -185,6 +186,12 @@ device_ok() {
 if [ "$HELPERS" = on ] && ! device_ok; then
   HELPERS=off; HELPERS_NOTE=" (asked on; device check failed: needs macOS, osascript and iTerm2)"
 fi
+if [ "$(ans terminal_helpers)" != "$HELPERS" ]; then # the answers file keeps the value actually written
+  awk -v v="$HELPERS" '{ i = index($0, "="); k = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+    if (i > 0 && $0 !~ /^[[:space:]]*#/ && k == "terminal_helpers") print "terminal_helpers=" v; else print }' "$ANS" > "$ANS.tmp" 2>/dev/null \
+    && mv "$ANS.tmp" "$ANS" 2>/dev/null || { rm -f "$ANS.tmp"; die 3 "cannot write $ANS; nothing else is written, fix it and run configure again"; }
+  echo "configure: wrote $ANS (terminal_helpers=$HELPERS)"
+fi
 
 # ---------- writers ----------
 put() { # put <relative path> <content>; writes only when it changes
@@ -219,7 +226,9 @@ done
 HOMES_LINES=${HOMES_LINES#$'\n'}
 VALUES=""
 while IFS= read -r line; do
-  k=${line%%=*}; VALUES="$VALUES$k"$'\t'"$(val "$k")"$'\n'
+  k=${line%%=*}; v=$(val "$k")
+  [ "$k" = tracker.board_write ] && [ "$BOARD" = none ] && v=""   # written only when a board is named
+  VALUES="$VALUES$k"$'\t'"$v"$'\n'
 done <<EOF
 $COMMITTED_DEFAULTS
 EOF
@@ -327,7 +336,10 @@ fi
 # ---------- completeness check: every key this run used ----------
 echo "configure: keys used"
 for k in owner.names home.domain home.boundary plugins accounts.multi; do echo "  $k=$(ans "$k") (answer)"; done
-for k in $(printf '%s\n' "$COMMITTED_DEFAULTS" | cut -d= -f1); do echo "  $k=$(val "$k") ($(src "$k"))"; done
+for k in $(printf '%s\n' "$COMMITTED_DEFAULTS" | cut -d= -f1); do
+  [ "$k" = tracker.board_write ] && [ "$BOARD" = none ] && { echo "  $k= (no board)"; continue; }
+  echo "  $k=$(val "$k") ($(src "$k"))"
+done
 for k in $MANAGED; do
   if [ "$k" = terminal_helpers ]; then echo "  $k=$HELPERS (answer)$HELPERS_NOTE"; else echo "  $k=$(val "$k") ($(src "$k"))"; fi
 done
@@ -343,7 +355,7 @@ if [ "$LABELS" = 1 ]; then
   if [ "$lrc" != 0 ]; then
     case "$LOUT" in
       *"cannot reach"*"create it on GitHub"*) why="the repo $(ans repo) was not found on GitHub: create it (private), commit, push, then run scripts/labels" ;;
-      *"cannot create labels"*) why="this GitHub login has no permission to create labels in $(ans repo): run \`gh auth refresh -s repo\`, then scripts/labels" ;;
+      *"cannot manage labels"*) why="this GitHub login has no permission to manage labels in $(ans repo). On a computer: \`gh auth refresh -s repo\`; in a web session: give the GitHub app access to the repository. Then run scripts/labels" ;;
       *) why="GitHub refused the label step (see the line above); run scripts/labels again once it is fixed" ;;
     esac
     die 4 "the files are written, but the labels are NOT created: $why"

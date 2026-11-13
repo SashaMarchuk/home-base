@@ -17,15 +17,15 @@ A home's queue is its open GitHub issues, and its state is a fixed set of labels
 - **THEN** it exits 2
 
 ### Requirement: HOME-078 Label failures in one line
-`scripts/labels` SHALL check the repo before creating labels and stop at the first failure with one line and a non-zero exit: on HTTP 404 "cannot reach <repo>: create it on GitHub (private) and push, then run scripts/labels" with exit 3, on HTTP 403 "this GitHub login cannot create labels in <repo>: run `gh auth refresh -s repo`, then scripts/labels" with exit 4, and on any other error the first line of that error with exit 1.
+`scripts/labels` SHALL check the repo before creating labels and stop at the first failure with one line and a non-zero exit: exit 3 on HTTP 404 (the repo cannot be reached), exit 4 on HTTP 403 (this login cannot manage labels) and exit 1 with the first line of the error otherwise.
 
 #### Scenario: Repo not created yet
 - **WHEN** the repo returns HTTP 404
-- **THEN** it prints the one `cannot reach` line and exits 3
+- **THEN** it prints "cannot reach <repo>: create it on GitHub (private) and push, then run scripts/labels" and exits 3
 
 #### Scenario: No permission
 - **WHEN** the first label create returns HTTP 403
-- **THEN** it prints the one `cannot create labels` line, creates no further label and exits 4
+- **THEN** it prints "none created: this GitHub login cannot manage labels in <repo>. On a computer: `gh auth refresh -s repo`; in a web session: give the GitHub app access to the repository. Then run scripts/labels.", creates no further label and exits 4
 
 ### Requirement: HOME-011 New issues enter as inbox or ready
 `home-log new` SHALL return the number of an open issue with exactly the same title instead of creating one, and otherwise create an issue labelled `status:inbox`, or `status:ready` with `--ready`, or `status:<name>` with `--status <name>`, plus every `--label` given, and with the label `dreams` no status label at all.

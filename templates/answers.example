@@ -27,10 +27,10 @@ lang.owner=en
 # ---------- tracker ----------
 # Default github.
 tracker.backend=github
-# REQUIRED. none | clickup
+# REQUIRED. none | <board name, lower case>
 tracker.board=none
-# REQUIRED when tracker.board is not none: ask-first | yes | read-only
-tracker.board_write=ask-first
+# REQUIRED when tracker.board is not none: ask-first | yes | read-only. Not written when none.
+tracker.board_write=
 # REQUIRED. Label for questions waiting on the owner.
 labels.needs_owner=needs-owner
 
@@ -73,7 +73,8 @@ accounts.rows=garden | the co-op's shared workspace | the workspace CLI's own co
 accounts.rows=personal | everything else | the GitHub CLI config directory
 
 # ---------- this machine (written to .local/config) ----------
-# REQUIRED. on | off. "on" is kept only when the device check passes (iTerm2 present, osascript works).
+# REQUIRED. on | off. "on" is kept only when the device check passes (iTerm2 present, osascript works);
+# otherwise configure writes "off" here too.
 terminal_helpers=off
 gh.config_dir=
 transcripts.paths=~/.claude/projects,~/.codex/sessions

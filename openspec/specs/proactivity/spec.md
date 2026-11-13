@@ -17,11 +17,15 @@ The orchestrator SHALL follow `proactivity.mode`: `off` acts only on what the ow
 - **THEN** no ready issue is started unless the owner says so in the session
 
 ### Requirement: HOME-031 Nothing external without the owner's yes
-A home SHALL send no message, post, invitation, purchase or production change without the owner's explicit yes, and instead prepare the text or the payment for the owner to confirm or click.
+A home SHALL send no message, post, invitation, purchase, production change or push to a repository other than its own without the owner's explicit yes, and instead prepare the text, the payment or the change for the owner to confirm or click.
 
 #### Scenario: Reply to a message
 - **WHEN** work needs a reply to someone outside the home
 - **THEN** the reply is prepared and confirmed through the ask tool before anything is sent
+
+#### Scenario: Push to another repository
+- **WHEN** work would push to a repository that is not this home's own
+- **THEN** the push waits for the owner's explicit yes, while this home's own commits and the base-update flow need none
 
 ### Requirement: HOME-032 Heavy work asks first
 At every level, starting more than one helper session or reading in bulk SHALL wait for the owner's yes.

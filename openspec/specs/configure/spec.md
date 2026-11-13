@@ -35,7 +35,7 @@ The `configure` skill SHALL collect answers and defaults interactively into `.lo
 - **THEN** the script exits 3 and says to take it from the base first
 
 ### Requirement: HOME-037 Only the listed files are written
-`scripts/configure` SHALL write only `home.config`, `.local/config`, the home section of `CLAUDE.md` below the buffer, `.claude/settings.json` with `enabledPlugins` from the answers, missing `.gitignore` lines, `wiki/index.md` and `DECISIONS.md` when absent, `wiki/howto/accounts.md` when several accounts are declared, the repo-local `core.hooksPath`, the removal of tracked `base-only` paths and the `origin` and `base` remotes.
+`scripts/configure` SHALL write only `home.config`, `.local/config`, the home section of `CLAUDE.md` below the buffer, `.claude/settings.json` with `enabledPlugins` from the answers, missing `.gitignore` lines, the answers file's `terminal_helpers` line, `wiki/index.md` and `DECISIONS.md` when absent, `wiki/howto/accounts.md` when several accounts are declared, the repo-local `core.hooksPath`, the removal of tracked `base-only` paths and the `origin` and `base` remotes.
 
 #### Scenario: Base block untouched
 - **WHEN** configure rewrites `CLAUDE.md`
@@ -97,7 +97,7 @@ When `--labels` is given and the labels cannot be created, `scripts/configure` S
 
 #### Scenario: No permission to create labels
 - **WHEN** the repository exists but creating a label returns HTTP 403
-- **THEN** the script exits 4 and its last line says this login has no permission to create labels: run `gh auth refresh -s repo`, then `scripts/labels`
+- **THEN** the script exits 4 and its last line says this login has no permission to manage labels, with the fix on a computer (`gh auth refresh -s repo`) and in a web session (give the GitHub app access to the repository), then `scripts/labels`
 
 ### Requirement: HOME-075 Base-only paths leave the home
 On a successful run in a git repo with a `base.manifest`, `scripts/configure` SHALL remove with `git rm` every `base-only` path that is still tracked and name each one it removed.
@@ -129,12 +129,62 @@ When `origin` is the URL in `base.url`, `scripts/configure` SHALL rename it to `
 - **THEN** the script exits 3 with `cannot write home.config` and never prints `wrote home.config`
 
 ### Requirement: HOME-079 The skill asks only what it cannot know
-The `configure` skill MUST ask, in plain words without key names, only for the owner, what the home is for, what must never enter it, the owner's own rules, the repo name, the file language and a team board, at most four questions per round, and set every other key to its default without asking.
+The `configure` skill MUST ask, in plain words without key names, only for the owner, what the home is for, what must never enter it, the owner's own rules, the repo name, the file language and a team board, in exactly two ask calls (owner, purpose, never-allowed and own rules first; repo name, file language and board second), and set every other key to its default without asking.
 
 #### Scenario: Newcomer
 - **WHEN** a person who knows none of the settings runs the skill
-- **THEN** they are asked at most those seven things as open or recommended-first questions, and the closing message lists the defaults and says any can be changed later by telling the agent
+- **THEN** they are asked those seven things in two calls, as free-text or recommended-first questions, and the closing message lists the defaults and says any can be changed later by telling the agent
 
 #### Scenario: Cloud session
 - **WHEN** the session runs in the cloud or the person has no terminal
 - **THEN** terminal helpers are off and nothing about terminals or this machine is said
+
+#### Scenario: Not macOS
+- **WHEN** `uname -s` does not print `Darwin`
+- **THEN** terminal helpers are off, the terminal application is never mentioned and the closing list says only "opening terminal tabs: off"
+
+### Requirement: HOME-083 The answers file keeps the effective terminal helpers value
+When the device check turns an answered `terminal_helpers=on` into `off`, `scripts/configure` SHALL rewrite the `terminal_helpers` line of the answers file to `off` and say so.
+
+#### Scenario: Device check fails
+- **WHEN** the answers hold `terminal_helpers=on` and the device check fails
+- **THEN** the answers file and `.local/config` both hold `terminal_helpers=off`, and a second run changes neither
+
+### Requirement: HOME-084 Board write rule only with a board
+`scripts/configure` SHALL write a value for `tracker.board_write` to `home.config` only when `tracker.board` names a board, and leave it empty when the board is `none`.
+
+#### Scenario: No board
+- **WHEN** the answers hold `tracker.board=none` and `tracker.board_write=ask-first`
+- **THEN** `home.config` holds `tracker.board_write=` with no value
+
+### Requirement: HOME-085 The skill works from the repo root
+The `configure` skill SHALL find the repo root with `git rev-parse --show-toplevel`, write the answers and run the script only there, and name that folder by its absolute path in the closing steps.
+
+#### Scenario: Started in a subfolder
+- **WHEN** the session starts in a subfolder of the home
+- **THEN** no file is created in the subfolder and the closing steps name the absolute repo root
+
+### Requirement: HOME-086 Boundary and rules are the person's own words
+The `configure` skill SHALL ask for what must never enter the home and for the owner's rules as free text with no options or example answers, and record every rule the answer mentions without judging any redundant.
+
+#### Scenario: Rule the person thinks is covered
+- **WHEN** the person answers that they have no rules except one the defaults may already cover
+- **THEN** that rule is written to the home section
+
+### Requirement: HOME-087 The closing lists only what is left
+The `configure` skill SHALL close with only the steps still left, in plain words and each chosen from the actual result, and in a cloud or web session name what is not done and the one browser action instead of any command.
+
+#### Scenario: Labels created and repo exists
+- **WHEN** the run printed `labels: ok` and the repository exists
+- **THEN** neither creating the repository nor adding the status tags is listed
+
+#### Scenario: Web session push fails
+- **WHEN** a push the skill tries in a web session fails
+- **THEN** it says what is not done and to give the GitHub app access to the repository, then start a new session on it and say "finish the setup", with no command
+
+### Requirement: HOME-088 Exit 4 names only the printed cause
+After `scripts/configure` exits 4, the `configure` skill SHALL state only the cause the last line printed, with its fix, in one sentence, without other causes or a conditional fix.
+
+#### Scenario: No permission
+- **WHEN** the last line says this login has no permission to manage labels
+- **THEN** the person hears that cause and the fix for their surface, and nothing about other possible causes

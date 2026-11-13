@@ -14,7 +14,7 @@
 3. Anything that needs the owner goes through the surface's ask tool, context first, recommended option first. A question written only in your final message is not asked: ask with the tool, then continue.
 4. Never ask what is already answered. Search `DECISIONS.md`, the issue and earlier answers first. When the recommended option is free and reversible, take it and say so; ask only what only the owner can decide.
 5. A question lives in one place: the terminal when the owner is present, the issue when not (`home-log checkpoint <n> --park --question "<question>"`). After a resume, re-ask it once and never answer it yourself.
-6. Nothing external without the owner's explicit yes: messages, posts, invitations, purchases, production changes. Prepare a draft instead.
+6. Nothing external without the owner's explicit yes: messages, posts, invitations, purchases, production changes, and any push to a repository other than this home's own (this home's own commits and the base-update flow need no extra yes). Prepare a draft instead.
 7. Money: prepare everything; the owner clicks pay.
 8. Production is read-only unless the task says otherwise.
 9. Kill exact PIDs only, never by pattern.

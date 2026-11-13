@@ -56,7 +56,7 @@ home.rules=Plain words, recommended option first.
 home.rules=Never contact a buyer without the owner's yes.
 lang.files=en
 lang.owner=en
-tracker.board=clickup
+tracker.board=taskwall
 tracker.board_write=read-only
 labels.needs_owner=needs-owner
 base.url=https://github.com/example-org/home-base.git
@@ -163,6 +163,26 @@ check "multi=no exits 0" [ "$rc" = 0 ]
 check "multi=no: no accounts page" [ ! -f "$R2/wiki/howto/accounts.md" ]
 check "empty plugins: no enabledPlugins" [ "$(jq 'has("enabledPlugins")' "$R2/.claude/settings.json")" = false ]
 
+# 6b. no board: board_write is not written even when answered
+sed 's/^tracker.board=.*/tracker.board=none/' "$W/answers.no" > "$W/answers.noboard"
+"$R2/scripts/configure" --answers "$W/answers.noboard" >/dev/null 2>&1; rc=$?
+check "no board: exit 0" [ "$rc" = 0 ]
+check "no board: board_write empty" grep -qx 'tracker.board_write=' "$R2/home.config"
+check "board named: board_write kept" grep -qx 'tracker.board_write=read-only' "$R/home.config"
+
+# 6c. helpers asked on, device check fails: the answers file is rewritten to off
+mkdir -p "$W/notmac"; printf '#!/bin/sh\necho Linux\n' > "$W/notmac/uname"; chmod +x "$W/notmac/uname"
+sed 's/^terminal_helpers=.*/terminal_helpers=on/' "$W/answers.no" > "$W/answers.on"
+out=$(PATH="$W/notmac:$PATH" "$R2/scripts/configure" --answers "$W/answers.on" 2>&1); rc=$?
+check "helpers on, not macOS: exit 0" [ "$rc" = 0 ]
+check "helpers on, not macOS: config off" grep -qx 'terminal_helpers=off' "$R2/.local/config"
+check "helpers on, not macOS: answers off" [ "$(grep '^terminal_helpers=' "$W/answers.on")" = terminal_helpers=off ]
+check "helpers on, not macOS: rewrite reported" grep -q "configure: wrote $W/answers.on (terminal_helpers=off)" <<<"$out"
+out=$(PATH="$W/notmac:$PATH" "$R2/scripts/configure" --answers "$W/answers.on" 2>&1)
+check "helpers rewrite: second run writes nothing" sh -c "! grep -q 'configure: wrote' <<'X'
+$out
+X"
+
 # 7. a failed write is an error: exit 3, the file named, never "wrote"
 R3="$W/home3"; mkdir -p "$R3"; cp -R "$SRC/scripts" "$SRC/templates" "$R3/"; cp "$R/CLAUDE.md" "$R3/CLAUDE.md"
 git -C "$R3" init -q; mkdir -p "$R3/home.config"   # a folder where the file must go: unwritable even as root
@@ -184,9 +204,9 @@ check "missing repo: configure says not found" sh -c 'printf "%s
 out=$(GH_STUB_FAIL_MATCH='^label create' GH_STUB_FAIL_MESSAGE='HTTP 403: Resource not accessible by integration' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "no permission: exit 4" [ "$rc" = 4 ]
 check "no permission: no raw error, one labels line" [ "$(grep -c 'HTTP 403' <<<"$out")$(grep -c '^labels:' <<<"$out")" = 01 ]
-check "no permission: labels one-liner" grep -qx 'labels: this GitHub login cannot create labels in example-org/orchard-home: run `gh auth refresh -s repo`, then scripts/labels' <<<"$out"
+check "no permission: labels one-liner" grep -qx 'labels: none created: this GitHub login cannot manage labels in example-org/orchard-home. On a computer: `gh auth refresh -s repo`; in a web session: give the GitHub app access to the repository. Then run scripts/labels.' <<<"$out"
 check "no permission: configure says permission" sh -c 'printf "%s
-" "$1" | tail -1 | grep -q "no permission to create labels"' _ "$out"
+" "$1" | tail -1 | grep -q "no permission to manage labels.*in a web session: give the GitHub app access"' _ "$out"
 out=$("$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "labels ok: exit 0" [ "$rc" = 0 ]
 check "labels ok reported" grep -q '^labels: ok (example-org/orchard-home)' <<<"$out"
