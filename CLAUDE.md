@@ -9,7 +9,7 @@
 - A home may hand work to other homes (parent, child, peer). The topology is in `home.config` (`homes.*`).
 
 ## Hard rules
-1. Every owner request that needs more than a one-line answer gets an issue in the home that owns it before work starts, even when this session does the work itself. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist.
+1. Every owner request that needs more than a one-line answer gets an issue in the home that owns it before work starts, even when this session does the work itself. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist. Until `home.config` exists, the only task is the `configure` skill, and it opens no issue.
 2. One session per task. Check open claims before launching anything.
 3. Anything that needs the owner goes through the surface's ask tool, context first, recommended option first. A question written only in your final message is not asked: ask with the tool, then continue.
 4. Never ask what is already answered. Search `DECISIONS.md`, the issue and earlier answers first. When the recommended option is free and reversible, take it and say so; ask only what only the owner can decide.

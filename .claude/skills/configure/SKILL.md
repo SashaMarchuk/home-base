@@ -7,8 +7,13 @@ description: Make this repo the user's own home from the base. Use when someone 
 
 One code path: `scripts/configure --answers <file> [--labels]`. Interactive mode only collects the answers. `templates/answers.example` lists every key with an example.
 
-## First: the repo root
-Run `git rev-parse --show-toplevel` and work only in that folder (`<root>` below): run the scripts there, write `.local/answers` there, never create files or a second home in a subfolder.
+## Order of work
+1. The repo root: `git rev-parse --show-toplevel`; work only in that folder (`<root>` below): run the scripts there, write `.local/answers` there, never create files or a second home in a subfolder.
+2. The session checks below.
+3. The GitHub login, on its own: `gh api user --jq .login`. If it fails, ask the repository question without a recommendation and say nothing about GitHub now; GitHub problems are reported only in Finish, from the script's result.
+4. Ask. The questions are the last thing in the turn.
+
+Configure opens no issue and does not use `scripts/home-log`: the home has no repository yet. Never mention an issue during setup.
 
 ## With an answers file
 Run `scripts/configure --answers <file> --labels` from `<root>`. Exit 2 lists every missing or invalid key: ask for exactly those (or report them when unattended) and run again. Exit 3: the repo is not ready (no `CLAUDE.md` with the base block and buffer, or a template missing) or a write or git step failed; the line names the file or step: fix that and run again. Exit 4: the files are written but the labels are not. State only the cause the last line printed, with its fix, in one sentence; add no other cause and never make the fix conditional:
@@ -23,7 +28,7 @@ Never say the labels exist after exit 4. After "no permission", do not run `scri
 - If the person asks about Codex: in a cloud or web session say "the home works with Codex as-is when the same repository is opened with Codex; nothing to install here". On a computer run `command -v codex` and answer from it: the home works with Codex because `AGENTS.md` is the same file as `CLAUDE.md` and the skills folder is shared.
 
 ## Interactive: two ask calls
-Use the surface's ask tool, in the language the person writes in, in plain everyday words. Never show a key name or the words labels, hooks, plugins, dreams, proactivity, limits, config, MCP, worker, orchestrator. Ask in exactly two calls: first the owner, purpose, never-allowed and own rules; then the repository name, file language and team board. Skip anything already in `.local/answers` from an earlier run. Give examples only for the purpose, and only from the person's own words; never name a board product the person did not name.
+Use the surface's ask tool, in the language the person writes in, in plain everyday words. If the surface has no ask tool (Codex), finish all checks first, then end your message with the questions as a short numbered list and stop; say nothing after them; when the person replies, ask the second set the same way, then run the script. Never show a key name or the words labels, hooks, plugins, dreams, proactivity, limits, config, MCP, worker, orchestrator. Ask in exactly two calls: first the owner, purpose, never-allowed and own rules; then the repository name, file language and team board. Skip anything already in `.local/answers` from an earlier run. Give examples only for the purpose, and only from the person's own words; never name a board product the person did not name.
 
 | Ask (plain words) | Key | How |
 |---|---|---|

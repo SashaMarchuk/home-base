@@ -195,3 +195,10 @@ When asked to "finish the setup", the `configure` skill SHALL run only the steps
 #### Scenario: Upload failed in a web session
 - **WHEN** the files could not be uploaded in a web session and the person starts a new session on the repository and says "finish the setup"
 - **THEN** the new session rebuilds the home from the saved answers or asks the two rounds again, and does not ask about anything already answered
+
+### Requirement: HOME-090 Setup comes before the record of work
+Until `home.config` exists, a session SHALL treat the `configure` skill as its only task, open no issue and not use `scripts/home-log`, and end its turn with the questions when it must ask.
+
+#### Scenario: A surface without an ask tool
+- **WHEN** configure runs on a surface that has no ask tool
+- **THEN** the session finishes its checks, ends the message with a short numbered list of questions and stops
