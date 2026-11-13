@@ -227,5 +227,34 @@ out=$("$R4/scripts/configure" --answers "$W/answers.base" 2>&1); rc=$?
 check "base itself refused (exit 2)" [ "$rc" = 2 ]
 check "base itself named" grep -q 'this is the base itself' <<<"$out"
 
+# 10. the session may not change git settings: every other step is done, exit 5, then a rerun finishes
+R5="$W/home5"; mkdir -p "$R5"
+cp -R "$SRC/scripts" "$SRC/templates" "$SRC/base.manifest" "$R5/"; cp "$R/CLAUDE.md" "$R5/CLAUDE.md"
+mkdir -p "$R5/openspec"; echo spec > "$R5/openspec/a.md"; echo readme > "$R5/README.md"
+git -C "$R5" init -q; git -C "$R5" add -A
+git -C "$R5" -c user.name=tester -c user.email=tester@users.noreply.github.com commit -qm clone --no-verify
+git -C "$R5" remote add origin https://github.com/example-org/home-base.git
+REAL_GIT=$(command -v git); mkdir -p "$W/lockedgit"
+cat > "$W/lockedgit/git" <<EOF
+#!/bin/sh
+sub=\$1; [ "\$1" = -C ] && sub=\$3
+[ "\$sub" = config ] && { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$W/lockedgit/git"
+out=$(PATH="$W/lockedgit:$PATH" "$R5/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "git refused: exit 5" [ "$rc" = 5 ]
+check "git refused: files written" grep -qx 'repo=example-org/orchard-home' "$R5/home.config"
+check "git refused: base-only folder gone from disk" [ ! -e "$R5/openspec" ]
+check "git refused: base-only file gone from disk" [ ! -e "$R5/README.md" ]
+check "git refused: the one line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -q "this session may not change the repository.s git settings; run .scripts/configure --answers $2. from your own terminal (or allow it), then continue"' _ "$out" "$A"
+check "git refused: hooksPath not set" [ -z "$(git -C "$R5" config --local core.hooksPath)" ]
+check "git refused: origin still the base" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/home-base.git ]
+out=$("$R5/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "rerun: exit 0" [ "$rc" = 0 ]
+check "rerun: base-only paths out of the index" [ -z "$(git -C "$R5" ls-files openspec README.md)" ]
+check "rerun: hooksPath set" [ "$(git -C "$R5" config --local core.hooksPath)" = .githooks ]
+check "rerun: origin re-pointed" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

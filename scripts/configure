@@ -11,14 +11,16 @@
 # (enabledPlugins from the answers), .gitignore (missing template lines added),
 # the terminal_helpers line of the answers file (when the device check turns it off),
 # wiki/index.md and DECISIONS.md (only when absent), wiki/howto/accounts.md
-# (when accounts.multi=yes), git config core.hooksPath, the base-only paths of
-# base.manifest (git rm when still tracked) and the remotes: when origin is the
-# base (base.url) it becomes base (push disabled) and origin becomes the repo of
-# the answers. It never pushes. --labels then runs scripts/labels.
+# (when accounts.multi=yes) and deletes the base-only paths of base.manifest that
+# are still tracked. Only then the git steps: core.hooksPath, the base-only paths
+# dropped from the index, and the remotes: when origin is the base (base.url) it
+# becomes base (push disabled) and origin becomes the repo of the answers.
+# It never pushes. --labels then runs scripts/labels.
 # Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready or
 # a write or git step failed (the file or step is named), 4 files written but
 # --labels failed (the last line says whether the repo was not found or this
-# login may not manage labels).
+# login may not manage labels), 5 files written but this session may not change
+# the repository's git settings (the last line says what to run instead).
 # Running it twice with the same answers gives the same files.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -31,7 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
     --labels) LABELS=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
   esac
 done
@@ -294,18 +296,38 @@ if [ "$MULTI" = yes ]; then
   put wiki/howto/accounts.md "$(S_ACCOUNT_ROWS=$AR subst "$T/wiki/howto/accounts.md")"
 fi
 
-# git: hooks path, base-only paths, remotes (repo-local only; never pushes)
-GITC() { git -C "$ROOT" "$@" >/dev/null 2>&1 || die 3 "git $* failed; the files above are written, fix git and run configure again"; }
-if [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ]; then
-  [ "$(git -C "$ROOT" config --local core.hooksPath)" = .githooks ] || { GITC config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
-  # base-only paths: present in the base repo only, removed from the home
-  if [ -f "$ROOT/base.manifest" ]; then
-    while read -r kind path _; do
-      [ "$kind" = base-only ] || continue
-      [ -n "$(git -C "$ROOT" ls-files -- "$path")" ] || continue
-      GITC rm -r -q -- "$path"; echo "configure: removed base-only path $path"
-    done < "$ROOT/base.manifest"
-  fi
+# base-only paths: present in the base repo only, deleted from the home's folder
+# here; the git phase below drops them from the index
+IS_GIT=0; [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ] && IS_GIT=1
+BASE_ONLY=()
+if [ "$IS_GIT" = 1 ] && [ -f "$ROOT/base.manifest" ]; then
+  while read -r kind path _; do
+    [ "$kind" = base-only ] || continue
+    FILES=$(git -C "$ROOT" ls-files -- "$path")
+    [ -n "$FILES" ] || continue
+    BASE_ONLY+=("$path"); gone=0
+    while IFS= read -r f; do
+      [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ] || continue
+      rm -f "$ROOT/$f" 2>/dev/null || die 3 "cannot remove $f; files before it may be written, fix it and run configure again"
+      (cd "$ROOT" && rmdir -p "$(dirname "$f")" 2>/dev/null); gone=1
+    done <<<"$FILES"
+    [ "$gone" = 1 ] && echo "configure: removed base-only path $path"
+  done < "$ROOT/base.manifest"
+fi
+
+# git: hooks path, base-only paths out of the index, remotes (repo-local only; never pushes)
+GITC() { # a git step; a refused permission exits 5, any other failure exits 3
+  local err
+  err=$(git -C "$ROOT" "$@" 2>&1 >/dev/null) && return 0
+  case "$err" in
+    *"Operation not permitted"*|*"could not lock config file"*|*"Permission denied"*|*[Rr]ead-only*)
+      die 5 "the files are written, but this session may not change the repository's git settings; run \`scripts/configure --answers $ANS\` from your own terminal (or allow it), then continue" ;;
+  esac
+  die 3 "git $* failed: $(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -1); the files are written, fix it and run configure again"
+}
+if [ "$IS_GIT" = 1 ]; then
+  [ "$(git -C "$ROOT" config --local core.hooksPath 2>/dev/null)" = .githooks ] || { GITC config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
+  for path in ${BASE_ONLY[@]+"${BASE_ONLY[@]}"}; do GITC rm -r -q --cached --ignore-unmatch -- "$path"; done
   # remotes: origin is the owner's repo, base is the base with push disabled
   BURL=$(ans base.url); RURL="https://github.com/$(ans repo).git"
   OURL=$(git -C "$ROOT" remote get-url origin 2>/dev/null)

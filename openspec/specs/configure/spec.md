@@ -100,7 +100,7 @@ When `--labels` is given and the labels cannot be created, `scripts/configure` S
 - **THEN** the script exits 4 and its last line says this login has no permission to manage labels, with the fix on a computer (`gh auth refresh -s repo`) and in a web session (give the GitHub app access to the repository), then `scripts/labels`
 
 ### Requirement: HOME-075 Base-only paths leave the home
-On a successful run in a git repo with a `base.manifest`, `scripts/configure` SHALL remove with `git rm` every `base-only` path that is still tracked and name each one it removed.
+In a git repo with a `base.manifest`, `scripts/configure` SHALL delete from the folder every `base-only` path that is still tracked, before any git step, name each one it removed, and drop them from the index in the git steps.
 
 #### Scenario: Fresh clone of the base
 - **WHEN** configure runs in a clone that still tracks `openspec/` and `README.md`
@@ -122,7 +122,7 @@ When `origin` is the URL in `base.url`, `scripts/configure` SHALL rename it to `
 - **THEN** it is left unchanged
 
 ### Requirement: HOME-077 A failed write or git step stops the run
-`scripts/configure` SHALL check the result of every file write and every git step and, on a failure, exit 3 naming the file or step, without reporting it as written.
+`scripts/configure` SHALL check the result of every file write and every git step and, on a failure other than a refused git permission, exit 3 naming the file or step and git's own error, without reporting it as written.
 
 #### Scenario: Unwritable file
 - **WHEN** `home.config` cannot be written
@@ -133,7 +133,7 @@ The `configure` skill MUST ask, in plain words without key names, only for the o
 
 #### Scenario: Newcomer
 - **WHEN** a person who knows none of the settings runs the skill
-- **THEN** they are asked those seven things in two calls, as free-text or recommended-first questions, and the closing message lists the defaults and says any can be changed later by telling the agent
+- **THEN** they are asked those seven things in two calls, and the closing message lists the defaults as bullet lines, starting with "Updates to this setup come from: <url>", and says any can be changed later by telling the agent
 
 #### Scenario: Cloud session
 - **WHEN** the session runs in the cloud or the person has no terminal
@@ -180,7 +180,7 @@ The `configure` skill SHALL close with only the steps still left, in plain words
 
 #### Scenario: Web session push fails
 - **WHEN** a push the skill tries in a web session fails
-- **THEN** it says what is not done and to give the GitHub app access to the repository, then start a new session on it and say "finish the setup", with no command
+- **THEN** it says what is not done, with no cause, and gives one action: create the repository if it is missing, give the GitHub app access to it, then come back to this session and say "finish the setup", with no command
 
 ### Requirement: HOME-088 Exit 4 names only the printed cause
 After `scripts/configure` exits 4, the `configure` skill SHALL state only the cause the last line printed, with its fix, in one sentence, without other causes or a conditional fix.
@@ -190,15 +190,89 @@ After `scripts/configure` exits 4, the `configure` skill SHALL state only the ca
 - **THEN** the person hears that cause and the fix for their surface, and nothing about other possible causes
 
 ### Requirement: HOME-089 Finishing the setup in a later session
-When asked to "finish the setup", the `configure` skill SHALL run only the steps still pending (upload, status tags) in a configured home, and in an empty repository rebuild the home from `.local/answers` or the two question rounds.
+When asked to "finish the setup", the `configure` skill SHALL run only the steps still pending (upload, status tags) in a configured home, and in a repository without the base files run nothing and point the person to the session where the setup started or to the base with their pasted answers.
 
-#### Scenario: Upload failed in a web session
-- **WHEN** the files could not be uploaded in a web session and the person starts a new session on the repository and says "finish the setup"
-- **THEN** the new session rebuilds the home from the saved answers or asks the two rounds again, and does not ask about anything already answered
+#### Scenario: Upload retried in the same session
+- **WHEN** the upload failed in a web session and the person comes back to it and says "finish the setup"
+- **THEN** the session uploads the files and adds the status tags without asking anything again
+
+#### Scenario: Empty repository
+- **WHEN** "finish the setup" is said in a new session on a repository without `scripts/configure`
+- **THEN** no script is run and the person is told to return to the first session, or to open the base again, say "set it up" and paste the answers block
 
 ### Requirement: HOME-090 Setup comes before the record of work
 Until `home.config` exists, a session SHALL treat the `configure` skill as its only task, open no issue and not use `scripts/home-log`, and end its turn with the questions when it must ask.
 
 #### Scenario: A surface without an ask tool
 - **WHEN** configure runs on a surface that has no ask tool
-- **THEN** the session finishes its checks, ends the message with a short numbered list of questions and stops
+- **THEN** the session finishes its checks and the numbered questions are the final message of the turn, with no progress or status message before or after them and no reference to "the questions above"
+
+### Requirement: HOME-091 Git settings are changed last
+`scripts/configure` SHALL finish every step outside `.git` before any git step and, when git refuses a step for lack of permission (`Operation not permitted`, `could not lock config file`, read-only), exit 5 with one line saying the files are written, this session may not change the repository's git settings, and `scripts/configure --answers <file>` is to be run from the person's own terminal (or allowed), then continue.
+
+#### Scenario: Git config refused
+- **WHEN** `git config` fails with "could not lock config file" during a run on a fresh clone of the base
+- **THEN** every file is written, the base-only paths are gone from the folder, the script exits 5 with that one line, and a rerun with permission sets the hooks path, the index and the remotes
+
+### Requirement: HOME-092 Several questions in one numbered list
+When one ask call carries several questions, the `configure` skill SHALL send them as one numbered free-text list with each recommendation inside its own question, and use an options list only for a call holding a single question.
+
+#### Scenario: Second round
+- **WHEN** the skill asks for the repository name, the file language and the team board together
+- **THEN** it sends three numbered questions, the first two each naming its recommendation, and no options list
+
+### Requirement: HOME-093 Session checks one command each
+The `configure` skill SHALL run `echo "${CLAUDE_CODE_REMOTE:-}"` alone as its first command, run `uname -s` alone only when that printed nothing, and set terminal helpers on only when `uname -s` printed `Darwin` and `$TERM_PROGRAM` is `iTerm.app`.
+
+#### Scenario: Terminal application installed but not used
+- **WHEN** the session runs on macOS in a terminal other than iTerm2 that is installed on the machine
+- **THEN** terminal helpers are off
+
+### Requirement: HOME-094 Names exactly as typed
+The `configure` skill SHALL write the owner names exactly as the person typed them, in their own script, without transliterating.
+
+#### Scenario: Names in a non-Latin script
+- **WHEN** the person gives their name in a non-Latin script and the file language is English
+- **THEN** `owner.names` holds the name as typed
+
+### Requirement: HOME-095 Creating the repository on request
+When the person asks the `configure` skill to create the repository, the GitHub login works and the repository does not exist, the skill SHALL run `gh repo create <repo> --private` before the script and say in one sentence that it was created as private.
+
+#### Scenario: Creation fails
+- **WHEN** `gh repo create` fails
+- **THEN** the closing list keeps the step to create the private repository, with the reason
+
+### Requirement: HOME-096 The person's word about the repository
+The `configure` skill SHALL list the step to create the repository, and give "the repository does not exist yet" as the status-tag cause, when the person said it is not created even if GitHub reports otherwise, and say "a repository with this name already exists on your account; I used it" when it was found although the person said they had not created it.
+
+#### Scenario: Found although not created
+- **WHEN** the person said they have not created the repository and `gh api repos/<repo>` finds it
+- **THEN** the closing says a repository with this name already exists on their account and was used
+
+### Requirement: HOME-097 A failed upload in plain words
+When the files were saved but only the upload failed on a computer, the `configure` skill SHALL say "the files are saved on this computer but not uploaded yet", give only `cd <root> && git push -u origin HEAD`, name no cause and not use the word "commit".
+
+#### Scenario: Push refused
+- **WHEN** the commit succeeded and the push failed
+- **THEN** the closing gives that sentence and the push line only
+
+### Requirement: HOME-098 Closing after a stopped run
+After `scripts/configure` exits 3 or 5 with files written, the `configure` skill SHALL say in plain words what is saved and what is not, without file names, and give the full remaining list: the command to run again, creating the repository, the upload line, the status tags and opening a session with "status".
+
+#### Scenario: Git settings refused
+- **WHEN** the script exits 5
+- **THEN** the closing names no file such as `.git/config` and lists every remaining step, starting with the command to run from the person's own terminal
+
+### Requirement: HOME-099 No retry of a refused git step
+On Codex the `configure` skill SHALL run `scripts/configure` asking for elevated permission because it changes git settings, and after exit 5 hand over the printed line without running the script again in that session.
+
+#### Scenario: Permission refused on Codex
+- **WHEN** the script exits 5 in a Codex session
+- **THEN** the session does not run it again and gives the person the line to run from their own terminal
+
+### Requirement: HOME-100 Codex in a cloud session
+Asked about Codex in a cloud or web session, the `configure` skill SHALL say the home works with Codex as-is when the same repository is opened with Codex, because Codex reads the same rules file and the same skills, and that there is nothing to install.
+
+#### Scenario: Codex question in the browser
+- **WHEN** the person asks about Codex in a web session
+- **THEN** the answer gives the reason and asks for no installation
