@@ -6,11 +6,15 @@ A home hands work to a parent, child or peer home through an issue in that home.
 ## Requirements
 
 ### Requirement: HOME-022 Handoff through an issue in the target home
-Delegation SHALL create a `status:ready` issue in the target home's repo with `home-log new --repo <target> --ready`, whose body starts with `Parent: <this repo>#<n>` followed by the brief and the owner's verbatim words.
+Delegation SHALL start from an issue claimed in the sending home and create a `status:ready` issue in the target home's repo with `home-log new --repo <target> --ready`, whose body starts with `Parent: <this repo>#<n>` followed by the brief and the owner's verbatim words.
 
 #### Scenario: Peer handoff
 - **WHEN** work is handed to a peer home
 - **THEN** the new issue carries a brief and links only, no content of the sending home's domain
+
+#### Scenario: The owner asks for the target home's work directly
+- **WHEN** the owner asks the sending orchestrator for work that belongs to another home and no issue exists yet
+- **THEN** the sender opens and claims an issue in its own home before it creates the child issue
 
 ### Requirement: HOME-023 The parent issue records the child
 `home-log checkpoint <n> --delegated <repo>#<m>` SHALL set the parent issue to `status:delegated` and write `- delegated: <repo>#<m>` into the run's comment.
