@@ -162,7 +162,7 @@ if sel guards; then
            'git push base main' 'docker restart web'; do
     expect "bash-guard must block: $c" 2 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
-  for c in 'kill 4242' 'kill -TERM 4242' 'kill -s TERM 4242' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix'; do
+  for c in 'kill 4242' 'kill -TERM 4242' 'kill -s TERM 4242' 'kill 4242 2>&1' 'kill 4242 >/dev/null 2>&1' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix'; do
     expect "bash-guard must allow: $c" 0 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
   SG="$H/scripts/hooks/sensitive-guard"

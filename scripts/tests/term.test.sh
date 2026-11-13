@@ -395,5 +395,79 @@ check "survey --cwd finds the hand tab" ts survey --cwd "$T"
 check "survey --cwd with no session -> exit 1" [ "$(rc_of ts survey --cwd "$HOME_ROOT")" = 1 ]
 check "state idle" [ "$(ts state "$TTY")" = idle ]
 
+# ---------------------------------------------------------------- rule 15: --adopt the owner's own tab
+hand_tab() { # hand_tab <tty> <pid> <command line> [mode]: a tab the owner opened by hand (not in the registry)
+  local d="$TERM_FAKE_DIR/tabs/$1"
+  mkdir -p "$d" "$TERM_FAKE_DIR/proc/$2"
+  printf 'hand-%s' "$1" > "$d/tab"; printf '%s' "${4:-claude}" > "$d/mode"; : > "$d/box"; printf '%s' "$2" > "$d/pid"
+  printf '%s' "$3" > "$TERM_FAKE_DIR/proc/$2/cmd"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$2/tty"
+  printf '%s' "$WORK" > "$TERM_FAKE_DIR/proc/$2/cwd"
+  TTY=$1; PID=$2
+}
+reg_len() { if [ -f "$REG" ]; then jq length "$REG"; else echo 0; fi; }
+untouched() { # untouched <registry length>: nothing typed, nothing recorded, nothing signalled
+  [ -z "$(keys)" ] && [ "$(reg_len)" = "$1" ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
+}
+HSID="0a1b2c3d-1111-4222-8333-444455556666"
+
+reset; hand_tab ttyh1 701 "claude"
+check "r15 close --adopt without an issue" ts close ttyh1 --adopt
+check "r15 typed /exit then exit" [ "$(sent | tr '\n' ' ')" = "/exit exit " ]
+check "r15 adopted PID gone" not alive 701
+check "r15 recorded as adopted and closed" [ "$(jq -r '.[0] | (.adopted == true and .closed != null and .tty == "ttyh1" and .pid == 701)' "$REG")" = true ]
+check "r15 never killed" [ ! -f "$TERM_FAKE_DIR/kills" ]
+reset; hand_tab ttyh1 701 "/usr/local/bin/claude --model opus"; issue 12 final
+check "r15 close --adopt with a finished issue" ts close ttyh1 --adopt --issue 12
+check "r15 issue recorded" [ "$(jq -r '.[0].issue' "$REG")" = 12 ]
+reset; hand_tab ttyh1 702 "claude --resume $HSID"
+check "r15 park --adopt" ts park ttyh1 --adopt --issue 21
+check "r15 park wrote the resume command" grep -q "^checkpoint 21 --run-id $HSID --park --text Parked by term.sh. Resume: cd .* && 'claude' --resume $HSID" "$T/home-log.calls"
+check "r15 parked entry adopted" [ "$(jq -r '.[0] | (.adopted == true and .parked == true and .session_id == "'"$HSID"'")' "$REG")" = true ]
+check "r15 parked session exited" not alive 702
+
+reset; hand_tab ttyh1 701 "claude"
+check "r15 hand tab without --adopt -> refused" [ "$(rc_of ts close ttyh1)" = 3 ]
+check "r15 untouched without --adopt" untouched 0
+check "r15 park without --adopt -> refused" [ "$(rc_of ts park ttyh1 --issue 21)" = 3 ]
+check "r15 park untouched without --adopt" untouched 0
+reset; new_tab --issue 12; issue 12 final
+check "r15 --adopt by session id -> usage error" [ "$(rc_of ts close "$SID" --adopt)" = 2 ]
+check "r15 --adopt on a registered tab -> usage error" [ "$(rc_of ts close "$TTY" --adopt)" = 2 ]
+check "r15 registered tab untouched" untouched 1
+reset; hand_tab ttyh1 703 "-zsh" shell
+check "r15 shell-only tty -> not found" [ "$(rc_of ts close ttyh1 --adopt)" = 4 ]
+check "r15 shell tty untouched" untouched 0
+reset; hand_tab ttyh1 704 "claude-helper"
+check "r15 other program named like claude -> not found" [ "$(rc_of ts close ttyh1 --adopt)" = 4 ]
+reset; hand_tab ttyh1 705 "claude"; mkdir -p "$TERM_FAKE_DIR/proc/706"
+printf 'claude' > "$TERM_FAKE_DIR/proc/706/cmd"; printf 'ttyh1' > "$TERM_FAKE_DIR/proc/706/tty"
+check "r15 two claude PIDs on the tty -> refused" [ "$(rc_of ts close ttyh1 --adopt)" = 3 ]
+check "r15 two PIDs untouched" untouched 0
+check "r15 both PIDs alive" alive 705
+reset; hand_tab ttyh1 701 "claude"; : > "$(tabdir "$TTY")/busy"
+check "r15 running turn -> refused" [ "$(rc_of ts close ttyh1 --adopt)" = 3 ]
+check "r15 busy untouched" untouched 0
+reset; hand_tab ttyh1 701 "claude"; dialog 1
+check "r15 open dialog -> refused" [ "$(rc_of ts close ttyh1 --adopt)" = 3 ]
+check "r15 dialog untouched" untouched 0
+reset; hand_tab ttyh1 701 "claude"; put status "1 background task"
+check "r15 background work -> refused" [ "$(rc_of ts close ttyh1 --adopt)" = 3 ]
+check "r15 background untouched" untouched 0
+reset; hand_tab ttyh1 701 "claude"; put box "owner is typing"
+check "r15 real draft -> refused" [ "$(rc_of ts close ttyh1 --adopt)" = 3 ]
+check "r15 draft kept" [ "$(cat "$(tabdir "$TTY")/box")" = "owner is typing" ]
+check "r15 recorded before the probe" [ "$(jq -r '.[0] | (.adopted == true and .closed == null)' "$REG")" = true ]
+check "r15 draft session alive" alive 701
+reset; hand_tab ttyh1 701 "claude"; issue 12 active
+check "r15 issue without a final comment -> refused" [ "$(rc_of ts close ttyh1 --adopt --issue 12)" = 3 ]
+check "r15 unfinished issue untouched" untouched 0
+reset; hand_tab ttyh1 701 "claude"
+check "r15 park without a session id -> refused" [ "$(rc_of ts park ttyh1 --adopt --issue 21)" = 3 ]
+check "r15 park no-id untouched" untouched 0
+check "r15 home-log not called" [ ! -f "$T/home-log.calls" ]
+reset; hand_tab ttyh1 702 "claude --resume $HSID"
+check "r15 park without an issue -> usage error" [ "$(rc_of ts park ttyh1 --adopt)" = 2 ]
+check "r15 park no-issue untouched" untouched 0
+
 echo "term.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

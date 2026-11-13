@@ -204,9 +204,9 @@ check "missing repo: configure says not found" sh -c 'printf "%s
 out=$(GH_STUB_FAIL_MATCH='^label create' GH_STUB_FAIL_MESSAGE='HTTP 403: Resource not accessible by integration' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "no permission: exit 4" [ "$rc" = 4 ]
 check "no permission: no raw error, one labels line" [ "$(grep -c 'HTTP 403' <<<"$out")$(grep -c '^labels:' <<<"$out")" = 01 ]
-check "no permission: labels one-liner" grep -qx 'labels: none created: this GitHub login cannot manage labels in example-org/orchard-home. On a computer: `gh auth refresh -s repo`; in a web session: give the GitHub app access to the repository. Then run scripts/labels.' <<<"$out"
+check "no permission: labels one-liner" grep -qx 'labels: none created: this GitHub login cannot manage labels in example-org/orchard-home. On a computer: `gh auth refresh -s repo`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels.' <<<"$out"
 check "no permission: configure says permission" sh -c 'printf "%s
-" "$1" | tail -1 | grep -q "no permission to manage labels.*in a web session: give the GitHub app access"' _ "$out"
+" "$1" | tail -1 | grep -q "no permission to manage labels.*in a web session: on github.com/settings/installations open Claude"' _ "$out"
 out=$("$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "labels ok: exit 0" [ "$rc" = 0 ]
 check "labels ok reported" grep -q '^labels: ok (example-org/orchard-home)' <<<"$out"
@@ -227,34 +227,70 @@ out=$("$R4/scripts/configure" --answers "$W/answers.base" 2>&1); rc=$?
 check "base itself refused (exit 2)" [ "$rc" = 2 ]
 check "base itself named" grep -q 'this is the base itself' <<<"$out"
 
-# 10. the session may not change git settings: every other step is done, exit 5, then a rerun finishes
+# 10. the session may not change git settings: every other step is done, exit 0 with a pending line, then a normal run finishes
 R5="$W/home5"; mkdir -p "$R5"
 cp -R "$SRC/scripts" "$SRC/templates" "$SRC/base.manifest" "$R5/"; cp "$R/CLAUDE.md" "$R5/CLAUDE.md"
 mkdir -p "$R5/openspec"; echo spec > "$R5/openspec/a.md"; echo readme > "$R5/README.md"
 git -C "$R5" init -q; git -C "$R5" add -A
 git -C "$R5" -c user.name=tester -c user.email=tester@users.noreply.github.com commit -qm clone --no-verify
 git -C "$R5" remote add origin https://github.com/example-org/home-base.git
-REAL_GIT=$(command -v git); mkdir -p "$W/lockedgit"
+R5P=$(cd "$R5" && pwd -P)
+REAL_GIT=$(command -v git); mkdir -p "$W/lockedgit" "$W/lockedremote"
 cat > "$W/lockedgit/git" <<EOF
 #!/bin/sh
 sub=\$1; [ "\$1" = -C ] && sub=\$3
 [ "\$sub" = config ] && { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }
 exec "$REAL_GIT" "\$@"
 EOF
-chmod +x "$W/lockedgit/git"
-out=$(PATH="$W/lockedgit:$PATH" "$R5/scripts/configure" --answers "$A" 2>&1); rc=$?
-check "git refused: exit 5" [ "$rc" = 5 ]
+cat > "$W/lockedremote/git" <<EOF
+#!/bin/sh
+[ "\$1" = -C ] && [ "\$3" = remote ] && [ "\$4" != get-url ] && { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$W/lockedgit/git" "$W/lockedremote/git"
+out=$(PATH="$W/lockedgit:$PATH" "$R5/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
+pend=$(printf '%s\n' "$out" | sed -n 's/^pending: //p')
+check "git refused: exit 0" [ "$rc" = 0 ]
 check "git refused: files written" grep -qx 'repo=example-org/orchard-home' "$R5/home.config"
 check "git refused: base-only folder gone from disk" [ ! -e "$R5/openspec" ]
 check "git refused: base-only file gone from disk" [ ! -e "$R5/README.md" ]
-check "git refused: the one line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -q "this session may not change the repository.s git settings; run .scripts/configure --answers $2. from your own terminal (or allow it), then continue"' _ "$out" "$A"
+check "git refused: one pending line" [ "$(grep -c '^pending: ' <<<"$out")" = 1 ]
+check "git refused: pending starts in the root" [ "${pend#cd $R5P && }" != "$pend" ]
+check "git refused: pending drops base-only paths" grep -qF 'git rm -rq --cached --ignore-unmatch -- ' <<<"$pend"
+check "git refused: pending renames origin" grep -qF 'git remote rename origin base && ' <<<"$pend"
+check "git refused: pending disables base push" grep -qF 'git remote set-url --push base DISABLED' <<<"$pend"
+check "git refused: pending adds origin" grep -qF 'git remote add origin https://github.com/example-org/orchard-home.git' <<<"$pend"
+check "git refused: pending sets hooks path" grep -qF 'git config core.hooksPath .githooks' <<<"$pend"
+check "git refused: labels still run" grep -q '^labels: ok' <<<"$out"
 check "git refused: hooksPath not set" [ -z "$(git -C "$R5" config --local core.hooksPath)" ]
 check "git refused: origin still the base" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/home-base.git ]
+# the pending line itself finishes the git part (on a copy, so the normal run below starts from the same state)
+R6="$W/home6"; cp -R "$R5" "$R6"; R6P=$(cd "$R6" && pwd -P)
+(eval "${pend/#cd $R5P /cd $R6P }") >/dev/null 2>&1; rc=$?
+check "pending line runs" [ "$rc" = 0 ]
+check "pending line: base-only paths out of the index" [ -z "$(git -C "$R6" ls-files openspec README.md)" ]
+check "pending line: origin re-pointed" [ "$(git -C "$R6" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+check "pending line: base push disabled" [ "$(git -C "$R6" remote get-url --push base)" = DISABLED ]
+check "pending line: hooksPath set" [ "$(git -C "$R6" config --local core.hooksPath)" = .githooks ]
+# a refusal after the probe allowed git: exit 5 with the full rerun line
+out=$(PATH="$W/lockedremote:$PATH" "$R5/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "late refusal: exit 5" [ "$rc" = 5 ]
+check "late refusal: full rerun line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -qF "run this line from your own terminal: cd $2 && scripts/configure --answers $3"' _ "$out" "$R5P" "$A"
 out=$("$R5/scripts/configure" --answers "$A" 2>&1); rc=$?
 check "rerun: exit 0" [ "$rc" = 0 ]
+check "rerun: no pending line" sh -c "! grep -q '^pending:' <<'X'
+$out
+X"
 check "rerun: base-only paths out of the index" [ -z "$(git -C "$R5" ls-files openspec README.md)" ]
 check "rerun: hooksPath set" [ "$(git -C "$R5" config --local core.hooksPath)" = .githooks ]
-check "rerun: origin re-pointed" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+check "rerun: base push disabled" [ "$(git -C "$R5" remote get-url --push base)" = DISABLED ]
+check "rerun: origin is the home repo" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+
+# 11. language names instead of codes are refused
+sed 's/^lang.files=en/lang.files=English/' "$A" > "$W/answers.lang"
+out=$("$R4/scripts/configure" --answers "$W/answers.lang" 2>&1); rc=$?
+check "language name refused (exit 2)" [ "$rc" = 2 ]
+check "language name named" grep -q 'invalid answer: lang.files=English (a two-letter language code' <<<"$out"
 
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -25,7 +25,7 @@ A home's queue is its open GitHub issues, and its state is a fixed set of labels
 
 #### Scenario: No permission
 - **WHEN** the first label create returns HTTP 403
-- **THEN** it prints "none created: this GitHub login cannot manage labels in <repo>. On a computer: `gh auth refresh -s repo`; in a web session: give the GitHub app access to the repository. Then run scripts/labels.", creates no further label and exits 4
+- **THEN** it prints "none created: this GitHub login cannot manage labels in <repo>. On a computer: `gh auth refresh -s repo`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels.", creates no further label and exits 4
 
 ### Requirement: HOME-011 New issues enter as inbox or ready
 `home-log new` SHALL return the number of an open issue with exactly the same title instead of creating one, and otherwise create an issue labelled `status:inbox`, or `status:ready` with `--ready`, or `status:<name>` with `--status <name>`, plus every `--label` given, and with the label `dreams` no status label at all.

@@ -24,7 +24,7 @@ while IFS= read -r s; do
     pkill*|killall*) block "kill by pattern" "Kill exact PIDs only (rule 9)." ;;
   esac
   if printf '%s' "$s" | grep -qE '^kill([[:space:]]|$)'; then
-    args=$(printf '%s' "$s" | sed -E 's/^kill[[:space:]]*//')
+    args=$(printf '%s' "$s" | sed -E 's/^kill[[:space:]]*//; s/[0-9]*>&[0-9]+//g; s/[0-9]*[<>]{1,2}[[:space:]]*[^[:space:]]+//g')
     skip=0
     for a in $args; do
       [ "$skip" = 1 ] && { skip=0; continue; }

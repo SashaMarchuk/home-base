@@ -68,3 +68,17 @@ A session SHALL open an issue for every owner request that needs more than a one
 #### Scenario: A short planning request
 - **WHEN** the owner asks for a plan or an explanation that takes real work
 - **THEN** an issue is opened in the home that owns it and the session reports on it in at most five lines
+
+### Requirement: HOME-104 One decision per question, in the owner's language
+Each question to the owner SHALL carry one decision, and every message to the owner, the final one included, SHALL be in the owner's language from `lang.owner`.
+
+#### Scenario: Two decisions are pending
+- **WHEN** a session needs the owner's approval of a text and a choice of where to post it
+- **THEN** it asks two separate questions in the owner's language
+
+### Requirement: HOME-105 Try the tools before handing a step to the owner
+Before asking the owner to do a step, a session SHALL try every tool it has for that step once and do the read-only part itself, and SHALL not report a tool as blocked without having run it.
+
+#### Scenario: A launch fails
+- **WHEN** opening a worker for a task fails
+- **THEN** the session does the read-only part of the task itself or in a subagent, and asks the owner only for what needs him

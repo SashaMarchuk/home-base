@@ -15,12 +15,15 @@
 # are still tracked. Only then the git steps: core.hooksPath, the base-only paths
 # dropped from the index, and the remotes: when origin is the base (base.url) it
 # becomes base (push disabled) and origin becomes the repo of the answers.
-# It never pushes. --labels then runs scripts/labels.
-# Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready or
-# a write or git step failed (the file or step is named), 4 files written but
-# --labels failed (the last line says whether the repo was not found or this
-# login may not manage labels), 5 files written but this session may not change
-# the repository's git settings (the last line says what to run instead).
+# Before writing anything it probes whether this session may change the git
+# settings; when it may not, it does every other step, prints one line
+# "pending: cd <root> && <the git steps still needed>" for the person's own
+# terminal and still exits 0. It never pushes. --labels then runs scripts/labels.
+# Exit: 0 ok (check for a "pending:" line), 2 missing or invalid answers (nothing
+# written), 3 repo not ready or a write or git step failed (the file or step is
+# named), 4 files written but --labels failed (the last line says whether the repo
+# was not found or this login may not manage labels), 5 files written but git
+# refused a step after the probe allowed it (the last line gives the full rerun line).
 # Running it twice with the same answers gives the same files.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -33,7 +36,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
     --labels) LABELS=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
   esac
 done
@@ -132,6 +135,9 @@ url_key() { # a remote URL reduced to host/owner/name, for comparing
   printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -e 's#^git@\([^:]*\):#https://\1/#' -e 's#^[a-z+]*://##' -e 's#^[^@/]*@##' -e 's#/*$##' -e 's#\.git$##'; }
 [ -n "$(ans repo)" ] && [ -n "$(ans base.url)" ] && [ "$(url_key "https://github.com/$(ans repo)")" = "$(url_key "$(ans base.url)")" ] \
   && BAD+=("repo=$(ans repo) (this is the base itself; name the repo of your own home)")
+for k in lang.files lang.owner; do
+  v=$(ans "$k"); [ -z "$v" ] || printf '%s' "$v" | grep -qE '^[a-z]{2}(-[A-Za-z0-9]+)?$' || BAD+=("$k=$v (a two-letter language code such as en or es)")
+done
 case "$(ans tracker.board)" in *[!a-z0-9-]*) BAD+=("tracker.board=$(ans tracker.board) (none or a lower-case board name)") ;; esac
 case "$(ans labels.needs_owner)" in *[!A-Za-z0-9:_-]*) BAD+=("labels.needs_owner=$(ans labels.needs_owner) (letters, digits, : _ -)") ;; esac
 
@@ -175,6 +181,13 @@ done
 BUF4='<!-- BUFFER 4/4: the home section starts on the next line. -->'
 [ -f "$ROOT/CLAUDE.md" ] && grep -qxF "$BUF4" "$ROOT/CLAUDE.md" \
   || die 3 "CLAUDE.md with the base block and the four BUFFER lines is required; take it from the base first"
+
+# ---------- may this session change the git settings? (probe before any write) ----------
+IS_GIT=0; [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ] && IS_GIT=1
+GIT_OK=1
+if [ "$IS_GIT" = 1 ]; then
+  { git -C "$ROOT" config --local configure.probe 1 && git -C "$ROOT" config --local --unset configure.probe; } >/dev/null 2>&1 || GIT_OK=0
+fi
 
 # ---------- terminal helpers: on only after the device check ----------
 HELPERS=$(ans terminal_helpers)
@@ -298,7 +311,6 @@ fi
 
 # base-only paths: present in the base repo only, deleted from the home's folder
 # here; the git phase below drops them from the index
-IS_GIT=0; [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ] && IS_GIT=1
 BASE_ONLY=()
 if [ "$IS_GIT" = 1 ] && [ -f "$ROOT/base.manifest" ]; then
   while read -r kind path _; do
@@ -315,44 +327,66 @@ if [ "$IS_GIT" = 1 ] && [ -f "$ROOT/base.manifest" ]; then
   done < "$ROOT/base.manifest"
 fi
 
-# git: hooks path, base-only paths out of the index, remotes (repo-local only; never pushes)
+# git: hooks path, base-only paths out of the index, remotes (repo-local only; never pushes).
+# Without git permission (the probe above) each step is collected for the pending line instead.
+q() { printf '%q' "$1"; }
+RERUN="cd $(q "$ROOT") && scripts/configure --answers $(q "$ANS")"
 GITC() { # a git step; a refused permission exits 5, any other failure exits 3
   local err
   err=$(git -C "$ROOT" "$@" 2>&1 >/dev/null) && return 0
   case "$err" in
     *"Operation not permitted"*|*"could not lock config file"*|*"Permission denied"*|*[Rr]ead-only*)
-      die 5 "the files are written, but this session may not change the repository's git settings; run \`scripts/configure --answers $ANS\` from your own terminal (or allow it), then continue" ;;
+      die 5 "the files are written, but git refused to change this repository's settings; run this line from your own terminal: $RERUN" ;;
   esac
   die 3 "git $* failed: $(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -1); the files are written, fix it and run configure again"
 }
+PEND_RM=(); PEND=()
+step() { # step <git args...>: run it, or keep it for the pending line
+  if [ "$GIT_OK" = 1 ]; then GITC "$@"; return; fi
+  local c="git" a; for a in "$@"; do c="$c $(q "$a")"; done
+  PEND+=("$c")
+}
 if [ "$IS_GIT" = 1 ]; then
-  [ "$(git -C "$ROOT" config --local core.hooksPath 2>/dev/null)" = .githooks ] || { GITC config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
-  for path in ${BASE_ONLY[@]+"${BASE_ONLY[@]}"}; do GITC rm -r -q --cached --ignore-unmatch -- "$path"; done
+  if [ ${#BASE_ONLY[@]} -gt 0 ]; then
+    if [ "$GIT_OK" = 1 ]; then GITC rm -r -q --cached --ignore-unmatch -- "${BASE_ONLY[@]}"
+    else c="git rm -rq --cached --ignore-unmatch --"; for p in "${BASE_ONLY[@]}"; do c="$c $(q "$p")"; done; PEND_RM=("$c"); fi
+  fi
   # remotes: origin is the owner's repo, base is the base with push disabled
   BURL=$(ans base.url); RURL="https://github.com/$(ans repo).git"
   OURL=$(git -C "$ROOT" remote get-url origin 2>/dev/null)
+  HAS_BASE=0; git -C "$ROOT" remote get-url base >/dev/null 2>&1 && HAS_BASE=1
   if [ -n "$BURL" ] && [ -n "$OURL" ] && [ "$(url_key "$OURL")" = "$(url_key "$BURL")" ]; then
-    if git -C "$ROOT" remote get-url base >/dev/null 2>&1; then
-      GITC remote set-url origin "$RURL"
-      git -C "$ROOT" config --local --unset-all remote.origin.pushurl >/dev/null 2>&1
+    if [ "$HAS_BASE" = 1 ]; then
+      step remote set-url origin "$RURL"
+      [ -n "$(git -C "$ROOT" config --get-all remote.origin.pushurl 2>/dev/null)" ] && step config --unset-all remote.origin.pushurl
     else
-      GITC remote rename origin base; echo "configure: renamed remote origin to base"
-      GITC remote add origin "$RURL"
+      step remote rename origin base; HAS_BASE=1; [ "$GIT_OK" = 1 ] && echo "configure: renamed remote origin to base"
+      step remote add origin "$RURL"
     fi
-    echo "configure: origin now points to $(ans repo)"
+    [ "$GIT_OK" = 1 ] && echo "configure: origin now points to $(ans repo)"
   elif [ -z "$OURL" ]; then
-    GITC remote add origin "$RURL"; echo "configure: added remote origin ($(ans repo))"
+    step remote add origin "$RURL"; [ "$GIT_OK" = 1 ] && echo "configure: added remote origin ($(ans repo))"
   fi
   if [ -n "$BURL" ]; then
-    if ! git -C "$ROOT" remote get-url base >/dev/null 2>&1; then
-      GITC remote add base "$BURL"; echo "configure: added remote base"
-    elif [ "$(git -C "$ROOT" remote get-url base)" != "$BURL" ]; then
+    if [ "$HAS_BASE" = 0 ]; then
+      step remote add base "$BURL"; [ "$GIT_OK" = 1 ] && echo "configure: added remote base"
+    elif [ "$GIT_OK" = 1 ] && [ "$(git -C "$ROOT" remote get-url base)" != "$BURL" ]; then
       GITC remote set-url base "$BURL"; echo "configure: updated remote base"
     fi
-    [ "$(git -C "$ROOT" remote get-url --push base)" = DISABLED ] || GITC remote set-url --push base DISABLED
+    [ "$(git -C "$ROOT" remote get-url --push base 2>/dev/null)" = DISABLED ] || step remote set-url --push base DISABLED
+  fi
+  if [ "$(git -C "$ROOT" config --local core.hooksPath 2>/dev/null)" != .githooks ]; then
+    step config core.hooksPath .githooks; [ "$GIT_OK" = 1 ] && echo "configure: set core.hooksPath=.githooks"
   fi
 else
   echo "configure: warning: $ROOT is not a git repo root; hooks path, base-only paths and remotes not set" >&2
+fi
+PENDING=""
+if [ ${#PEND_RM[@]} -gt 0 ] || [ ${#PEND[@]} -gt 0 ]; then
+  rest=""; for c in ${PEND[@]+"${PEND[@]}"}; do rest="${rest:+$rest && }$c"; done
+  PENDING="cd $(q "$ROOT") && ${PEND_RM[0]:-}"
+  [ ${#PEND_RM[@]} -gt 0 ] && [ -n "$rest" ] && PENDING="$PENDING ; "
+  PENDING="$PENDING$rest"
 fi
 
 # ---------- completeness check: every key this run used ----------
@@ -370,6 +404,9 @@ ans_all guard.extra | grep -v '^$' | sed 's/^/  guard.extra=/'
 [ "$MULTI" = yes ] && for r in "${ROWS[@]}"; do echo "  accounts.rows=$r"; done
 [ -n "$HOMES_LINES" ] && printf '%s\n' "$HOMES_LINES" | sed 's/^/  /'
 
+# the git steps this session may not do, as one line for the person's own terminal
+[ -n "$PENDING" ] && echo "pending: $PENDING"
+
 # ---------- labels last, so a failure is the last thing said ----------
 if [ "$LABELS" = 1 ]; then
   LOUT=$("$ROOT/scripts/labels" --repo "$(ans repo)" 2>&1); lrc=$?
@@ -377,7 +414,7 @@ if [ "$LABELS" = 1 ]; then
   if [ "$lrc" != 0 ]; then
     case "$LOUT" in
       *"cannot reach"*"create it on GitHub"*) why="the repo $(ans repo) was not found on GitHub: create it (private), commit, push, then run scripts/labels" ;;
-      *"cannot manage labels"*) why="this GitHub login has no permission to manage labels in $(ans repo). On a computer: \`gh auth refresh -s repo\`; in a web session: give the GitHub app access to the repository. Then run scripts/labels" ;;
+      *"cannot manage labels"*) why="this GitHub login has no permission to manage labels in $(ans repo). On a computer: \`gh auth refresh -s repo\`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels" ;;
       *) why="GitHub refused the label step (see the line above); run scripts/labels again once it is fixed" ;;
     esac
     die 4 "the files are written, but the labels are NOT created: $why"

@@ -136,3 +136,18 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 #### Scenario: Empty box
 - **WHEN** the tab shows an empty input box and nothing else is open or running
 - **THEN** `state` prints `idle`
+
+### Requirement: HOME-106 Closing or parking the owner's own tab
+`term.sh close` and `term.sh park` SHALL act on a tab missing from this home's registry only with `--adopt` and an explicit tty on which exactly one `claude` process runs and whose screen can be read, keep every other check of close and park (for close the issue check only when an issue is given), record the tab in the registry with `adopted: true` before the first keystroke, and refuse with exit 2 when `--adopt` targets a session id or a tab this home opened.
+
+#### Scenario: Owner asks to close his tab
+- **WHEN** the owner asks to close a tab he opened by hand and `term.sh close <tty> --adopt` runs on it while its box is empty
+- **THEN** the tab is recorded with `adopted: true`, its session exits and no process is signalled
+
+#### Scenario: Owner's tab without the flag
+- **WHEN** close targets the tty of a tab missing from the registry without `--adopt`
+- **THEN** close exits 3 and nothing is typed
+
+#### Scenario: Two sessions on one tty
+- **WHEN** two `claude` processes run on the tty given with `--adopt`
+- **THEN** close exits 3 and nothing is typed

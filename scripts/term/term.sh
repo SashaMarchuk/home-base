@@ -6,13 +6,21 @@
 #   term.sh screen <target> [--lines N]
 #   term.sh state  <target>          -> gone | dialog | headsup | busy | bg | draft | idle | shell
 #   term.sh send   <target> <text> [--after "<check command>"] [--timeout S]
-#   term.sh park   <target> [--issue N] [--timeout S]
+#   term.sh park   <target> [--issue N] [--adopt] [--timeout S]
 #   term.sh resume <session_id> [--timeout S]
-#   term.sh close  <target> [--issue N] [--repo OWNER/REPO] [--timeout S]
+#   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #
 # <target> is a tty (ttys003 or /dev/ttys003) or a session id from .local/registry.json.
 # A tab title is never accepted: titles drift.
+#
+# --adopt (close and park): the owner's own tab, opened by hand and not in the registry. Use it
+# only when the owner named this tab or asked to close it. The target must be a tty; exactly one
+# claude process must run on it (its exact PID, command line checked) and its screen must read.
+# Every other check stays. Close with --adopt checks the issue when one is given and needs none
+# otherwise; park with --adopt needs a session id on the process's command line (--session-id or
+# --resume). The tab is recorded in the registry with "adopted": true before the first keystroke
+# (a notice dismissal, a ghost probe or the exit command).
 #
 # Rules this file enforces (see openspec/specs/terminal-helpers in the base):
 #  1 tabs are addressed by tty and verified against the recorded tab id and pid
@@ -34,6 +42,7 @@
 # 12 a PID is signalled only by exact number, after its command line was checked
 # 13 no function name starts with an underscore
 # 14 the launch command, profile and model come from .local/config only; the model is an alias
+# 15 --adopt takes only a tty with exactly one claude process on it and records the tab before acting
 #
 # Config (.local/config overrides home.config):
 #   terminal_helpers=on            required for every verb
@@ -308,6 +317,7 @@ freetext_row() { # freetext_row <screen> -> number of the dialog row that takes 
 # ------------------------------------------------------------------ resolving a target (rule 1)
 
 T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
+T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""
 
 load_entry() { # load_entry <json object>
   T_SID=$(printf '%s' "$1" | jq -r '.session_id // ""')
@@ -317,12 +327,14 @@ load_entry() { # load_entry <json object>
   T_MATCH=$(printf '%s' "$1" | jq -r '.match // ""')
   T_ISSUE=$(printf '%s' "$1" | jq -r '.issue // ""')
   T_CLOSED=$(printf '%s' "$1" | jq -r '.closed // ""')
+  T_ADOPTED=$(printf '%s' "$1" | jq -r 'if .adopted == true then 1 else 0 end')
   T_REG=1
 }
 
 resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed registry entry
   local target=$1 mode=${2:-open} entry n live
   T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
+  T_ADOPTED=0
   case "$target" in
     /dev/tty*|tty*)
       T_TTY=${target#/dev/}
@@ -358,6 +370,53 @@ resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed regi
     fi
   fi
   return 0
+}
+
+# ------------------------------------------------------------------ adopting the owner's own tab (rule 15)
+
+adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner opened by hand
+  local name pids n cmd sid cwd
+  case "$1" in /dev/tty*|tty*) ;; *) die 2 "--adopt needs an explicit tty, not '$1'" ;; esac
+  if [ "$T_REG" = 1 ]; then
+    [ "$T_ADOPTED" = 1 ] || die 2 "the tab on $T_TTY is in this home's registry already; drop --adopt"
+    return 0
+  fi
+  name=$(local_cfg launch.command claude); name=${name##*/}
+  pids=$(be_procs | awk -v t="$T_TTY" -v c="$name" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }')
+  n=$(printf '%s\n' "$pids" | grep -c .)
+  [ "$n" = 0 ] && die 4 "no $name process runs on $T_TTY; nothing to adopt"
+  [ "$n" = 1 ] || die 3 "$n $name processes run on $T_TTY; not guessing which one"
+  case "$pids" in *[!0-9]*) die 3 "not a PID: '$pids'" ;; esac
+  cmd=$(be_pid_cmd "$pids") || die 4 "PID $pids on $T_TTY is gone"
+  [ "$(printf '%s\n' "$cmd" | awk '{ n = split($1, p, "/"); print p[n] }')" = "$name" ] ||
+    die 3 "PID $pids does not run $name ('$cmd'); refusing"
+  [ "$(be_pid_tty "$pids")" = "$T_TTY" ] || die 3 "PID $pids is not on $T_TTY; refusing"
+  be_screen "$T_TTY" "$T_TAB" >/dev/null || die 4 "the screen of the tab on $T_TTY cannot be read"
+  sid=$(printf '%s\n' "$cmd" | awk '{ for (i = 1; i <= NF; i++) {
+      if (($i == "--session-id" || $i == "--resume" || $i == "-r") && i < NF) { print $(i + 1); exit }
+      if ($i ~ /^--(session-id|resume)=/) { sub(/^[^=]*=/, "", $i); print $i; exit } } }')
+  cwd=$(be_pid_cwd "$pids")
+  T_PID=$pids; T_ALIVE=1; T_ADOPTED=1; ADOPT_NEW=1
+  if printf '%s' "$sid" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$'; then
+    T_SID=$sid; T_MATCH=$sid
+    ADOPT_RESUME="cd $(shq "${cwd:-.}") && $(shq "$(printf '%s\n' "$cmd" | awk '{ print $1 }')") --resume $sid"
+  else
+    T_SID=$(be_uuid); T_MATCH=$cmd   # no session id: the exact command line is the match
+  fi
+}
+
+adopt_record() { # adopt_record <issue>: add the adopted tab to the registry; nothing is typed before this
+  local entry
+  [ "$ADOPT_NEW" = 1 ] || return 0
+  entry=$(jq -nc --arg sid "$T_SID" --arg tty "$T_TTY" --arg tab "$T_TAB" --arg pid "$T_PID" \
+    --arg cwd "$(be_pid_cwd "$T_PID")" --arg issue "$1" --arg resume "$ADOPT_RESUME" --arg opened "$(now_utc)" \
+    --arg match "$T_MATCH" \
+    '{session_id: $sid, tty: $tty, pid: ($pid | tonumber), cwd: $cwd,
+      issue: (if $issue == "" then null else ($issue | tonumber) end),
+      resume: (if $resume == "" then null else $resume end), opened: $opened, closed: null,
+      role: "owner", tab: $tab, match: $match, adopted: true}') || die 3 "could not build the registry entry; nothing was typed"
+  reg_update --argjson e "$entry" '. + [$e]' || die 3 "registry write failed; nothing was typed"
+  ADOPT_NEW=0
 }
 
 screen_now() { be_screen "$T_TTY" "$T_TAB" || die 4 "tab on $T_TTY is gone"; }
@@ -696,15 +755,16 @@ pick_issue() { # pick_issue <given>: the registry issue unless the caller passed
   if [ -n "$1" ]; then echo "$1"; else echo "$T_ISSUE"; fi
 }
 
-exit_word() { if [ "$T_MATCH" = "$T_SID" ]; then echo /exit; else echo exit; fi; }
+exit_word() { if [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ]; then echo /exit; else echo exit; fi; }
 
 cmd_close() {
-  local target issue="" repo=$HOME_REPO timeout=$EXIT_WAIT scr b n
-  [ $# -ge 1 ] || die 2 "usage: close <target> [--issue N] [--repo OWNER/REPO] [--timeout S]"
+  local target issue="" repo=$HOME_REPO timeout=$EXIT_WAIT scr b n adopt=0
+  [ $# -ge 1 ] || die 2 "usage: close <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]"
   target=$1; shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --issue) issue=${2:-}; shift 2 ;;
+      --adopt) adopt=1; shift ;;
       --repo) repo=${2:-}; shift 2 ;;
       --timeout) timeout=${2:-}; shift 2 ;;
       *) die 2 "close: unknown option '$1'" ;;
@@ -714,13 +774,19 @@ cmd_close() {
   printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
     die 2 "close needs the repo as OWNER/REPO (--repo, or repo in home.config)"
   need_helpers; resolve "$target"
-  [ "$T_REG" = 1 ] || die 3 "close works only on tabs this home opened (none recorded on $T_TTY)"
+  [ "$adopt" = 1 ] && adopt_target "$target"
+  [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] ||
+    die 3 "close works only on tabs this home opened (none recorded on $T_TTY; the owner's own tab needs --adopt)"
   issue=$(pick_issue "$issue") || exit $?
-  [ -n "$issue" ] || die 2 "close needs the issue number (--issue N, or one recorded at open)"
-  issue_finished "$repo" "$issue"
+  if [ -n "$issue" ]; then
+    issue_finished "$repo" "$issue"
+  elif [ "$adopt" = 0 ] || [ "$T_ADOPTED" = 0 ]; then
+    die 2 "close needs the issue number (--issue N, or one recorded at open)"
+  fi
   if [ "$T_ALIVE" = 1 ]; then
     scr=$(screen_now)
     if has_headsup "$scr"; then
+      adopt_record "$issue"
       dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not closing"
       scr=$(screen_now)
     fi
@@ -730,8 +796,9 @@ cmd_close() {
     [ -n "$n" ] && [ "$n" -gt 0 ] && die 3 "$n background job(s) on $T_TTY; not closing"
     if [ "$(exit_word)" = /exit ]; then
       b=$(box_text "$scr") || die 3 "no input box on $T_TTY; not closing"
-      if [ -n "$b" ]; then ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not closing"; fi
+      if [ -n "$b" ]; then adopt_record "$issue"; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not closing"; fi
     fi
+    adopt_record "$issue"
     exit_session "$(exit_word)" "$timeout"
   fi
   exit_shell
@@ -740,24 +807,27 @@ cmd_close() {
 }
 
 cmd_park() {
-  local target issue="" timeout=$EXIT_WAIT scr b q="" text dialog=0
-  [ $# -ge 1 ] || die 2 "usage: park <target> [--issue N] [--timeout S]"
+  local target issue="" timeout=$EXIT_WAIT scr b q="" text dialog=0 adopt=0
+  [ $# -ge 1 ] || die 2 "usage: park <target> [--issue N] [--adopt] [--timeout S]"
   target=$1; shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --issue) issue=${2:-}; shift 2 ;;
+      --adopt) adopt=1; shift ;;
       --timeout) timeout=${2:-}; shift 2 ;;
       *) die 2 "park: unknown option '$1'" ;;
     esac
   done
   need_helpers; resolve "$target"
-  [ "$T_REG" = 1 ] || die 3 "park works only on tabs this home opened"
+  [ "$adopt" = 1 ] && adopt_target "$target"
+  [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] || die 3 "park works only on tabs this home opened (the owner's own tab needs --adopt)"
   [ "$T_MATCH" = "$T_SID" ] || die 3 "park needs a session launched with a session id"
   [ "$T_ALIVE" = 1 ] || die 4 "session $T_SID is not running"
   issue=$(pick_issue "$issue") || exit $?
   [ -n "$issue" ] || die 2 "park needs the issue number"
   scr=$(screen_now)
   if has_headsup "$scr"; then
+    adopt_record "$issue"
     dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not parking"
     scr=$(screen_now)
   fi
@@ -767,8 +837,9 @@ cmd_park() {
   else
     is_busy "$scr" && die 3 "session is busy; park it when idle"
     b=$(box_text "$scr") || die 3 "no input box on $T_TTY; not parking"
-    if [ -n "$b" ]; then ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not parking"; fi
+    if [ -n "$b" ]; then adopt_record "$issue"; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not parking"; fi
   fi
+  adopt_record "$issue"
   text="Parked by term.sh. Resume: $(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume')"
   if [ -n "$q" ]; then
     "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park --question "$q" --text "$text" >/dev/null ||

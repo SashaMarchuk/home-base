@@ -59,7 +59,7 @@ Owner's words for this task (verbatim):
 ## 6. Park, resume, close
 - Park: `scripts/term/term.sh park <tty|session id> --issue <n>` (refuses on an unsent draft; then leave it). Never type into a busy tab or answer another session's dialog.
 - Resume: `scripts/term/term.sh resume <session id>`; the session re-asks its open question once.
-- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only.
+- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. For close or park, the owner's own tab: add `--adopt` only when he named it or asked.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
 0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record.
@@ -75,5 +75,7 @@ Owner's words for this task (verbatim):
 - At every level: act only while this session runs; never send a message on your own (drafts, confirmed through the ask tool); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
+- Owner asleep or away (night rules, unattended run): never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.
+- Record a hand-off (checkpoint, release, "handed to a worker") only after `term.sh open` printed the session id, tty and pid.
 - Questions go through the ask tool (or, owner away, `scripts/home-log checkpoint <n> --park --question "<q>"`); never only in the final message.
 - The final message: at most five plain lines: done, waiting for the owner, next.

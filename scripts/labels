@@ -21,7 +21,7 @@ NEEDS=$(cfg labels.needs_owner needs-owner)
 mk() { # stops at the first failure with one line
   gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null 2>"$ERR" && return 0
   if grep -q 'HTTP 403' "$ERR"; then
-    echo "labels: none created: this GitHub login cannot manage labels in $REPO. On a computer: \`gh auth refresh -s repo\`; in a web session: give the GitHub app access to the repository. Then run scripts/labels." >&2; exit 4
+    echo "labels: none created: this GitHub login cannot manage labels in $REPO. On a computer: \`gh auth refresh -s repo\`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels." >&2; exit 4
   fi
   echo "labels: creating '$1' in $REPO failed: $(first_err)" >&2; exit 1
 }
