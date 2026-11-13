@@ -20,7 +20,7 @@ jobs:
       - name: No home-directory paths
         run: |
           pat='/Us''ers/'
-          if git grep -nI -e "$pat" -e '/home/runner' -- .; then echo "A home-directory path is tracked."; exit 1; fi
+          if git grep -nI -e "$pat" -e '/ho''me/run''ner/' -- .; then echo "A home-directory path is tracked."; exit 1; fi
       - name: No email other than a noreply address
         run: |
           hits=$(git grep -hoIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | grep -vE '(@users\.noreply\.github\.com|^noreply@[A-Za-z0-9.-]+)$' || true)
