@@ -73,6 +73,8 @@ if sel home-log; then
   H="$T/hl"; mkhome "$H" test/hl; HL="$H/scripts/home-log"
   n=$("$HL" new --title "Task one" --body "Do the thing." --ready)
   [ "$n" = 1 ] && ok || bad "home-log new printed '$n'"
+  n2=$("$HL" new --title "Task one" --body "Again." --ready 2>/dev/null)
+  [ "$n2" = 1 ] && [ "$(gh api repos/test/hl/issues?state=all --jq length)" = 1 ] && ok || bad "new twice with the same title must not duplicate (got $n2)"
   expect "new refuses a personal value" 4 "$HL" new --title "x" --body "call $PHONE"
   expect "start" 0 "$HL" start 1 --run-id r1
   expect "start again, same run: no-op" 0 "$HL" start 1 --run-id r1

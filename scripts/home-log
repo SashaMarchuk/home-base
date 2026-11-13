@@ -171,6 +171,9 @@ new)
   st=status:inbox; [ "$READY" = 1 ] && st=status:ready
   [ -n "$STATUS_NEW" ] && st="status:${STATUS_NEW#status:}"
   for l in ${LABELS[@]+"${LABELS[@]}"}; do [ "$l" = dreams ] && st=""; done   # the standing Dreams issue is not a task
+  # Safe to repeat: an open issue with exactly this title is returned, not duplicated.
+  EXIST=$(gh api "repos/$REPO/issues?state=open&per_page=100" | jq -r --arg t "$TITLE" '[.[] | select(has("pull_request") | not) | select(.title == $t)][0].number // empty') || exit 6
+  if [ -n "$EXIST" ]; then echo "home-log: an open issue with this title exists: #$EXIST (not created again)" >&2; echo "$EXIST"; exit 0; fi
   args=(-X POST "repos/$REPO/issues" -f "title=$TITLE" -f "body=$BODY")
   [ -n "$st" ] && args+=(-f "labels[]=$st")
   for l in ${LABELS[@]+"${LABELS[@]}"}; do args+=(-f "labels[]=$l"); done

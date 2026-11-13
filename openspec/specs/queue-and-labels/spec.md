@@ -17,7 +17,7 @@ A home's queue is its open GitHub issues, and its state is a fixed set of labels
 - **THEN** it exits 2
 
 ### Requirement: HOME-011 New issues enter as inbox or ready
-`home-log new` SHALL create an issue labelled `status:inbox`, or `status:ready` with `--ready`, or `status:<name>` with `--status <name>`, plus every `--label` given, and with the label `dreams` no status label at all.
+`home-log new` SHALL return the number of an open issue with exactly the same title instead of creating one, and otherwise create an issue labelled `status:inbox`, or `status:ready` with `--ready`, or `status:<name>` with `--status <name>`, plus every `--label` given, and with the label `dreams` no status label at all.
 
 #### Scenario: Unclear request
 - **WHEN** `home-log new --title T --body B` runs without `--ready`
@@ -30,6 +30,10 @@ A home's queue is its open GitHub issues, and its state is a fixed set of labels
 #### Scenario: Standing Dreams issue
 - **WHEN** `home-log new` runs with `--label dreams`, with or without `--ready` or `--status`
 - **THEN** the issue carries `dreams` and no `status:` label
+
+#### Scenario: Asked twice for the same issue
+- **WHEN** `home-log new` runs with the title of an issue that is still open
+- **THEN** no issue is created and the existing issue's number is printed
 
 ### Requirement: HOME-012 One status label at a time
 Every status change made by `scripts/home-log` SHALL remove any other `status:` label from the issue before adding the new one.
