@@ -7,7 +7,7 @@
 # (empty is a valid answer); every other key falls back to the default shown.
 
 # ---------- the home ----------
-# REQUIRED. This home's GitHub repo.
+# REQUIRED. This home's GitHub repo (owner/name; not the base itself).
 repo=example-org/garden-home
 # REQUIRED. Who owns this home (comma list of display names, no addresses).
 owner.names=Robin Example
@@ -35,7 +35,8 @@ tracker.board_write=ask-first
 labels.needs_owner=needs-owner
 
 # ---------- base and related homes ----------
-# Where the base lives (empty: no base remote is added).
+# Where the base lives (empty: no base remote is added). When origin is this URL,
+# configure renames it to base (push disabled) and points origin at repo.
 base.url=https://github.com/example-org/home-base.git
 # Repeatable per <name>; role is parent | child | peer; path is the local clone.
 homes.allotment.repo=example-org/allotment-home

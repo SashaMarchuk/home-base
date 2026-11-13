@@ -1,16 +1,30 @@
 #!/usr/bin/env bash
 # Creates or updates this home's label set. Safe to run twice.
 #   scripts/labels [--repo OWNER/REPO]
+# Exit: 0 ok, 2 no repo named, 3 the repo cannot be reached, 4 this login may not
+# create labels there, 1 any other GitHub error. Every failure prints one line.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/lib/config"
 REPO=$HOME_REPO
 [ "${1:-}" = "--repo" ] && REPO=$2
 [ -n "$REPO" ] || { echo "labels: no repo in home.config" >&2; exit 2; }
-gh api "repos/$REPO" --jq .full_name >/dev/null 2>&1 || { echo "labels: cannot reach $REPO on GitHub (does it exist, and is this the right account?)" >&2; exit 1; }
+ERR=$(mktemp "${TMPDIR:-/tmp}/labels.XXXXXX"); trap 'rm -f "$ERR"' EXIT
+first_err() { grep -v '^[[:space:]]*$' "$ERR" | head -1; }
+if ! gh api "repos/$REPO" --jq .full_name >/dev/null 2>"$ERR"; then
+  if grep -q 'HTTP 404' "$ERR"; then
+    echo "labels: cannot reach $REPO: create it on GitHub (private) and push, then run scripts/labels" >&2; exit 3
+  fi
+  echo "labels: cannot reach $REPO: $(first_err)" >&2; exit 1
+fi
 NEEDS=$(cfg labels.needs_owner needs-owner)
-rc=0
-mk() { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null || rc=1; }
+mk() { # stops at the first failure with one line
+  gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null 2>"$ERR" && return 0
+  if grep -q 'HTTP 403' "$ERR"; then
+    echo "labels: this GitHub login cannot create labels in $REPO: run \`gh auth refresh -s repo\`, then scripts/labels" >&2; exit 4
+  fi
+  echo "labels: creating '$1' in $REPO failed: $(first_err)" >&2; exit 1
+}
 mk status:inbox     c5def5 "Captured; not clear enough to work yet"
 mk status:ready     0e8a16 "Clear; any dispatcher may start it"
 mk status:claimed   1d76db "One session owns it; see its home-log comment"
@@ -22,5 +36,4 @@ mk "$NEEDS"         d93f0b "A question or blocker waits on the owner"
 mk needs-summary    e99695 "Finished or dead work with no final comment"
 mk base-sync        bfdadc "A home's dropped diff after a base update"
 mk dreams           f9d0c4 "The standing Dreams issue and Dreams pull requests"
-[ $rc = 0 ] && echo "labels: ok ($REPO)"
-exit $rc
+echo "labels: ok ($REPO)"

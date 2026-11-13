@@ -10,10 +10,14 @@
 # BUFFER lines; the base block is never touched), .claude/settings.json
 # (enabledPlugins from the answers), .gitignore (missing template lines added),
 # wiki/index.md and DECISIONS.md (only when absent), wiki/howto/accounts.md
-# (when accounts.multi=yes), git config core.hooksPath and the base remote
-# (push disabled). --labels also runs scripts/labels.
-# Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready,
-# 4 files written but --labels failed (the repo does not exist or is not reachable yet).
+# (when accounts.multi=yes), git config core.hooksPath, the base-only paths of
+# base.manifest (git rm when still tracked) and the remotes: when origin is the
+# base (base.url) it becomes base (push disabled) and origin becomes the repo of
+# the answers. It never pushes. --labels then runs scripts/labels.
+# Exit: 0 ok, 2 missing or invalid answers (nothing written), 3 repo not ready or
+# a write or git step failed (the file or step is named), 4 files written but
+# --labels failed (the last line says whether the repo was not found or this
+# login may not create labels).
 # Running it twice with the same answers gives the same files.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -26,7 +30,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
     --labels) LABELS=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
   esac
 done
@@ -121,6 +125,10 @@ enum accounts.multi yes no
 enum terminal_helpers on off
 for k in limits.threshold proactivity.every_minutes dreams.first_window_days sweep.stale_hours; do num "$k"; done
 v=$(ans repo); [ -z "$v" ] || printf '%s' "$v" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || BAD+=("repo=$v (owner/name)")
+url_key() { # a remote URL reduced to host/owner/name, for comparing
+  printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -e 's#^git@\([^:]*\):#https://\1/#' -e 's#^[a-z+]*://##' -e 's#^[^@/]*@##' -e 's#/*$##' -e 's#\.git$##'; }
+[ -n "$(ans repo)" ] && [ -n "$(ans base.url)" ] && [ "$(url_key "https://github.com/$(ans repo)")" = "$(url_key "$(ans base.url)")" ] \
+  && BAD+=("repo=$(ans repo) (this is the base itself; name the repo of your own home)")
 case "$(ans tracker.board)" in *[!a-z0-9-]*) BAD+=("tracker.board=$(ans tracker.board) (none or a lower-case board name)") ;; esac
 case "$(ans labels.needs_owner)" in *[!A-Za-z0-9:_-]*) BAD+=("labels.needs_owner=$(ans labels.needs_owner) (letters, digits, : _ -)") ;; esac
 
@@ -181,9 +189,9 @@ fi
 # ---------- writers ----------
 put() { # put <relative path> <content>; writes only when it changes
   local p="$ROOT/$1"
-  mkdir -p "$(dirname "$p")"
   if [ -f "$p" ] && [ "$(cat "$p")" = "$2" ]; then return 0; fi
-  printf '%s\n' "$2" > "$p"
+  mkdir -p "$(dirname "$p")" 2>/dev/null && [ ! -d "$p" ] && printf '%s\n' "$2" 2>/dev/null > "$p" \
+    || die 3 "cannot write $1; files before it may be written, fix it and run configure again"
   echo "configure: wrote $1"
 }
 subst() { # subst <template file>: replaces {{NAME}} with $S_NAME, literally
@@ -277,24 +285,43 @@ if [ "$MULTI" = yes ]; then
   put wiki/howto/accounts.md "$(S_ACCOUNT_ROWS=$AR subst "$T/wiki/howto/accounts.md")"
 fi
 
-# git: hooks path and the base remote (repo-local only; push disabled)
+# git: hooks path, base-only paths, remotes (repo-local only; never pushes)
+GITC() { git -C "$ROOT" "$@" >/dev/null 2>&1 || die 3 "git $* failed; the files above are written, fix git and run configure again"; }
 if [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ]; then
-  [ "$(git -C "$ROOT" config --local core.hooksPath)" = .githooks ] || { git -C "$ROOT" config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
-  BURL=$(ans base.url)
+  [ "$(git -C "$ROOT" config --local core.hooksPath)" = .githooks ] || { GITC config --local core.hooksPath .githooks; echo "configure: set core.hooksPath=.githooks"; }
+  # base-only paths: present in the base repo only, removed from the home
+  if [ -f "$ROOT/base.manifest" ]; then
+    while read -r kind path _; do
+      [ "$kind" = base-only ] || continue
+      [ -n "$(git -C "$ROOT" ls-files -- "$path")" ] || continue
+      GITC rm -r -q -- "$path"; echo "configure: removed base-only path $path"
+    done < "$ROOT/base.manifest"
+  fi
+  # remotes: origin is the owner's repo, base is the base with push disabled
+  BURL=$(ans base.url); RURL="https://github.com/$(ans repo).git"
+  OURL=$(git -C "$ROOT" remote get-url origin 2>/dev/null)
+  if [ -n "$BURL" ] && [ -n "$OURL" ] && [ "$(url_key "$OURL")" = "$(url_key "$BURL")" ]; then
+    if git -C "$ROOT" remote get-url base >/dev/null 2>&1; then
+      GITC remote set-url origin "$RURL"
+      git -C "$ROOT" config --local --unset-all remote.origin.pushurl >/dev/null 2>&1
+    else
+      GITC remote rename origin base; echo "configure: renamed remote origin to base"
+      GITC remote add origin "$RURL"
+    fi
+    echo "configure: origin now points to $(ans repo)"
+  elif [ -z "$OURL" ]; then
+    GITC remote add origin "$RURL"; echo "configure: added remote origin ($(ans repo))"
+  fi
   if [ -n "$BURL" ]; then
     if ! git -C "$ROOT" remote get-url base >/dev/null 2>&1; then
-      git -C "$ROOT" remote add base "$BURL"; echo "configure: added remote base"
+      GITC remote add base "$BURL"; echo "configure: added remote base"
     elif [ "$(git -C "$ROOT" remote get-url base)" != "$BURL" ]; then
-      git -C "$ROOT" remote set-url base "$BURL"; echo "configure: updated remote base"
+      GITC remote set-url base "$BURL"; echo "configure: updated remote base"
     fi
-    [ "$(git -C "$ROOT" remote get-url --push base)" = DISABLED ] || git -C "$ROOT" remote set-url --push base DISABLED
+    [ "$(git -C "$ROOT" remote get-url --push base)" = DISABLED ] || GITC remote set-url --push base DISABLED
   fi
 else
-  echo "configure: warning: $ROOT is not a git repo root; hooks path and base remote not set" >&2
-fi
-
-if [ "$LABELS" = 1 ]; then
-  "$ROOT/scripts/labels" --repo "$(ans repo)" || die 4 "the files are written, but creating labels failed: does the repo $(ans repo) exist and can this GitHub account reach it? Create it, then run: scripts/configure --answers <file> --labels"
+  echo "configure: warning: $ROOT is not a git repo root; hooks path, base-only paths and remotes not set" >&2
 fi
 
 # ---------- completeness check: every key this run used ----------
@@ -308,5 +335,20 @@ ans_all home.rules | grep -v '^$' | sed 's/^/  home.rules=/'
 ans_all guard.extra | grep -v '^$' | sed 's/^/  guard.extra=/'
 [ "$MULTI" = yes ] && for r in "${ROWS[@]}"; do echo "  accounts.rows=$r"; done
 [ -n "$HOMES_LINES" ] && printf '%s\n' "$HOMES_LINES" | sed 's/^/  /'
-[ "$LABELS" = 1 ] && echo "  labels: created" || echo "  labels: not run (pass --labels)"
+
+# ---------- labels last, so a failure is the last thing said ----------
+if [ "$LABELS" = 1 ]; then
+  LOUT=$("$ROOT/scripts/labels" --repo "$(ans repo)" 2>&1); lrc=$?
+  printf '%s\n' "$LOUT"
+  if [ "$lrc" != 0 ]; then
+    case "$LOUT" in
+      *"cannot reach"*"create it on GitHub"*) why="the repo $(ans repo) was not found on GitHub: create it (private), commit, push, then run scripts/labels" ;;
+      *"cannot create labels"*) why="this GitHub login has no permission to create labels in $(ans repo): run \`gh auth refresh -s repo\`, then scripts/labels" ;;
+      *) why="GitHub refused the label step (see the line above); run scripts/labels again once it is fixed" ;;
+    esac
+    die 4 "the files are written, but the labels are NOT created: $why"
+  fi
+else
+  echo "configure: labels not run (pass --labels, or run scripts/labels after the first push)"
+fi
 echo "configure: done"

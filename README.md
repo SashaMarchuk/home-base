@@ -9,16 +9,14 @@ A base for "home" repos: one plain git repo per domain of your work (personal, a
 
 ## Make your own home
 
-1. Clone this repo into a new folder and rename the remote:
+1. Clone this repo into a new folder:
    ```
    git clone <this repo's URL> my-home && cd my-home
-   git remote rename origin base
-   git remote set-url --push base DISABLED
    ```
    Do not use "Use this template": it cuts the shared history, and base updates stop merging.
-2. Remove the base-only paths (`openspec/`, `README.md`, `.github/workflows/base-checks.yml`) in your first commit.
-3. Open a session in the folder and run the `configure` skill. It asks a few questions (owner, languages, tracker, other homes, optional terminal helpers) and writes your `home.config`, `.local/config`, the home section of `CLAUDE.md`, `.claude/settings.json` and a starting wiki. To configure without questions, fill `templates/answers.example` and run `scripts/configure --answers <file>`.
-4. Create a private repo for your home, add it as `origin`, push, and run `scripts/labels`.
+2. Open a session in the folder and run the `configure` skill. It asks a few plain questions (who owns the home, what it is for, what must never enter it, your own rules, the repo name, the file language, a team board) and sets everything else to a default you can change later by telling the agent. It writes your `home.config`, `.local/config`, the home section of `CLAUDE.md`, `.claude/settings.json` and a starting wiki, removes the base-only paths (`openspec/`, `README.md`, `.github/workflows/base-checks.yml`), renames the `origin` remote to `base` (push disabled) and points `origin` at your repo. It never pushes. To configure without questions, fill `templates/answers.example` and run `scripts/configure --answers <file>`.
+3. Create the private repo on GitHub, commit, `git push -u origin HEAD`, and run `scripts/labels`.
+4. Open a session in the home and say "status".
 
 ## Take base updates
 

@@ -6,7 +6,8 @@ Implements the REST routes the home scripts use through `gh api`, plus
   <dir>/<owner>__<repo>/issues/<n>.json   one issue with its comments
   <dir>/calls.log                          one JSON line per call
 Login: $GH_STUB_LOGIN (default "owner"). Errors exit 1 with a message on stderr,
-like the real CLI.
+like the real CLI. A call matching the regex $GH_STUB_FAIL_MATCH fails with
+$GH_STUB_FAIL_MESSAGE (default an HTTP 502).
 """
 import fcntl, json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
@@ -337,7 +338,7 @@ def main():
     fail = os.environ.get("GH_STUB_FAIL_MATCH")
     if fail and re.search(fail, " ".join(argv)):
         log(argv, "injected-failure")
-        die("gh: Server Error (HTTP 502)")
+        die(os.environ.get("GH_STUB_FAIL_MESSAGE", "gh: Server Error (HTTP 502)"))
     log(argv, "ok")
     if argv[:1] == ["api"]:
         return api(argv[1:])

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Tests scripts/configure on a throwaway copy of this repo (no network).
 #   scripts/tests/configure.test.sh        exit 0 when every assertion passes
-# Copies scripts/ and templates/ into a git-initialised temp dir, adds a fixture
-# CLAUDE.md, and runs configure there with an invented persona. Never touches
-# the real repo.
+# Copies scripts/, templates/ and base.manifest into a git-initialised temp dir,
+# adds a fixture CLAUDE.md, base-only paths and an origin that is the base, and
+# runs configure there with an invented persona. Never touches the real repo.
+# gh is the stub in scripts/tests/stubs (no network).
 set -u
 SRC=$(cd "$(dirname "$0")/../.." && pwd -P)
 W=$(mktemp -d "${TMPDIR:-/tmp}/configure-test.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 R="$W/home"
+export PATH="$SRC/scripts/tests/stubs:$PATH" GH_STUB_DIR="$W/ghstore"
+unset GH_CONFIG_DIR GH_STUB_FAIL_MATCH GH_STUB_FAIL_MESSAGE
 PASS=0; FAIL=0
 ok() { PASS=$((PASS + 1)); echo "ok   $*"; }
 no() { FAIL=$((FAIL + 1)); echo "FAIL $*"; }
@@ -16,7 +19,7 @@ check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else no "$d"
 tree_sum() { (cd "$R" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs shasum | shasum | cut -c1-40; git config --local --list | LC_ALL=C sort | shasum | cut -c1-40); }
 
 mkdir -p "$R"
-cp -R "$SRC/scripts" "$SRC/templates" "$R/"
+cp -R "$SRC/scripts" "$SRC/templates" "$SRC/base.manifest" "$R/"
 git -C "$R" init -q
 git -C "$R" config user.name tester
 git -C "$R" config user.email tester@users.noreply.github.com
@@ -34,6 +37,10 @@ EOF
 ln -s CLAUDE.md "$R/AGENTS.md"
 mkdir -p "$R/.claude/skills" "$R/.agents"; ln -s ../.claude/skills "$R/.agents/skills"
 BASE_BLOCK=$(sed -n '1,/BUFFER 4\/4/p' "$R/CLAUDE.md")
+# a fresh clone of the base: base-only paths committed, origin is the base
+mkdir -p "$R/openspec"; echo spec > "$R/openspec/a.md"; echo readme > "$R/README.md"
+git -C "$R" add -A && git -C "$R" commit -qm clone --no-verify
+git -C "$R" remote add origin https://github.com/example-org/home-base.git
 mkdir -p "$R/.local"
 printf 'lang.owner=fr\nterminal_helpers=on\n' > "$R/.local/config"   # an override that must be kept
 
@@ -117,6 +124,16 @@ check "gitignore .local/" grep -qx '.local/' "$R/.gitignore"
 check "accounts row" grep -qx '| orchard | the co-op workspace | the workspace CLI'"'"'s own config |' "$R/wiki/howto/accounts.md"
 check "hooksPath set" [ "$(git -C "$R" config --local core.hooksPath)" = .githooks ]
 check "base remote push disabled" [ "$(git -C "$R" remote get-url --push base)" = DISABLED ]
+check "origin renamed to base" [ "$(git -C "$R" remote get-url base)" = https://github.com/example-org/home-base.git ]
+check "origin is the home repo" [ "$(git -C "$R" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+check "origin push is the home repo" [ "$(git -C "$R" remote get-url --push origin)" = https://github.com/example-org/orchard-home.git ]
+check "repoint reported" grep -q 'configure: origin now points to example-org/orchard-home' <<<"$out"
+check "base-only folder removed" [ -z "$(git -C "$R" ls-files openspec)" ]
+check "base-only folder gone from disk" [ ! -e "$R/openspec" ]
+check "base-only file removed" [ -z "$(git -C "$R" ls-files README.md)" ]
+check "base-only removal reported" grep -q 'configure: removed base-only path README.md' <<<"$out"
+check "flowing paths kept" [ -n "$(git -C "$R" ls-files scripts/configure)" ]
+check "labels not run without --labels" grep -q 'labels not run' <<<"$out"
 check "completeness lists keys" grep -q '^  sweep.stale_hours=6 (default)' <<<"$out"
 check "completeness lists machine keys" grep -q '^  limits.reader=none (default)' <<<"$out"
 
@@ -145,6 +162,50 @@ sed -e 's/^accounts.multi=yes/accounts.multi=no/' -e '/^accounts.rows=/d' -e 's/
 check "multi=no exits 0" [ "$rc" = 0 ]
 check "multi=no: no accounts page" [ ! -f "$R2/wiki/howto/accounts.md" ]
 check "empty plugins: no enabledPlugins" [ "$(jq 'has("enabledPlugins")' "$R2/.claude/settings.json")" = false ]
+
+# 7. a failed write is an error: exit 3, the file named, never "wrote"
+R3="$W/home3"; mkdir -p "$R3"; cp -R "$SRC/scripts" "$SRC/templates" "$R3/"; cp "$R/CLAUDE.md" "$R3/CLAUDE.md"
+git -C "$R3" init -q; mkdir -p "$R3/home.config"   # a folder where the file must go: unwritable even as root
+out=$("$R3/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "failed write exits 3" [ "$rc" = 3 ]
+check "failed write names the file" grep -q 'cannot write home.config' <<<"$out"
+check "failed write never says wrote" sh -c "! grep -q 'wrote home.config' <<'X'
+$out
+X"
+
+# 8. labels: one plain line per failure, configure exit 4 says which
+R4="$W/home4"; mkdir -p "$R4"; cp -R "$SRC/scripts" "$SRC/templates" "$R4/"; cp "$R/CLAUDE.md" "$R4/CLAUDE.md"
+git -C "$R4" init -q
+out=$(GH_STUB_FAIL_MATCH='^api repos/' GH_STUB_FAIL_MESSAGE='gh: Not Found (HTTP 404)' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
+check "missing repo: exit 4" [ "$rc" = 4 ]
+check "missing repo: labels one-liner" grep -qx 'labels: cannot reach example-org/orchard-home: create it on GitHub (private) and push, then run scripts/labels' <<<"$out"
+check "missing repo: configure says not found" sh -c 'printf "%s
+" "$1" | tail -1 | grep -q "labels are NOT created: the repo example-org/orchard-home was not found"' _ "$out"
+out=$(GH_STUB_FAIL_MATCH='^label create' GH_STUB_FAIL_MESSAGE='HTTP 403: Resource not accessible by integration' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
+check "no permission: exit 4" [ "$rc" = 4 ]
+check "no permission: no raw error, one labels line" [ "$(grep -c 'HTTP 403' <<<"$out")$(grep -c '^labels:' <<<"$out")" = 01 ]
+check "no permission: labels one-liner" grep -qx 'labels: this GitHub login cannot create labels in example-org/orchard-home: run `gh auth refresh -s repo`, then scripts/labels' <<<"$out"
+check "no permission: configure says permission" sh -c 'printf "%s
+" "$1" | tail -1 | grep -q "no permission to create labels"' _ "$out"
+out=$("$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
+check "labels ok: exit 0" [ "$rc" = 0 ]
+check "labels ok reported" grep -q '^labels: ok (example-org/orchard-home)' <<<"$out"
+check "no origin: origin added" [ "$(git -C "$R4" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+
+# origin is the base and a base remote already exists: origin is re-pointed
+git -C "$R4" remote set-url origin https://github.com/example-org/home-base.git
+git -C "$R4" config remote.origin.pushurl DISABLED
+"$R4/scripts/configure" --answers "$A" >/dev/null 2>&1; rc=$?
+check "base present: exit 0" [ "$rc" = 0 ]
+check "base present: origin re-pointed" [ "$(git -C "$R4" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
+check "base present: origin push re-pointed" [ "$(git -C "$R4" remote get-url --push origin)" = https://github.com/example-org/orchard-home.git ]
+check "base present: base push disabled" [ "$(git -C "$R4" remote get-url --push base)" = DISABLED ]
+
+# 9. configuring the base itself is refused
+sed 's#^repo=.*#repo=example-org/home-base#' "$A" > "$W/answers.base"
+out=$("$R4/scripts/configure" --answers "$W/answers.base" 2>&1); rc=$?
+check "base itself refused (exit 2)" [ "$rc" = 2 ]
+check "base itself named" grep -q 'this is the base itself' <<<"$out"
 
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
