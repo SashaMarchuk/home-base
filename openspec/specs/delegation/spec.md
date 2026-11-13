@@ -20,7 +20,7 @@ Delegation SHALL create a `status:ready` issue in the target home's repo with `h
 - **THEN** issue 5 carries `status:delegated` and its comment links the child issue
 
 ### Requirement: HOME-024 Starting the target orchestrator
-With terminal helpers on, the sending orchestrator SHALL open an orchestrator tab in the target home only when no live session runs there, and otherwise send that session the text "look at issue #m" and nothing else.
+With terminal helpers on, the sending orchestrator SHALL open an orchestrator tab in the target home, recording the child issue with it, only when no live session runs there, and otherwise send that session the text "look at issue #m" and nothing else.
 
 #### Scenario: Target already running
 - **WHEN** a live session already runs in the target home's folder
