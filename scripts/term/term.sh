@@ -174,6 +174,18 @@ on run argv
       end tell
       set s to current session of t
     end if
+    -- a new window's session can be unready for a moment: wait until it answers, then type
+    set ready to false
+    repeat 50 times
+      try
+        set tt to tty of s
+        set ready to true
+        exit repeat
+      on error
+        delay 0.2
+      end try
+    end repeat
+    if not ready then error "the new session did not become ready"
     tell s to write text (item 1 of argv)
     return (id of s) & " " & (tty of s) & " " & (id of w)
   end tell
