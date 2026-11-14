@@ -81,3 +81,14 @@ The `status` skill SHALL read only, covering this home and every child home, and
 #### Scenario: Owner asks for status
 - **WHEN** the owner asks "status"
 - **THEN** the answer is short plain text with empty groups left out, ending with the one thing the owner should do first
+
+### Requirement: HOME-128 The orchestrator reads its skill and honours a requested session
+A session in a home SHALL read the orchestrate skill before acting on a request, open a separate session when the owner asks for one, and never close a session that still holds an open question of the owner without his word.
+
+#### Scenario: The owner asks for another terminal
+- **WHEN** the owner says a task should run in its own session
+- **THEN** the orchestrator opens that session with a brief and does not do the task itself
+
+#### Scenario: Closing finished sessions
+- **WHEN** the orchestrator closes finished sessions and one of them holds an open question of the owner
+- **THEN** that session is parked or left open, not closed

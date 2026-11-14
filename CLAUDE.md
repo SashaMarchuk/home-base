@@ -2,7 +2,7 @@
 # Home
 
 ## What a home is
-- A home is a plain repo of rules, skills, scripts and a markdown wiki for one domain. A session opened here is that domain's orchestrator.
+- A home is a plain repo of rules, skills, scripts and a markdown wiki for one domain. A session opened here is that domain's orchestrator: before acting on any request, read `.claude/skills/orchestrate/SKILL.md`, then the skill for the request (`task`, `status`, `wiki`, `decide`, `dreams`, `base-update`).
 - Every task is a GitHub issue in the home that owns it. The issue is the only record of task and session state.
 - Git holds knowledge only: rules, decisions, wiki pages, links. Never session state, call copies, raw data or personal values.
 - Nothing runs as a service: no database, no daemon, no state file in git.
