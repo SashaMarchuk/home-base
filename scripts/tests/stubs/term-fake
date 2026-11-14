@@ -77,7 +77,7 @@ be_key() {
       else line=$(fake_get "$1" box); fake_put "$1" box "${line%?}"; fi ;;
     esc)
       if [ -f "$d/dialog" ] && [ -f "$d/sticky-dialog" ]; then :
-      elif [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"; echo cancelled >> "$d/dialog-log"
+      elif [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"
       else rm -f "$d/busy"; fi ;;
     cr)
       if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
@@ -102,21 +102,17 @@ be_key() {
 
 be_open() { # mirrors the real launch: "cd '<dir>' && <command>"
   local n=1 tty pid cmd cwd d
-  [ -f "$TERM_FAKE_DIR/open-fails" ] && return 1
   while ! mkdir "$TERM_FAKE_DIR/tabs/ttyf$n" 2>/dev/null; do n=$((n + 1)); done
   tty=ttyf$n; d=$(fake_tab "$tty"); pid=$((60000 + n))
   printf 'fake-%s' "$n" > "$d/tab"; printf 'claude' > "$d/mode"; : > "$d/box"
   printf '%s\n' "$1" >> "$TERM_FAKE_DIR/launches"
-  printf '%s' "$1" > "$d/launch"
   cmd=${1#* && }
   cwd=$(printf '%s' "$1" | sed -n "s/^cd '\\([^']*\\)' && .*/\\1/p")
   printf '%s' "$pid" > "$d/pid"
-  if [ ! -f "$TERM_FAKE_DIR/no-process" ]; then
-    mkdir -p "$TERM_FAKE_DIR/proc/$pid"
-    printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
-    printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$pid/tty"
-    printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$pid/cwd"
-  fi
+  mkdir -p "$TERM_FAKE_DIR/proc/$pid"
+  printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
+  printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$pid/tty"
+  printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$pid/cwd"
   echo "fake-$n $tty"
 }
 

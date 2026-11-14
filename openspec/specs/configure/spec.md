@@ -226,7 +226,7 @@ When one ask call carries several questions, the `configure` skill SHALL send th
 - **THEN** it sends three numbered questions, each naming its recommendation, and no options list
 
 ### Requirement: HOME-093 Session checks one command each
-The `configure` skill SHALL run `echo "${CLAUDE_CODE_REMOTE:-}"` alone as its first command, run `uname -s` alone only when that printed nothing, and set terminal helpers on only when `uname -s` printed `Darwin` and `$TERM_PROGRAM` is `iTerm.app`, unless the person names another terminal app they use, which gives off.
+The `configure` skill SHALL run `echo "${CLAUDE_CODE_REMOTE:-}"` alone as its first command after `git rev-parse --show-toplevel` (HOME-085), run `uname -s` alone only when that printed nothing, and set terminal helpers on only when `uname -s` printed `Darwin` and `$TERM_PROGRAM` is `iTerm.app`, unless the person names another terminal app they use, which gives off.
 
 #### Scenario: Terminal application installed but not used
 - **WHEN** the session runs on macOS in a terminal other than iTerm2 that is installed on the machine

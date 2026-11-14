@@ -131,7 +131,7 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 - **THEN** open exits 3 and no tab is opened
 
 ### Requirement: HOME-072 Reading a tab
-`term.sh state` SHALL print one word for a target tab: `gone` when its recorded process has ended, else the first that applies of an open dialog, a heads-up notice, a running turn, no input box (`shell`), background jobs, unsent text in the box and an empty box (`idle`), while `term.sh screen` prints the tab's screen text, its last lines only with `--lines N`.
+`term.sh state` SHALL print one word for a target tab: `gone` when its recorded process has ended, exit 4 with no word when the tab itself is gone or its screen cannot be read, else the first that applies of an open dialog, a heads-up notice, a running turn, no input box (`shell`), background jobs, unsent text in the box and an empty box (`idle`), while `term.sh screen` prints the tab's screen text, its last lines only with `--lines N`.
 
 #### Scenario: Recorded process ended
 - **WHEN** the recorded process of a registered tab no longer runs

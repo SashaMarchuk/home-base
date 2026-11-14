@@ -42,6 +42,8 @@ jobs:
             [ $ok = 1 ] || { echo "Not listed in base.manifest: $p"; fail=1; }
           done < <(git ls-files)
           exit $fail
+      - name: Repo checks
+        run: scripts/checks/run
       - name: Tests
         run: scripts/tests/run.sh
       - name: Home checks stay silent here

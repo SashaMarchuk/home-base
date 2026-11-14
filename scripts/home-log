@@ -112,6 +112,7 @@ markers() { # markers <comments-json>
     "\(.id)\t\($m.run)\t\($m.state)"'
 }
 own_comment_id() { markers "$1" | awk -F'\t' -v r="$RUN" '$2 == r { print $1; exit }'; }
+own_state() { markers "$1" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }'; }
 comment_body() { printf '%s' "$1" | jq -r --argjson id "$2" '.[] | select(.id == $id) | .body'; }
 issue_labels() { gh api "repos/$REPO/issues/$N" --jq '.labels[].name' || { echo "home-log: cannot read $REPO#$N" >&2; return 6; }; }
 issue_state() { gh api "repos/$REPO/issues/$N" --jq '.state' || { echo "home-log: cannot read $REPO#$N" >&2; return 6; }; }
@@ -192,7 +193,7 @@ start)
   C=$(comments_json) || exit 6
   OWN=$(own_comment_id "$C")
   if [ -n "$OWN" ]; then
-    ST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+    ST=$(own_state "$C")
     if [ "$ST" = active ]; then save_run; echo "home-log: $REPO#$N already claimed by this run"; exit 0; fi
     case "$ST" in final|released) die 5 "this run already finished $REPO#$N" ;; esac
   fi
@@ -219,7 +220,7 @@ checkpoint)
   C=$(comments_json) || exit 6
   OWN=$(own_comment_id "$C")
   [ -n "$OWN" ] || die 2 "no comment of run $RUN on $REPO#$N; run 'home-log start $N' first"
-  OWNST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+  OWNST=$(own_state "$C")
   case "$OWNST" in final|released|stub) die 5 "run $RUN on $REPO#$N is $OWNST; run 'home-log start $N' to work on it again" ;; esac
   NEWST=active; END=0
   if [ "$PARK" = 1 ]; then NEWST=parked; END=1
@@ -266,7 +267,7 @@ stub)
   C=$(comments_json) || exit 6
   OWN=$(own_comment_id "$C")
   [ -n "$OWN" ] || exit 0
-  ST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
+  ST=$(own_state "$C")
   [ "$ST" = active ] || exit 0
   TEXT=$(old_text "$(comment_body "$C" "$OWN")")
   [ -n "$TEXT" ] && TEXT+=$'\n\n'

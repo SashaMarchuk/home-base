@@ -6,8 +6,8 @@
 #   stale-claim            status:claimed issue whose active comment is older than sweep.stale_hours
 #   pr-no-final            merged pull request naming an issue that has no final comment
 #   delegated-child-closed status:delegated issue whose child issue is closed
-#   drift <path>           a flows-down path differs from base/main
-#   base-ahead <N>         base/main has N commits this home does not have
+#   drift <path>           a flows-down path differs from base/main (printed as: SWEEP drift <repo> <path>)
+#   base-ahead <N>         base/main has N commits this home does not have (SWEEP base-ahead <repo> base/main is N commits ahead)
 # Adds the label needs-summary to closed-no-final and pr-no-final issues.
 # --same-repo (CI): only checks that need this repo's own issues.
 # Exits 0 when there is no home.config (the base) and on any network error.
@@ -30,9 +30,9 @@ epoch_of() { # ISO -> epoch (GNU and BSD date)
 NOW=$(date -u +%s)
 SINCE=$(since_iso "$LOOKBACK_DAYS")
 
+comments_of() { gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null | jq -s 'add // []'; }
 has_final() { # has_final <repo> <n> -> 0 when a final home-log comment exists
-  gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
-    | jq -e '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=final -->"))] | length > 0' >/dev/null
+  comments_of "$1" "$2" | jq -e '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=final -->"))] | length > 0' >/dev/null
 }
 label_summary() { gh api -X POST "repos/$1/issues/$2/labels" -f "labels[]=needs-summary" >/dev/null 2>&1 || true; }
 
@@ -49,8 +49,7 @@ OPEN=$(gh api "repos/$R/issues?state=open&per_page=100" 2>/dev/null) || exit 0
 printf '%s' "$OPEN" | jq -r '.[] | select(has("pull_request") | not) | select([.labels[].name] | index("status:claimed")) | .number' |
 while read -r n; do
   [ -n "$n" ] || continue
-  upd=$(gh api --paginate "repos/$R/issues/$n/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
-        | jq -r '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=active -->"))] | last | .updated_at // empty')
+  upd=$(comments_of "$R" "$n" | jq -r '[.[] | select(.body | test("^<!-- home-log run=[^ ]+ state=active -->"))] | last | .updated_at // empty')
   if [ -z "$upd" ]; then echo "SWEEP stale-claim $R#$n no active home-log comment"; continue; fi
   age=$(( (NOW - $(epoch_of "$upd")) / 3600 ))
   [ "$age" -ge "$STALE_H" ] && echo "SWEEP stale-claim $R#$n silent for ${age}h"
@@ -59,8 +58,7 @@ if [ "$SAME" = 0 ]; then
   printf '%s' "$OPEN" | jq -r '.[] | select([.labels[].name] | index("status:delegated")) | .number' |
   while read -r n; do
     [ -n "$n" ] || continue
-    child=$(gh api --paginate "repos/$R/issues/$n/comments?per_page=100" 2>/dev/null | jq -s 'add // []' \
-            | jq -r '[.[] | select(.body | test("^<!-- home-log run=")) | .body | capture("\n- delegated: (?<c>[^\n]+)").c] | last // empty')
+    child=$(comments_of "$R" "$n" | jq -r '[.[] | select(.body | test("^<!-- home-log run=")) | .body | capture("\n- delegated: (?<c>[^\n]+)").c] | last // empty')
     [ -n "$child" ] || continue
     crepo=${child%#*}; cn=${child##*#}
     st=$(gh api "repos/$crepo/issues/$cn" --jq .state 2>/dev/null) || continue
@@ -69,12 +67,13 @@ if [ "$SAME" = 0 ]; then
 fi
 
 # 4. Merged pull requests that name an issue with no final comment.
+# jq emits one "<pr> <n>" pair per issue reference anywhere in the body (bodies hold newlines).
 gh api "repos/$R/pulls?state=closed&per_page=30" 2>/dev/null \
-  | jq -r --arg s "$SINCE" '.[] | select(.merged_at != null and .merged_at >= $s) | "\(.number)\t\(.body // "")"' 2>/dev/null |
-while IFS=$'\t' read -r pr body; do
-  for n in $(printf '%s' "$body" | grep -oE '#[0-9]+' | tr -d '#' | sort -u); do
-    has_final "$R" "$n" || { echo "SWEEP pr-no-final $R#$n named by pull request #$pr"; label_summary "$R" "$n"; }
-  done
+  | jq -r --arg s "$SINCE" '.[] | select(.merged_at != null and .merged_at >= $s) | .number as $p
+      | [(.body // "") | scan("#([0-9]+)") | .[0]] | unique[] | "\($p) \(.)"' 2>/dev/null |
+while read -r pr n; do
+  [ -n "$n" ] || continue
+  has_final "$R" "$n" || { echo "SWEEP pr-no-final $R#$n named by pull request #$pr"; label_summary "$R" "$n"; }
 done
 
 [ "$SAME" = 1 ] && exit 0

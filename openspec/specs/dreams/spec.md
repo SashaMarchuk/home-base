@@ -42,7 +42,7 @@ Dreams SHALL never put a personal fact into a pull request, issue or commit, sta
 - **THEN** they are shown on one private page with one yes/no row per fact, and each answer is saved as it is given
 
 ### Requirement: HOME-047 Daily reminder
-With `dreams.mode=daily`, the session-start hook SHALL print `dreams: due` when the standing Dreams issue is missing or was last updated more than 24 hours ago.
+With `dreams.mode=daily`, the session-start hook SHALL print a line starting `dreams: due` when the home repo has no open issue labelled `dreams`, or when the first one GitHub lists (the newest created) was last updated more than 24 hours ago.
 
 #### Scenario: Manual mode
 - **WHEN** `dreams.mode` is `manual`

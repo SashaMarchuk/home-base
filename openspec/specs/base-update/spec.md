@@ -52,7 +52,7 @@ After a base-update commit the skill SHALL run `scripts/checks/run` and, when `t
 - **THEN** the report says so and the hook lines are applied by hand
 
 ### Requirement: HOME-053 Base ahead and drift are reported
-The sweep SHALL add the `base` remote from `base.url` when missing, fetch it with a time limit, and print `SWEEP base-ahead` with the count of commits `base/main` has that the home lacks and `SWEEP drift <path>` for each `flows` path the home changed since the merge base.
+The sweep SHALL add the `base` remote from `base.url` when missing, fetch it with a time limit, and print `SWEEP base-ahead <repo> base/main is <N> commits ahead` with the count of commits `base/main` has that the home lacks and `SWEEP drift <repo> <path>` for each `flows` path the home changed since the merge base.
 
 #### Scenario: Base has new commits
 - **WHEN** `base/main` is three commits ahead

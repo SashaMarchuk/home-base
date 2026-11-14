@@ -55,11 +55,10 @@ ans_all() { # every value of a key, in order
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
       if (key == k) print val }' "$ANS"
 }
-ans_has() { awk -v k="$1" '/^[[:space:]]*#/ { next } { i = index($0, "="); if (i == 0) next
-  key = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key == k) f = 1 } END { exit !f }' "$ANS"; }
 ans() { ans_all "$1" | tail -1; }
 ans_keys() { awk '/^[[:space:]]*#/ { next } { i = index($0, "="); if (i == 0) next
   key = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key != "") print key }' "$ANS" | sort -u; }
+ans_has() { ans_keys | grep -qxF -- "$1"; }
 
 # ---------- key tables ----------
 REQUIRED="repo owner.names home.domain home.boundary lang.files lang.owner tracker.board labels.needs_owner limits.mode proactivity.mode dreams.mode accounts.multi terminal_helpers"
@@ -396,7 +395,7 @@ PENDING=""; [ -n "$PSTEPS" ] && PENDING="cd $(q "$ROOT") && $PSTEPS"
 
 # ---------- completeness check: every key this run used ----------
 echo "configure: keys used"
-for k in owner.names home.domain home.boundary plugins accounts.multi; do echo "  $k=$(ans "$k") (answer)"; done
+for k in $HOME_FIELDS; do echo "  $k=$(ans "$k") (answer)"; done
 for k in $(printf '%s\n' "$COMMITTED_DEFAULTS" | cut -d= -f1); do
   [ "$k" = tracker.board_write ] && [ "$BOARD" = none ] && { echo "  $k= (no board)"; continue; }
   echo "  $k=$(val "$k") ($(src "$k"))"

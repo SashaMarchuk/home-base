@@ -66,7 +66,7 @@ Every task of a home is a GitHub issue, and `scripts/home-log` is the only write
 - **THEN** it exits 5, the comment is unchanged and it says to run `home-log start` to work on the issue again
 
 ### Requirement: HOME-005 Finish
-`home-log finish <n>` SHALL refuse with exit 3 while another run holds an active comment on the issue, otherwise write the run's final comment without an open question, remove `needs-summary` and the owner label, and then close the issue as completed with no status label, or with `--review` set `status:review` and leave it open, or with `--release <reason>` mark the comment `released` and return the issue to `status:ready`, or on the standing Dreams issue change no label and leave it open.
+`home-log finish <n>` SHALL refuse with exit 3 while another run holds an active comment on the issue, otherwise write the run's final comment without an open question, remove `needs-summary` and the owner label, then close the issue as completed with no status label, or with `--review` set `status:review` and leave it open, or with `--release <reason>` mark the comment `released` and return the issue to `status:ready`, or on the standing Dreams issue keep its status labels and leave it open.
 
 #### Scenario: Plain finish
 - **WHEN** `home-log finish 9 --text "Result: <link>"` runs
@@ -87,6 +87,10 @@ Every task of a home is a GitHub issue, and `scripts/home-log` is the only write
 #### Scenario: Open question cleared
 - **WHEN** a run whose comment holds an open question finishes
 - **THEN** the final comment holds no open question and the owner label is removed
+
+#### Scenario: Standing Dreams issue
+- **WHEN** a run finishes on the standing issue labelled `dreams`
+- **THEN** `needs-summary` and the owner label are removed, no status label changes and the issue stays open
 
 #### Scenario: Release a dead claim
 - **WHEN** `home-log finish 4 --run-id <dead run> --release "tab gone"` runs

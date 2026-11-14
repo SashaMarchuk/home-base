@@ -898,7 +898,7 @@ cmd_close() {
 }
 
 cmd_park() {
-  local target issue="" timeout=$EXIT_WAIT scr b q="" text dialog=0 adopt=0
+  local target issue="" timeout=$EXIT_WAIT scr b q="" qa text dialog=0 adopt=0
   [ $# -ge 1 ] || die 2 "usage: park <target> [--issue N] [--adopt] [--timeout S]"
   target=$1; shift
   while [ $# -gt 0 ]; do
@@ -932,13 +932,9 @@ cmd_park() {
   fi
   adopt_record "$issue"
   text="Parked by term.sh. Resume: $(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume')"
-  if [ -n "$q" ]; then
-    "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park --question "$q" --text "$text" >/dev/null ||
-      die 3 "home-log failed; the session is left running"
-  else
-    "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park --text "$text" >/dev/null ||
-      die 3 "home-log failed; the session is left running"
-  fi
+  qa=(); [ -n "$q" ] && qa=(--question "$q")
+  "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park ${qa[@]+"${qa[@]}"} --text "$text" >/dev/null ||
+    die 3 "home-log failed; the session is left running"
   if [ "$dialog" = 1 ]; then
     be_key "$T_TTY" "$T_TAB" esc; settle   # Esc cancels the dialog; it never answers it
     wait_quiet "$timeout" || die 5 "the session on $T_TTY did not settle after the dialog was cancelled"

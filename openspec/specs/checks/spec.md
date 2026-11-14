@@ -91,7 +91,7 @@ The session-start hook SHALL print the line "Every request gets an issue first: 
 - **THEN** the session has seen the issue-first line and opens an issue before it answers
 
 ### Requirement: HOME-073 Checks of the base itself
-The base's own CI workflow SHALL fail when a secret is found in the tree or the history, a tracked file holds a home-directory path or an email address other than a noreply address, a tracked path is not covered by `base.manifest`, or the script tests fail, and it confirms that the home checks stay silent without `home.config`.
+The base's own CI workflow SHALL fail when a secret is found in the tree or the history, a tracked file holds a home-directory path or an email address other than a noreply address, a tracked path is not covered by `base.manifest`, `scripts/checks/run` fails, or the script tests fail, and it confirms that the home checks stay silent without `home.config`.
 
 #### Scenario: Path missing from the manifest
 - **WHEN** the base tracks a file that no line of `base.manifest` covers

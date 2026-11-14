@@ -16,9 +16,8 @@ expect() { # expect <description> <expected-exit> <cmd...>
   "$@" >"$T/out" 2>&1; local got=$?
   if [ "$got" = "$want" ]; then ok; else bad "$d (exit $got, want $want)"; sed -n '1,8p' "$T/out" | sed 's/^/    /'; fi
 }
-want_group() { [ $# -eq 0 ] && return 0; local g; for g in $SELECTED; do [ "$g" = "$1" ] && return 0; done; return 1; }
 SELECTED="$*"
-sel() { [ -z "$SELECTED" ] && return 0; want_group "$1"; }
+sel() { [ -z "$SELECTED" ] && return 0; local g; for g in $SELECTED; do [ "$g" = "$1" ] && return 0; done; return 1; }
 
 # Fake values (assembled, never stored).
 CARD="4111""1111""1111""1111"
@@ -143,6 +142,22 @@ if sel sweep; then
   printf '%s\n' "$out" | grep -q '#2' && bad "sweep must not report a finished issue" || ok
   out2=$(cd "$H" && scripts/home-sweep)
   [ "$out" = "$out2" ] && ok || bad "sweep must be repeatable"
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  jq -n --arg m "$now" '[{number: 40, merged_at: $m, body: "Tidy up\n\nCloses #2 and also #1"}]' > "$GH_STUB_DIR/test__sw/pulls.json"
+  out3=$(cd "$H" && scripts/home-sweep)
+  printf '%s\n' "$out3" | grep -qx 'SWEEP pr-no-final test/sw#1 named by pull request #40' && ok || bad "sweep must find #n past the first line of a PR body: $out3"
+  printf '%s\n' "$out3" | grep -q 'pr-no-final test/sw#2' && bad "sweep must not report a PR-named finished issue" || ok
+  rm -f "$GH_STUB_DIR/test__sw/pulls.json"
+  # session-start: base-ahead and drift always show, then at most 12 other lines; limits line shows the verdict.
+  H="$T/ss"; mkhome "$H" test/ss
+  { for i in $(seq 1 15); do echo "SWEEP stale-claim test/ss#$i silent for 9h"; done
+    echo "SWEEP base-ahead test/ss base/main is 3 commits ahead"; echo "SWEEP drift test/ss scripts/"; } > "$T/sweep-lines"
+  printf '#!/bin/sh\ncat "%s"\n' "$T/sweep-lines" > "$H/scripts/home-sweep"; chmod +x "$H/scripts/home-sweep"
+  ss=$(echo '{}' | "$H/scripts/hooks/session-start")
+  printf '%s\n' "$ss" | grep -qx 'SWEEP base-ahead test/ss base/main is 3 commits ahead' && ok || bad "session-start must show base-ahead past 12 lines: $ss"
+  printf '%s\n' "$ss" | grep -qx 'SWEEP drift test/ss scripts/' && ok || bad "session-start must show drift past 12 lines"
+  [ "$(printf '%s\n' "$ss" | grep -c '^SWEEP stale-claim')" = 12 ] && ok || bad "session-start must cap other sweep lines at 12"
+  printf '%s\n' "$ss" | grep -qx 'limits: none (ok)' && ok || bad "session-start limits line must show the verdict: $ss"
   mkdir -p "$T/nohome/scripts" && cp -R "$SRC/scripts/." "$T/nohome/scripts/"
   expect "sweep exits 0 without home.config" 0 "$T/nohome/scripts/home-sweep"
 fi

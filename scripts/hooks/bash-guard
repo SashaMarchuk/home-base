@@ -37,7 +37,7 @@ while IFS= read -r s; do
   fi
   printf '%s' "$s" | grep -qE '^gh[[:space:]]+auth[[:space:]]+switch' && block "gh auth switch" "Use the account this home's config names (rule 12)."
   printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+delete' && block "gh repo delete" "Deleting a repository needs the owner."
-  printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+(edit|create)[[:space:]].*--visibility' && printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+edit' && block "visibility change" "Changing repository visibility needs the owner."
+  printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+edit[[:space:]].*--visibility' && block "visibility change" "Changing repository visibility needs the owner."
   printf '%s' "$s" | grep -qE '^gh[[:space:]]+api.*(-f|-F|--field|--raw-field)[[:space:]]+(private|visibility)=' && block "visibility change" "Changing repository visibility needs the owner."
   printf '%s' "$s" | grep -qE '^git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+push[[:space:]]+(.*[[:space:]])?base([[:space:]]|$)' && block "git push base" "Never push to the base from a home; fix the base in its own checkout."
   if printf '%s' "$s" | grep -qE '^git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)' && printf '%s' "$s" | grep -qE '(^|[[:space:]])(-f|--force|--force-with-lease(=[^[:space:]]*)?|\+[^[:space:]]+)([[:space:]]|$)'; then
