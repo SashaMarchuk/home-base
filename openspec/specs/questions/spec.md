@@ -41,11 +41,19 @@ Before asking the owner, a session SHALL search `DECISIONS.md`, the issue and ea
 - **THEN** the owner is not asked
 
 ### Requirement: HOME-021 Decisions are recorded verbatim and append-only
-The `decide` skill SHALL append each owner decision to `DECISIONS.md` as `### D-NNN` with the next free id, the verbatim quote, an English gloss when the quote is not in English, the source, supersedes, status and kind, and change an older entry only by setting its status line to `superseded-by D-NNN`.
+The `decide` skill SHALL append each owner decision to `DECISIONS.md` in the file's own entry format, by default `### <ID> — <title>` followed by plain `Quote:`, `Gloss:` (when the quote is not in English), `Source:`, `Status:` and `Kind:` lines, with the next id in the file's own id family, and change an older entry only by setting its `Status:` line to `superseded-by <ID>`.
 
 #### Scenario: Decision replaces an older one
-- **WHEN** the owner reverses decision D-004
-- **THEN** a new entry is appended and only D-004's status line changes
+- **WHEN** the owner reverses decision D4
+- **THEN** a new entry is appended and only D4's `Status:` line changes
+
+#### Scenario: Next id continues the file's family
+- **WHEN** the last entry of `DECISIONS.md` is `### D23 — ...`
+- **THEN** the new entry is `### D24 — ...`, and no `D-001` series is started
+
+#### Scenario: Another family
+- **WHEN** the file numbers its entries `X-D001`, `X-D002`, ...
+- **THEN** the new entry continues that family with the same zero-padding
 
 #### Scenario: A default is not a decision
 - **WHEN** a session picks a default the owner did not choose
