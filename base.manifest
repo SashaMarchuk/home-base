@@ -6,6 +6,7 @@
 shared CLAUDE.md
 flows AGENTS.md
 flows .agents/skills
+flows .codex/hooks.json
 flows .claude/skills/orchestrate/
 flows .claude/skills/task/
 flows .claude/skills/status/

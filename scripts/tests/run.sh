@@ -260,6 +260,30 @@ if sel guards; then
   expect "bash-guard blocks .cmd string: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh auth switch -u a\"}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
+  # Codex hooks: each command exactly as .codex/hooks.json writes it, run from a subfolder of the home.
+  cp -R "$SRC/.codex" "$H/"; mkdir -p "$H/wiki/sub"
+  HJ="$H/.codex/hooks.json"
+  [ "$(jq -r '.hooks.PreToolUse | map(.matcher) | join(",")' "$HJ")" = '.*' ] && ok || bad "Codex PreToolUse matcher must be .* (every tool reaches the dispatcher)"
+  PRE=$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$HJ")
+  hook() { # hook <payload file>: the PreToolUse command run as Codex runs it
+    ( cd "$H/wiki/sub" && sh -c "$PRE" < "$1" ); }
+  jq -n '{tool_name:"Bash",tool_input:{command:"gh auth switch -u a"}}' > "$T/p1.json"
+  jq -n '{tool_name:"exec_command",tool_input:{cmd:"gh auth switch -u a"}}' > "$T/p2.json"
+  jq -n '{tool_name:"Bash",tool_input:{command:"gh issue list"}}' > "$T/p3.json"
+  jq -n '{tool_name:"mcp__notes__run",tool_input:{command:"gh auth switch -u a"}}' > "$T/p4.json"
+  ap "$H" "$(printf '*** Begin Patch\n*** Add File: %s/wiki/howto.md\n+Never run pkill -f node here.\n*** End Patch' "$H")" > "$T/p5.json"
+  ap "$H" "$P_ADD" > "$T/p6.json"
+  expect "Codex hook blocks Bash: gh auth switch" 2 hook "$T/p1.json"
+  expect "Codex hook blocks exec_command: gh auth switch" 2 hook "$T/p2.json"
+  expect "Codex hook allows a clean command" 0 hook "$T/p3.json"
+  expect "Codex hook passes another tool untouched" 0 hook "$T/p4.json"
+  expect "Codex hook never sends a patch to bash-guard" 0 hook "$T/p5.json"
+  expect "Codex hook blocks apply_patch with a card" 2 hook "$T/p6.json"
+  for ev in SessionStart SessionEnd; do
+    c=$(jq -r --arg e "$ev" '.hooks[$e][0].hooks[0].command' "$HJ")
+    f=$(cd "$H/wiki/sub" && sh -c "printf '%s\n' $c" | head -1)
+    [ -x "$f" ] && ok || bad "Codex $ev hook command must name an executable script ($f)"
+  done
 fi
 
 # ---------------------------------------------------------------- checks
