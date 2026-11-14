@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: HOME-063 Survey of live tabs
-`term.sh survey` SHALL print one line `<tty> <pid|-> <claude|shell> <session_id|-> <cwd>` per live tab, limited with `--cwd` to session tabs running in that working directory, and `term.sh survey --json` SHALL print one JSON object per live tab holding its tty, window, tab id, pid, kind (`claude`, `codex` or `shell`), session id and where it came from, profile, session-file status, cwd, group and where it came from, whether this home registered it, its issue, its resume line (null when it cannot be reopened) and whether it is the calling session.
+`term.sh survey` SHALL print one line `<tty> <pid|-> <claude|shell> <session_id|-> <cwd>` per live tab, limited with `--cwd` to session tabs running in that working directory; `term.sh survey --json` prints the same tabs as JSON (HOME-321).
 
 #### Scenario: Before launching a worker
 - **WHEN** the orchestrator runs `term.sh survey --cwd <dir>`
@@ -11,12 +11,8 @@
 - **WHEN** a tab runs a session of a tool other than Claude Code
 - **THEN** survey reports it as `shell`, since the helpers support Claude Code sessions only
 
-#### Scenario: A Codex tab in the JSON survey
-- **WHEN** a `codex` process runs on a tab and `term.sh survey --json` runs
-- **THEN** that tab's kind is `codex` and no session id or resume line is given for it
-
 ### Requirement: HOME-106 Closing or parking the owner's own tab
-`term.sh close` and `term.sh park` SHALL act on a tab missing from this home's registry only with `--adopt` and an explicit tty on which exactly one `claude` process runs and whose screen can be read, keep every other check of close and park (for close the issue check only when an issue is given), take the session id from the command line or else from the session's file, record the tab in the registry with `adopted: true` before the first keystroke, and refuse with exit 2 when `--adopt` targets a session id or a tab this home opened.
+`term.sh close` and `term.sh park` SHALL act on a tab missing from this home's registry only with `--adopt` and an explicit tty on which exactly one `claude` process runs and whose screen can be read, keep every other check of close and park (for close the issue check only when an issue is given), record the tab in the registry with `adopted: true` before the first keystroke, and refuse with exit 2 when `--adopt` targets a session id or a tab this home opened.
 
 #### Scenario: Owner asks to close a tab opened by hand
 - **WHEN** the owner asks to close a tab the owner opened by hand and `term.sh close <tty> --adopt` runs on it while its box is empty
@@ -35,7 +31,7 @@
 - **THEN** the session is parked under the id from its session file
 
 ### Requirement: HOME-129 An adopted tab resumes with its launch flags
-The resume line `term.sh` builds for a tab it did not open SHALL hold, in this order, `launch.command`, `launch.profile_flag` with the profile (from the session file's folder, else the command line, else `launch.profile.<role>`), `--model <alias>` (from the command line when it is an alias, else `launch.model`), `--dangerously-skip-permissions` only when the original command line had it, and `--resume <session id>`, dropping every other argument; a session with no known id, or with a known profile while `launch.profile_flag` is unset, gets no resume line and is never closed by park or freeze.
+The resume line `term.sh` builds for a tab it did not open SHALL hold only `launch.command`, `launch.profile_flag` with the profile (session file, else command line, else `launch.profile.<role>`), `--model <alias>` (command line, else `launch.model`), `--dangerously-skip-permissions` when the original had it, and `--resume <session id>`.
 
 #### Scenario: Parking an adopted tab started with a profile and a model
 - **WHEN** `launch.profile_flag` is `--profile` and `term.sh park <tty> --adopt --issue 21` runs on a tab started as `claude --profile team --model opus --resume <id>`
@@ -44,10 +40,6 @@ The resume line `term.sh` builds for a tab it did not open SHALL hold, in this o
 #### Scenario: Profile from the session file
 - **WHEN** `launch.profile_flag` is `-p` and a tab started as `claude --model opus "<prompt>"` has its session file under the profile folder `work`
 - **THEN** its resume line is `cd <cwd> && 'claude' -p 'work' --model 'opus' --resume <id>`, without the prompt
-
-#### Scenario: Profile that cannot be passed
-- **WHEN** the session file names a profile and `launch.profile_flag` is unset
-- **THEN** the tab gets no resume line, and park and freeze never close it
 
 ## ADDED Requirements
 
@@ -218,3 +210,17 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 #### Scenario: Before the real-tab check
 - **WHEN** the owner says to close the sessions of one group and the real-tab check has not passed
 - **THEN** the orchestrator asks once before freezing them
+
+### Requirement: HOME-321 Survey in JSON
+`term.sh survey --json` SHALL print one JSON object per live tab with its tty, window, tab id, pid, kind (`claude`, `codex` or `shell`), session id and its source, profile, session-file status, cwd, group and its source, registration, issue, resume line and whether it is the calling session.
+
+#### Scenario: A Codex tab
+- **WHEN** a `codex` process runs on a tab
+- **THEN** its kind is `codex` and it has no session id or resume line
+
+### Requirement: HOME-322 A session that cannot be reopened is never closed
+A session with no known id, or whose profile is known while `launch.profile_flag` is unset, SHALL get no resume line, and park and freeze SHALL never close it.
+
+#### Scenario: Profile that cannot be passed
+- **WHEN** the session file names a profile and `launch.profile_flag` is unset
+- **THEN** the tab gets no resume line, and park and freeze never close it
