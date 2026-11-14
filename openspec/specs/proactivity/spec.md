@@ -47,3 +47,10 @@ When the owner chooses to leave something and watch it, the orchestrator SHALL f
 #### Scenario: The owner says leave it and watch
 - **WHEN** the owner picks "leave it and watch"
 - **THEN** a follow-up issue for the watch exists before the orchestrator's final comment
+
+### Requirement: HOME-147 Leave as is and watch is offered and carries a hypothesis
+When a fallback already carries the work, the orchestrator SHALL offer "leave it as is and watch" as its own option, and on that answer file a follow-up issue holding the cause hypothesis its evidence supports with its log lines, then finish without parking.
+
+#### Scenario: A fallback runs after a failure
+- **WHEN** a fallback carries the work after a failure and the owner picks "leave it as is and watch"
+- **THEN** a follow-up issue holds the hypothesis and log lines, and the issue is finished, not parked

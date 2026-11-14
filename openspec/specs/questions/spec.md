@@ -114,3 +114,52 @@ When a session needs several yes/no approvals at once, it SHALL put them on one 
 #### Scenario: Five drafts wait for approval
 - **WHEN** five reply drafts need the owner's yes or no
 - **THEN** they are shown together on one page with an answer per row
+
+### Requirement: HOME-141 An approved text is sent as approved
+After the owner's yes on the exact text of a message or post, the session SHALL send it itself as approved and read it back.
+
+#### Scenario: The owner approves a reply draft
+- **WHEN** the owner says yes to the exact text of a reply
+- **THEN** the session sends that text unchanged and reads the sent message back
+
+### Requirement: HOME-142 A draft with choices goes on one review page
+When a draft comes together with other choices for the owner, the session SHALL show them on one review page with the draft as an editable text and yes / no / note per row, plus one pointer question.
+
+#### Scenario: A draft and two options
+- **WHEN** a reply draft and two choices wait for the owner
+- **THEN** one review page holds the editable draft and a yes / no / note row for each, and one question points to it
+
+### Requirement: HOME-143 No confirmation of the owner's own order
+The orchestrator SHALL report an order, plan or launch the owner gave instead of asking the owner to confirm it.
+
+#### Scenario: The owner gave the launch order
+- **WHEN** the owner names the order in which tasks start
+- **THEN** the orchestrator starts them in that order and asks nothing about the order
+
+### Requirement: HOME-144 Another tab's dialog is reported, not asked about
+The orchestrator SHALL list in its status a waiting dialog in another tab that the owner did not ask to relay into, and never put it to the owner as a question.
+
+#### Scenario: A tab waits on a dialog
+- **WHEN** another tab waits on a dialog and the owner asked for no relay
+- **THEN** the status names that tab's dialog and no question about it is asked
+
+### Requirement: HOME-145 An explanation answers only what was asked
+When the owner asks for an explanation, the final message SHALL answer only that, at the length the owner asked for, with no next step or proposal.
+
+#### Scenario: A short explanation is asked for
+- **WHEN** the owner asks briefly why something failed
+- **THEN** the reply is a short plain explanation and ends without a proposal
+
+### Requirement: HOME-148 Owner away: the worker asks nothing
+Every worker brief SHALL tell the worker that, when the owner is away, it asks nothing, takes the reversible default and stores the question with `home-log checkpoint <n> --question`.
+
+#### Scenario: A night run
+- **WHEN** a worker meets a choice for the owner while the owner is away
+- **THEN** it takes the reversible default and the question is stored on its issue
+
+### Requirement: HOME-149 Owner away: waiting steps are stored before the final
+When the owner is away, the orchestrator SHALL store every decision or step that waits for the owner before its final message: its own with `home-log checkpoint <n> --park --question` on an issue it holds, and one a worker will hit in that worker's brief.
+
+#### Scenario: A night run ends with steps for the owner
+- **WHEN** an unattended run ends with a decision only the owner can take
+- **THEN** that decision is stored as a question on an issue, not only listed in the final message

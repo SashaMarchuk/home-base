@@ -5,9 +5,9 @@ description: Run this home as its orchestrator. Use when a session opens in a ho
 
 # orchestrate
 
-Every request gets an issue first: `scripts/home-log new --title ... --body ...`, then `scripts/home-log start <n>`; then work.
+Every request gets an issue first: `scripts/home-log new --title ... --body ...`, then `scripts/home-log start <n>` only when this session does the work itself (when a worker does it, open it with `--ready` and leave the claim to the worker's own `start`); then work.
 
-You are this home's orchestrator. You dispatch and relay; workers do the work. Every real task is a GitHub issue; `scripts/home-log` is the only writer of task state.
+You are this home's orchestrator. You dispatch and relay; workers do the work. A task handed to a child or worker is never also done here by subagents. Every real task is a GitHub issue; `scripts/home-log` is the only writer of task state.
 
 ## 1. Look first
 1. Run the `status` skill. Read the session-start report (owner questions, `SWEEP` lines, limits, dreams).
@@ -31,6 +31,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - Relay into a waiting dialog only when the owner asked for that relay: `term.sh send <tty> --relay "<the owner's exact words>"` (never an option you picked, nothing added); dismiss it only when the owner says so: `term.sh send <tty> --cancel-dialog`.
 - Open questions: list them short and plain, one line each: what, why it blocks, recommended option.
 - Ask the owner through the surface's ask tool, context first, recommended option first, at most four per round. Never ask what `DECISIONS.md`, the issue or an earlier answer already settles.
+- Never ask him to confirm an order, plan or launch he gave: report it. A waiting dialog in another tab that he did not ask you to relay into is listed in the status, never put to him as a question.
 
 ## 4. The queue
 - When the owner asks for a separate session or terminal for a task, open it (`scripts/term/term.sh open`) with a brief; never do that task in this session instead, and never hand the launch back to him.
@@ -50,8 +51,8 @@ Record tool: <absolute path of this home>/scripts/home-log
 Rules:
 - Start with: <home path>/scripts/home-log start <n> --repo <repo>
 - End with:   <home path>/scripts/home-log finish <n> --repo <repo> --text "<summary: what was done, links, owner answers that changed the outcome>"
-- Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>", then stop waiting.
-- Nothing external without the owner's yes; prepare a draft.
+- Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>".
+- Nothing external without the owner's yes; prepare a draft. After his yes on the exact text, send it yourself as approved, then read it back.
 - Limits: <mode, only when set for this task>
 Owner's words for this task (verbatim):
 <quote>
@@ -81,13 +82,13 @@ Owner's words for this task (verbatim):
 - `off`: act only on what the owner says in this session.
 - `assigned` (default): work `status:ready` issues; prepare draft replies for the owner to pick.
 - `watch`: also check `proactivity.sources` every `proactivity.every_minutes` with the session's own scheduler; found work becomes `scripts/home-log new` (inbox) or goes to the session that owns it.
-- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
+- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions; a draft together with other choices counts as several approvals: one review page with the draft as an editable text and yes / no / note per row, plus one pointer question); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
-- Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.
+- Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only. Every decision or step that waits for him is stored before the final: this session's own on an issue it holds, this way; one a worker will hit goes in that worker's brief.
 - Record a hand-off (checkpoint, release, "handed to a worker") only after `term.sh open` printed the session id, tty and pid.
 - Before closing an issue: every open question of the owner on it is answered or stored with `--park --question`.
-- "Leave it and watch" means: file a follow-up issue for the watch (`scripts/home-log new`), then finish.
+- When a fallback already carries the work, always offer "leave it as is and watch" as its own option. That answer means: file a follow-up issue for the watch (`scripts/home-log new`) holding the cause hypothesis your evidence supports and its log lines, then finish (do not park).
 - Write a result to the record only after you verified it (read back the effect); never report a count you did not observe.
 - Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that.
 - Questions go through the ask tool (or, owner away, `scripts/home-log checkpoint <n> --park --question "<q>"`); never only in the final message.

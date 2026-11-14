@@ -161,3 +161,10 @@ A session SHALL write a result to the record only after it verified that result 
 #### Scenario: A session ends after a checkpoint
 - **WHEN** a run checkpointed issue 5 with a text and a question and its session ends without `home-log finish`
 - **THEN** the stub comment on issue 5 still holds that text and that question, followed by the stub line
+
+### Requirement: HOME-140 A worker's issue is claimed by the worker
+When the orchestrator hands a request's issue to a worker, it SHALL open the issue with `--ready` and leave its claim to that worker's own `home-log start`, claiming only issues it works itself.
+
+#### Scenario: A task goes to a worker tab
+- **WHEN** the orchestrator opens issue 5 and launches a worker for it
+- **THEN** the orchestrator has not claimed issue 5 and the worker's `home-log start 5` succeeds

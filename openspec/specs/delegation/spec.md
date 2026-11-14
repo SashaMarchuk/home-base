@@ -54,3 +54,10 @@ The sending orchestrator SHALL never claim, checkpoint, finish or label an issue
 #### Scenario: A child issue is open
 - **WHEN** the child issue is still open
 - **THEN** the parent writes nothing to it and waits for the sweep to report it closed
+
+### Requirement: HOME-146 Handed-off work is not also done here
+The orchestrator SHALL never also do, through its own subagents, a task it handed to a child home or a worker.
+
+#### Scenario: An analysis goes to a child
+- **WHEN** the orchestrator hands an analysis to a child home's session
+- **THEN** it starts no subagent of its own for that analysis
