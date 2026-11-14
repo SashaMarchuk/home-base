@@ -83,7 +83,7 @@ The `status` skill SHALL read only, covering this home and every child home, and
 - **THEN** the answer is short plain text with empty groups left out, ending with the one thing the owner should do first
 
 ### Requirement: HOME-128 The orchestrator reads its skill and honours a requested session
-A session in a home SHALL read the orchestrate skill before acting on a request, open a separate session when the owner asks for one, and never close a session that still holds an open question of the owner without his word.
+A session in a home SHALL read the orchestrate skill before acting on a request, open a separate session when the owner asks for one, and never close a session that still holds an open question of the owner without the owner's word.
 
 #### Scenario: The owner asks for another terminal
 - **WHEN** the owner says a task should run in its own session
@@ -108,7 +108,7 @@ Every worker brief SHALL state that questions and every message to the owner, th
 - **THEN** its brief still names the owner's language for its questions and its final status
 
 ### Requirement: HOME-173 Steps that do not wait go on
-When one step of the owner's ask waits on him, the session SHALL carry on with the later steps that do not depend on it.
+When one step of the owner's ask waits on the owner, the session SHALL carry on with the later steps that do not depend on it.
 
 #### Scenario: A purchase waits on the owner
 - **WHEN** one step waits on the owner's click and a later step does not need it

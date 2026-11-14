@@ -18,20 +18,30 @@ printf '%s\n' "$CMD" | grep -qE 'xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+k
 # Look at each simple command separately.
 segs=$(printf '%s\n' "$CMD" | sed -E 's/(\|\||&&|;|\||\$\(|`)/\n/g')
 while IFS= read -r s; do
-  s=$(printf '%s' "$s" | sed -E 's/^[[:space:](]*//; s/^(sudo|command|exec|env|nohup|time)[[:space:]]+//')
+  s=$(printf '%s' "$s" | sed -E 's/^[[:space:](!{]*//; :k
+    s/^(sudo|command|builtin|exec|env|nohup|time|do|then|else|elif)[[:space:]]+//; tk
+    s#^[^[:space:]]*/(kill|pkill|killall)([[:space:]]|$)#\1\2#')
   [ -n "$s" ] || continue
   case "$s" in
     pkill*|killall*) block "kill by pattern" "Kill exact PIDs only (rule 9)." ;;
   esac
   if printf '%s' "$s" | grep -qE '^kill([[:space:]]|$)'; then
     args=$(printf '%s' "$s" | sed -E 's/^kill[[:space:]]*//; s/[0-9]*>&[0-9]+//g; s/[0-9]*[<>]{1,2}[[:space:]]*[^[:space:]]+//g')
-    skip=0
+    # One signal option may come first; every other argument is a PID: a single positive
+    # number above 1. Negative numbers (process groups), 0, 1 and -1 kill more than one process.
+    skip=0; sig=0; dd=0
     for a in $args; do
       [ "$skip" = 1 ] && { skip=0; continue; }
+      if [ "$dd" = 0 ]; then
+        case "$a" in
+          --) dd=1; continue ;;
+          -l|-L) continue ;;
+          -s|-n) [ "$sig" = 0 ] && { sig=1; skip=1; continue; } ;;
+          -[0-9]*|-[A-Za-z]*) [ "$sig" = 0 ] && { sig=1; continue; } ;;
+        esac
+      fi
       case "$a" in
-        -s|-n) skip=1; continue ;;
-        -[0-9]*|-[A-Z]*|-l|--) continue ;;
-        *[!0-9]*) block "kill with '$a'" "Kill exact numeric PIDs only (rule 9)." ;;
+        ''|*[!0-9]*|0|1|0*) block "kill with '$a'" "Kill exact numeric PIDs only, one process each (rule 9)." ;;
       esac
     done
   fi

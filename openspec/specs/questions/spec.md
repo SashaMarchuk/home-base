@@ -122,11 +122,11 @@ After the owner's yes on the exact text of a message or post, the session SHALL 
 - **WHEN** the owner says yes to the exact text of a reply
 - **THEN** the session sends that text unchanged and reads the sent message back
 
-### Requirement: HOME-151 The owner's own text in answer to a send question is his yes
-When the owner, in direct answer to a question asking whether to send a specific text, writes the text himself, the session SHALL treat that as his yes on exactly that text: send it as written, read it back and not ask again.
+### Requirement: HOME-151 The owner's own text in answer to a send question is the owner's yes
+When the owner, in direct answer to a question asking whether to send a specific text, writes the text, the session SHALL treat that as the owner's yes on exactly that text: send it as written, read it back and not ask again.
 
-#### Scenario: The owner rewrites the draft in his answer
-- **WHEN** the session asks whether to send a draft and the owner answers with a replacement text he wrote
+#### Scenario: The owner rewrites the draft in the answer
+- **WHEN** the session asks whether to send a draft and the owner answers with a replacement text the owner wrote
 - **THEN** the session sends the replacement text as written, reads it back and asks no second send question
 
 ### Requirement: HOME-142 A draft with choices goes on one review page
@@ -179,7 +179,7 @@ When the owner is away, the orchestrator SHALL store every decision or step that
 - **THEN** that decision is stored as a question on an issue, not only listed in the final message
 
 ### Requirement: HOME-158 An investigation ends with its finding
-When the owner asked only to investigate or explain, the session SHALL put the finding and the fix it needs in the final status and finish the issue, never putting a fix he did not ask for to him as a question or parking the issue on one.
+When the owner asked only to investigate or explain, the session SHALL put the finding and the fix it needs in the final status and finish the issue, never putting a fix the owner did not ask for to the owner as a question or parking the issue on one.
 
 #### Scenario: A cause is found
 - **WHEN** an investigation the owner asked for finds the cause and a possible fix
@@ -207,11 +207,11 @@ Counts in a result SHALL come from one source and add up to the total stated.
 - **THEN** the parts add up to seven and come from the same source
 
 ### Requirement: HOME-162 A login request carries its command
-A login request to the owner SHALL name the service, the profile by name and one pasteable `! <login command>` taken from the home's login how-to, in the question text, with options that never replace that command, and after his confirmation the session SHALL run the identity check before anything else.
+A login request to the owner SHALL name the service, the profile by name and one pasteable `! <login command>` taken from the home's login how-to, in the question text, with options that never replace that command, and after the owner's confirmation the session SHALL run the identity check before anything else.
 
 #### Scenario: A cloud login has expired
 - **WHEN** an identity check fails on an expired login
-- **THEN** the question names the service and profile and holds the pasteable login command, and the identity check runs right after he confirms
+- **THEN** the question names the service and profile and holds the pasteable login command, and the identity check runs right after the owner confirms
 
 ### Requirement: HOME-163 A re-check names its limits
 After a re-check, the session SHALL name what the check cannot prove.
@@ -228,10 +228,10 @@ A standing rule the owner states inside another request SHALL be recorded with t
 - **THEN** that task appends the rule to `DECISIONS.md` through the `decide` skill
 
 ### Requirement: HOME-165 A yes to the pointer question approves the page as shown
-The first option of a pointer question SHALL be a plain yes to everything as shown on the review page, in the owner's language; after his yes the session reads the page, where a row he answered or text he edited wins, acts on it, reads it back and does not ask again.
+The first option of a pointer question SHALL be a plain yes to everything as shown on the review page, in the owner's language; after the owner's yes the session reads the page, where a row the owner answered or text the owner edited wins, acts on it, reads it back and does not ask again.
 
-#### Scenario: He says yes to the pointer question
-- **WHEN** the owner picks the first option of a pointer question whose page holds a draft he did not edit
+#### Scenario: The owner says yes to the pointer question
+- **WHEN** the owner picks the first option of a pointer question whose page holds a draft the owner did not edit
 - **THEN** the session sends the draft as shown, reads it back and asks nothing more about it
 
 ### Requirement: HOME-166 A blocker report is its own question
@@ -246,7 +246,7 @@ A review page SHALL save each answer as it is given, with no submit or Save butt
 
 #### Scenario: A finding offers two options
 - **WHEN** a finding offers a custom page and a new block as options
-- **THEN** the page shows two separate rows and keeps each answer the moment he gives it
+- **THEN** the page shows two separate rows and keeps each answer the moment the owner gives it
 
 ### Requirement: HOME-170 Approved text keeps its words and takes the recipient's format
 Approved text SHALL be sent with its words unchanged, in the format the recipient's recorded rules give.

@@ -43,7 +43,7 @@ The checks SHALL fail on any file larger than 500 KB, a `CLAUDE.md` larger than 
 - **THEN** the checks fail with `base-only path present in a home`
 
 ### Requirement: HOME-068 Bash guard
-The pre-tool hook for shell commands SHALL block with exit 2 and a reason: `pkill` or `killall` anywhere in the command, `kill` with anything but numeric process ids and signal options (`-s` and `-n` take one value), with a computed id list or through `xargs`, `gh auth switch`, a force push to `main` or `master` or naming no branch, `gh repo delete`, a repository visibility change, `git push base`, and every extended regex listed in `guard.extra`.
+The pre-tool hook for shell commands SHALL block with exit 2 and a reason any command that kills by pattern or more than one process (only one optional signal and single positive process ids above 1 pass), switches the CLI account, force-pushes the default branch, deletes a repository, changes its visibility, pushes to the base remote, or matches a regex in `guard.extra`.
 
 #### Scenario: Kill by pattern
 - **WHEN** a session runs `kill $(pgrep node)`
@@ -60,6 +60,10 @@ The pre-tool hook for shell commands SHALL block with exit 2 and a reason: `pkil
 #### Scenario: Account switch
 - **WHEN** a session runs `gh auth switch`
 - **THEN** the command is blocked and the reason names the configured account rule
+
+#### Scenario: A kill of every process or of a group
+- **WHEN** a session runs `kill -9 -1`, `kill 0`, `/bin/kill -9 -1` or `for p in $list; do kill $p; done`
+- **THEN** the hook blocks it with exit 2
 
 ### Requirement: HOME-069 Sensitive-value guard
 The pre-tool hook for file writes and edits SHALL block with exit 2 any write of a personal value into a file inside the repo that git does not ignore, new files included, and leave ignored paths and files outside the repo unchecked.

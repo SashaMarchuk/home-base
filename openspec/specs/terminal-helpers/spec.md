@@ -198,8 +198,8 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 When `term.sh` adopts a tab whose command line names a session id, the resume command it records SHALL keep that command line's command, its configured profile flag with the value and its `--model <alias>`, followed by `--resume <session id>`.
 
 #### Scenario: Parking an adopted tab started with a profile and a model
-- **WHEN** `launch.profile_flag` is `-a` and `term.sh park <tty> --adopt --issue 21` runs on a tab started as `claude -a personal --model opus --resume <id>`
-- **THEN** the resume command written to issue 21 is `cd <cwd> && 'claude' -a 'personal' --model 'opus' --resume <id>`
+- **WHEN** `launch.profile_flag` is `--profile` and `term.sh park <tty> --adopt --issue 21` runs on a tab started as `claude --profile team --model opus --resume <id>`
+- **THEN** the resume command written to issue 21 is `cd <cwd> && 'claude' --profile 'team' --model 'opus' --resume <id>`
 
 ### Requirement: HOME-153 An adopted tab is bound to an issue only after its check passed
 `term.sh park --adopt` and `term.sh close --adopt` SHALL record the adopted tab with no issue and set its issue only after the park checkpoint or the close's finished-issue check on that issue succeeded, while a tab bound to an issue still refuses a different `--issue`.

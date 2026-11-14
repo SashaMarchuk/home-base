@@ -219,10 +219,10 @@ if sel guards; then
   BG="$H/scripts/hooks/bash-guard"
   for c in 'pkill -f node' 'killall Finder' '/usr/bin/pkill x' 'bash -c "pkill x"' 'sudo -n killall x' 'xargs -I{} pkill {}' 'kill -9 $(pgrep x)' 'pgrep x | xargs kill' 'gh auth switch -u a' 'git push --force origin main' \
            'git push -f' 'gh repo delete a/b --yes' 'gh repo edit a/b --visibility public' 'gh api -X PATCH repos/a/b -f private=false' \
-           'git push base main' 'docker restart web'; do
+           'git push base main' 'docker restart web' 'kill -9 -1' 'kill 0' 'kill 1' 'kill -- -1' 'kill -TERM -4242' '/bin/kill -9 -1' 'for p in 1 2; do kill \$p; done' 'if true; then kill \$X; fi' '{ kill \$p; }'; do
     expect "bash-guard must block: $c" 2 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
-  for c in 'kill 4242' 'kill -TERM 4242' 'kill -s TERM 4242' 'kill 4242 2>&1' 'kill 4242 >/dev/null 2>&1' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix'; do
+  for c in 'kill 4242' 'kill -TERM 4242' 'kill -s TERM 4242' 'kill 4242 2>&1' 'kill 4242 >/dev/null 2>&1' '/bin/kill 4242' 'kill -TERM 4242 4243' 'if true; then kill 4242; fi' 'echo kill -1' 'kill -l' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix'; do
     expect "bash-guard must allow: $c" 0 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
   SG="$H/scripts/hooks/sensitive-guard"

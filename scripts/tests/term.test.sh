@@ -508,9 +508,9 @@ check "r15 park wrote the resume command" grep -q "^checkpoint 21 --run-id $HSID
 check "r15 parked entry adopted" [ "$(jq -r '.[0] | (.adopted == true and .parked == true and .session_id == "'"$HSID"'")' "$REG")" = true ]
 check "r15 parked session exited" not alive 702
 check "r15 parked entry bound to the issue" [ "$(jq -r '.[0].issue' "$REG")" = 21 ]
-reset launch.profile_flag=-a; hand_tab ttyh1 703 "claude -a personal --model opus --resume $HSID --verbose"; claim 21 "$HSID"
+reset launch.profile_flag=--profile; hand_tab ttyh1 703 "claude --profile team --model opus --resume $HSID --verbose"; claim 21 "$HSID"
 check "r15 park --adopt keeps launch flags" ts park ttyh1 --adopt --issue 21
-check "r15 resume keeps profile and model" grep -q "Resume: cd .* && 'claude' -a 'personal' --model 'opus' --resume $HSID\$" "$T/home-log.calls"
+check "r15 resume keeps profile and model" grep -q "Resume: cd .* && 'claude' --profile 'team' --model 'opus' --resume $HSID\$" "$T/home-log.calls"
 
 reset; hand_tab ttyh1 701 "claude"
 check "r15 hand tab without --adopt -> refused" [ "$(rc_of ts close ttyh1)" = 3 ]
