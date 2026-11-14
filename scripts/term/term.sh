@@ -158,16 +158,16 @@ be_open() { # be_open <command line> [<window id>|new|current] -> "<tab id> <tty
   local out
   out=$(osascript - "$1" "${2:-current}" <<'OSA'
 on run argv
-  set where to item 2 of argv
+  set placeAt to item 2 of argv
   tell application "iTerm2"
-    if (count of windows) = 0 or where is "new" then
+    if (count of windows) = 0 or placeAt is "new" then
       set w to (create window with default profile)
       set s to current session of current tab of w
     else
-      if where is "current" then
+      if placeAt is "current" then
         set w to current window
       else
-        set w to window id (where as integer)
+        set w to window id (placeAt as integer)
       end if
       tell w
         set t to (create tab with default profile)
