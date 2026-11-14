@@ -40,6 +40,14 @@ Before asking the owner, a session SHALL search `DECISIONS.md`, the issue and ea
 - **WHEN** `DECISIONS.md` already settles the point
 - **THEN** the owner is not asked
 
+#### Scenario: A standing approval covers the action
+- **WHEN** the action is inside the scope of an active entry in the home section's Standing approvals and its conditions are met
+- **THEN** the session does it without asking and writes `done under <ID>` in the finish text
+
+#### Scenario: Outside a standing approval
+- **WHEN** the action is outside every active entry's scope, or a condition of the entry is unmet
+- **THEN** the session asks
+
 ### Requirement: HOME-021 Decisions are recorded verbatim and append-only
 The `decide` skill SHALL append each owner decision to `DECISIONS.md` in the file's own entry format, by default `### <ID> — <title>` followed by plain `Quote:`, `Gloss:` (when the quote is not in English), `Source:`, `Status:` and `Kind:` lines (and an optional `Supersedes:` line), with the next id in the file's own id family (the owner is asked which family when the file mixes several), and change an older entry only by setting its `Status:` line to `superseded-by <ID>`.
 
