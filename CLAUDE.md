@@ -26,7 +26,7 @@
 15. Files, briefs and worker prompts are written in the configured file language (`lang.files`); questions and every message to the owner, the final one included, in `lang.owner`.
 16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them).
 17. Never change global agent settings from a home.
-18. The final message reports in at most five plain lines: what is done, what waits for the owner, what is next. Never repeat what the question, artifact or issue already holds; no tty numbers, tool names or environment notes.
+18. The final message reports in at most five plain lines: what is done, what waits for the owner, what is next. Never repeat what the question, artifact or issue already holds; no tty numbers, tool names or environment notes; end without an offer ("want me to…"): the next step is in the report.
 
 ## Where things live
 | What | Where |

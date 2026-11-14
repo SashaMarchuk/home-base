@@ -41,7 +41,7 @@ Pick `status:ready` issues, oldest first, one worker per issue. Before launching
 
 Launch a worker with terminal helpers on (`terminal_helpers=on` in `.local/config`): write the brief below to `scratch/brief-<n>.md`, then `scripts/term/term.sh open <working dir> --issue <n> --role worker --brief-file scratch/brief-<n>.md` (prints `<session_id> <tty> <pid>`). Helpers off: give the brief to the owner as a ready-to-paste prompt, or start a subagent when the task fits in this session.
 
-Every worker brief contains, in the configured file language:
+Every worker brief contains, in the configured file language (and carries the owner's recorded rules that touch the task; it settles none of the owner's open choices: those stay questions):
 ```
 Home repo: <home repo from home.config> (local: <home path>)
 Issue: <repo>#<n> <title>
@@ -80,7 +80,7 @@ Owner's words for this task (verbatim):
 - `off`: act only on what the owner says in this session.
 - `assigned` (default): work `status:ready` issues; prepare draft replies for the owner to pick.
 - `watch`: also check `proactivity.sources` every `proactivity.every_minutes` with the session's own scheduler; found work becomes `scripts/home-log new` (inbox) or goes to the session that owns it.
-- At every level: act only while this session runs; never send a message on your own (drafts, confirmed through the ask tool); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
+- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
 - Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.

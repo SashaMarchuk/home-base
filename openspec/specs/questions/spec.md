@@ -107,3 +107,10 @@ Before closing an issue, the orchestrator SHALL answer or store with `home-log c
 #### Scenario: Resumed sessions stopped at questions
 - **WHEN** the orchestrator is about to close an issue while sessions on it still wait on questions of the owner
 - **THEN** each of those questions is answered or stored on the issue first
+
+### Requirement: HOME-136 Many approvals go on one review page
+When a session needs several yes/no approvals at once, it SHALL put them on one review page with an answer per row instead of a chain of questions.
+
+#### Scenario: Five drafts wait for approval
+- **WHEN** five reply drafts need the owner's yes or no
+- **THEN** they are shown together on one page with an answer per row
