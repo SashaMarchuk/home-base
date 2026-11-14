@@ -12,6 +12,9 @@
 #   term.sh resume <session_id> [--message TEXT | --silent]
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
+#   term.sh survey --json            -> one JSON object per live tab: tty, window, tab, pid, kind (claude,
+#                                       codex or shell), session_id and where it came from, profile, status,
+#                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
 #
 # Supports Claude Code sessions only: a tab counts as a session when a claude process runs
 # on it; any other tool's tab reads as a shell. In a Codex session (CODEX_THREAD_ID set) or
@@ -24,8 +27,8 @@
 # only when the owner named this tab or asked to close it. The target must be a tty; exactly one
 # claude process must run on it (its exact PID, command line checked) and its screen must read.
 # Every other check stays. Close with --adopt checks the issue when one is given and needs none
-# otherwise; park with --adopt needs a session id on the process's command line (--session-id or
-# --resume) and a home-log comment of that session's run on the issue (run
+# otherwise; park with --adopt needs the session's id (from its command line, --session-id or --resume,
+# or from its session file, see sessions.sh) and a resume line, and a home-log comment of that session's run on the issue (run
 # 'scripts/home-log start <n> --run-id <session id>' first). The tab is recorded in the registry
 # with "adopted": true and no issue before the first keystroke (a notice dismissal, a ghost probe
 # or the exit command); the issue is added only after the park checkpoint or the close's
@@ -75,6 +78,7 @@
 #   launch.profile_flag=           flag put before the profile value; empty = no profile is passed
 #   launch.profile.orchestrator / launch.profile.worker   the profile value per role
 #   launch.model                   passed as "--model <alias>" when set
+#   term.sessions_dirs             where Claude Code writes <pid>.json per live session (see sessions.sh)
 # close reads the issue with gh (repo: --repo, else repo in home.config).
 # Test seams: TERM_SH_BACKEND=fake (sources ../tests/stubs/term-fake), TERM_SH_POLL,
 #   TERM_SH_SETTLE, TERM_SH_OPEN_WAIT, TERM_SH_EXIT_WAIT, TERM_SH_LOCK_TIMEOUT, TERM_SH_HOME_LOG.
@@ -147,22 +151,28 @@ be_screen() { # be_screen <tty> <tab> -> screen text; rc 4 when the tab is gone
 be_type() { [ "$(osa_session type "$1" "$2" "$3")" = "TERM-SH-OK" ] || return 4; }
 be_key() { [ "$(osa_session "$3" "$1" "$2")" = "TERM-SH-OK" ] || return 4; }   # be_key <tty> <tab> cr|esc|bs
 
-be_open() { # be_open <command line> -> "<tab id> <tty>"; types the command into the new tab only
+be_open() { # be_open <command line> [<window id>|new|current] -> "<tab id> <tty> <window id>"; types the command into the new tab only
   local out
-  out=$(osascript - "$1" <<'OSA'
+  out=$(osascript - "$1" "${2:-current}" <<'OSA'
 on run argv
+  set where to item 2 of argv
   tell application "iTerm2"
-    if (count of windows) = 0 then
+    if (count of windows) = 0 or where is "new" then
       set w to (create window with default profile)
       set s to current session of current tab of w
     else
-      tell current window
+      if where is "current" then
+        set w to current window
+      else
+        set w to window id (where as integer)
+      end if
+      tell w
         set t to (create tab with default profile)
       end tell
       set s to current session of t
     end if
     tell s to write text (item 1 of argv)
-    return (id of s) & " " & (tty of s)
+    return (id of s) & " " & (tty of s) & " " & (id of w)
   end tell
 end run
 OSA
@@ -170,7 +180,7 @@ OSA
   printf '%s\n' "${out/\/dev\//}"
 }
 
-be_tabs() { # -> "<tab id> <tty>" for every live session
+be_tabs() { # -> "<tab id> <tty> <window id>" for every live session
   iterm_running || return 0
   osascript <<'OSA' | sed 's#/dev/##'
 set out to ""
@@ -178,7 +188,7 @@ tell application "iTerm2"
   repeat with w in windows
     repeat with t in tabs of w
       repeat with s in sessions of t
-        set out to out & (id of s) & " " & (tty of s) & linefeed
+        set out to out & (id of s) & " " & (tty of s) & " " & (id of w) & linefeed
       end repeat
     end repeat
   end repeat
@@ -187,9 +197,16 @@ return out
 OSA
 }
 
+be_front_window() { # -> id of the frontmost window
+  iterm_running || return 1
+  osascript -e 'tell application "iTerm2" to return id of current window' 2>/dev/null
+}
+
 be_procs() { ps -axo pid=,tty=,command= 2>/dev/null; }          # -> "<pid> <tty> <command>"
 be_pid_cmd() { local c; c=$(ps -p "$1" -o command= 2>/dev/null) || return 1; [ -n "$c" ] || return 1; printf '%s\n' "$c"; }
 be_pid_tty() { ps -p "$1" -o tty= 2>/dev/null | tr -d ' '; }
+be_pid_ppid() { ps -p "$1" -o ppid= 2>/dev/null | tr -d ' '; }
+be_self_pid() { echo $$; }   # this script's own process: the start of the walk to the calling session
 be_pid_cwd() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1; }
 be_kill() { kill -TERM "$1"; }
 be_mem_free() { memory_pressure -Q 2>/dev/null | awk -F': *' '/free percentage/ { gsub(/%/, "", $2); print $2 }'; }
@@ -396,7 +413,7 @@ resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed regi
 # ------------------------------------------------------------------ adopting the owner's own tab (rule 15)
 
 adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner opened by hand
-  local name pids n cmd sid cwd
+  local name pids n cmd sid cwd sf s_sid s_status s_cwd s_name prof s_pdir
   case "$1" in /dev/tty*|tty*) ;; *) die 2 "--adopt needs an explicit tty, not '$1'" ;; esac
   if [ "$T_REG" = 1 ]; then
     [ "$T_ADOPTED" = 1 ] || die 2 "the tab on $T_TTY is in this home's registry already; drop --adopt"
@@ -413,36 +430,22 @@ adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner 
     die 3 "PID $pids does not run $name ('$cmd'); refusing"
   [ "$(be_pid_tty "$pids")" = "$T_TTY" ] || die 3 "PID $pids is not on $T_TTY; refusing"
   be_screen "$T_TTY" "$T_TAB" >/dev/null || die 4 "the screen of the tab on $T_TTY cannot be read"
-  sid=$(printf '%s\n' "$cmd" | awk '{ for (i = 1; i <= NF; i++) {
-      if (($i == "--session-id" || $i == "--resume" || $i == "-r") && i < NF) { print $(i + 1); exit }
-      if ($i ~ /^--(session-id|resume)=/) { sub(/^[^=]*=/, "", $i); print $i; exit } } }')
+  sid=$(cmdline_sid "$cmd")
   cwd=$(be_pid_cwd "$pids")
   T_PID=$pids; T_ALIVE=1; T_ADOPTED=1; ADOPT_NEW=1
-  if printf '%s' "$sid" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$'; then
+  sf=$(session_of_pid "$pids") || sf=""
+  IFS=$US read -r s_sid s_status s_cwd s_name prof s_pdir <<EOF
+$sf
+EOF
+  [ -n "$cwd" ] || cwd=${s_cwd:-}
+  if is_uuid "$sid"; then
     T_SID=$sid; T_MATCH=$sid
-    ADOPT_RESUME="cd $(shq "${cwd:-.}") && $(adopt_flags "$cmd") --resume $sid"
+  elif is_uuid "${s_sid:-}"; then
+    sid=$s_sid; T_SID=$sid; T_MATCH=$cmd   # the id comes from the session file; the command line is the match
   else
-    T_SID=$(be_uuid); T_MATCH=$cmd   # no session id: the exact command line is the match
+    sid=""; T_SID=$(be_uuid); T_MATCH=$cmd   # no session id: the exact command line is the match
   fi
-}
-
-adopt_flags() { # adopt_flags <command line> -> "<command> [<profile flag> P] [--model M]" kept from that line
-  local flag prof="" model="" line
-  flag=$(local_cfg launch.profile_flag)
-  set -f; set -- $1; set +f
-  line=$(shq "$1"); shift
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --model) [ $# -gt 1 ] && { model=$2; shift; } ;;
-      --model=*) model=${1#--model=} ;;
-      *) if [ -n "$flag" ] && [ "$1" = "$flag" ] && [ $# -gt 1 ]; then prof=$2; shift
-         elif [ -n "$flag" ] && [ "${1%%=*}" = "$flag" ] && [ "$1" != "${1#*=}" ]; then prof=${1#*=}; fi ;;
-    esac
-    shift
-  done
-  [ -n "$prof" ] && line="$line $flag $(shq "$prof")"
-  printf '%s' "$model" | grep -Eq '^[a-z]+(\[1m\])?$' && line="$line --model $(shq "$model")"
-  printf '%s\n' "$line"
+  ADOPT_RESUME=$(resume_line "${cwd:-.}" "$cmd" "${prof:-}" "$sid") || ADOPT_RESUME=""
 }
 
 adopt_record() { # adopt_record: add the adopted tab to the registry with no issue; nothing is typed before this
@@ -680,11 +683,13 @@ find_pid() { # find_pid <tty> <match> -> newest PID on that tty whose command li
   done
 }
 
-launch_tab() { # launch_tab <sid> <command line> <match>: open, record tty/tab/pid, print the triple
-  local sid=$1 out tab tty pid
-  out=$(be_open "$2") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
-  tab=${out%% *}; tty=${out#* }
-  reg_set "$sid" '{tab: $tab, tty: $tty}' --arg tab "$tab" --arg tty "$tty" ||
+launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current]: open, record tty/tab/window/pid, print the triple
+  local sid=$1 out tab tty pid win
+  out=$(be_open "$2" "${4:-current}") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
+  read -r tab tty win <<EOF
+$out
+EOF
+  reg_set "$sid" '{tab: $tab, tty: $tty, window: (if $w == "" then null else $w end)}' --arg tab "$tab" --arg tty "$tty" --arg w "${win:-}" ||
     die 3 "tab $tty opened but the registry could not be updated; close it by hand"
   pid=$(find_pid "$tty" "$3") || {
     reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"
@@ -865,6 +870,12 @@ pick_issue() { # pick_issue <given>: the registry issue unless the caller passed
   if [ -n "$1" ]; then echo "$1"; else echo "$T_ISSUE"; fi
 }
 
+has_resume() { # the session can be reopened: a resume line was built at adopt, or recorded at open or adopt
+  if [ "$ADOPT_NEW" = 1 ]; then [ -n "$ADOPT_RESUME" ]; return; fi
+  [ "$T_MATCH" = "$T_SID" ] && [ "$T_ADOPTED" = 0 ] && return 0
+  [ -n "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume // empty')" ]
+}
+
 exit_word() { if [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ]; then echo /exit; else echo exit; fi; }
 
 cmd_close() {
@@ -932,7 +943,7 @@ cmd_park() {
   need_helpers; resolve "$target"
   [ "$adopt" = 1 ] && adopt_target "$target"
   [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] || die 3 "park works only on tabs this home opened (the owner's own tab needs --adopt)"
-  [ "$T_MATCH" = "$T_SID" ] || die 3 "park needs a session launched with a session id"
+  has_resume || die 3 "park needs a session whose id is known (launched with one, or named in its session file)"
   [ "$T_ALIVE" = 1 ] || die 4 "session $T_SID is not running"
   issue=$(pick_issue "$issue") || exit $?
   [ -n "$issue" ] || die 2 "park needs the issue number"
@@ -999,7 +1010,6 @@ cmd_resume() {
   resolve "$sid" any
   [ "$T_REG" = 1 ] || die 4 "no registry entry for '$sid'"
   [ -n "$T_CLOSED" ] || die 3 "session $T_SID is still open on $T_TTY"
-  [ "$T_MATCH" = "$T_SID" ] || die 3 "session $T_SID was not a resumable session"
   sid=$T_SID
   role=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .role // "worker"')
   line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume')
@@ -1021,18 +1031,22 @@ cmd_resume() {
     reg_unlock; die 3 "worker cap reached; not resuming"
   fi
   reg_write --arg s "$sid" --arg o "$(now_utc)" \
-    'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null} else . end)' ||
+    'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null, match: $s} else . end)' ||
     { reg_unlock; die 3 "registry write failed"; }
   reg_unlock
   launch_tab "$sid" "$line" "$sid"
 }
 
 cmd_survey() {
-  local want="" tab tty pid kind sid cwd procs found=0
+  local want="" tab tty win pid kind sid cwd procs found=0
+  if [ "${1:-}" = --json ]; then
+    [ $# -eq 1 ] || die 2 "usage: survey --json (no other option)"
+    need_helpers; survey_json; return 0
+  fi
   if [ "${1:-}" = --cwd ]; then want=$(cd "${2:-}" 2>/dev/null && pwd -P) || die 2 "no such directory"; fi
   need_helpers
   procs=$(be_procs)
-  while read -r tab tty; do
+  while read -r tab tty win; do
     [ -n "$tty" ] || continue
     pid=$(printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t { c = $3; n = split(c, p, "/"); if (p[n] == "claude") { print $1; exit } }')
     if [ -n "$pid" ]; then kind=claude
@@ -1053,6 +1067,8 @@ $(be_tabs)
 EOF
   [ -z "$want" ] || [ "$found" = 1 ]
 }
+
+. "$TERM_SH_DIR/sessions.sh"
 
 # Sourcing with TERM_SH_LIB=1 loads the functions only (used by the tests).
 if [ "${TERM_SH_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi

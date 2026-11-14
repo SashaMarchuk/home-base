@@ -16,7 +16,7 @@ export TERM_SH_POLL=0.05 TERM_SH_SETTLE=0 TERM_SH_OPEN_WAIT=1 TERM_SH_EXIT_WAIT=
 export TERM_SH_HOME_LOG="$T/home-log"
 export PATH="$ROOT/scripts/tests/stubs:$PATH" GH_STUB_DIR="$T/ghstore"
 unset CODEX_THREAD_ID   # the helpers refuse inside a Codex session; the tests set it where they mean it
-unset GH_CONFIG_DIR
+unset GH_CONFIG_DIR CLAUDE_CODE_SESSION_ID CLAUDE_CONFIG_DIR
 mkdir -p "$T/bin"; printf '#!/bin/bash\nexit 0\n' > "$T/bin/cli-whoami"; chmod +x "$T/bin/cli-whoami"
 export PATH="$T/bin:$PATH"   # cli-whoami: a stand-in for a CLI identity call that passes
 REG="$HOME_ROOT/.local/registry.json"
@@ -44,7 +44,7 @@ ts() { /bin/bash "$TERM_SH" "$@"; }
 rc_of() { "$@" >"$T/out" 2>"$T/err"; echo $?; }
 
 config() { # config <lines...>: write .local/config
-  printf '%s\n' terminal_helpers=on term.max_workers=4 "$@" > "$HOME_ROOT/.local/config"
+  printf '%s\n' terminal_helpers=on term.max_workers=4 "term.sessions_dirs=$TERM_FAKE_DIR/profiles/*/sessions" "$@" > "$HOME_ROOT/.local/config"
 }
 reset() { rm -rf "$TERM_FAKE_DIR" "$REG" "$T/home-log.calls" "$T/home-log.fail" "$GH_STUB_DIR"; mkdir -p "$TERM_FAKE_DIR" "$GH_STUB_DIR"; config "$@"; }
 issue() { # issue <n> <last marker state|-> [label...] [--repo O/R]: write one issue into the gh stub

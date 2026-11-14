@@ -39,8 +39,14 @@
 # committed files are never touched). Allowed keys: launch.profile.orchestrator,
 # launch.profile.worker, launch.profile_flag, launch.command, launch.model,
 # terminal_helpers, limits.reader, gh.config_dir, transcripts.paths,
-# transcripts.exclude. Values are checked as answers are (one word where one word
-# is required, launch.model an alias such as opus); an empty value unsets the key.
+# transcripts.exclude, and the session keys of scripts/term/term.sh: term.sessions_dirs,
+# term.groups, term.group.<name>.cwd, term.group.<name>.home, term.freeze.drafts,
+# term.freeze.busy, term.freeze.default_mode, term.freeze.soft_timeout,
+# term.freeze.hard_grace. Values are checked as answers are (one word where one word
+# is required, launch.model an alias such as opus; folders start with / or ~/; a
+# group's home is self or a name of homes.* in home.config; term.freeze.drafts=save
+# and term.freeze.busy=interrupt wait for the owner's approval and are refused); an
+# empty value unsets the key.
 # Every --set is checked before anything is written. Prints "<key>=<effective value>"
 # per key; running it again changes nothing. --get prints the same line without
 # writing. The launch.* keys are read from .local/config only, the others from
@@ -61,7 +67,7 @@ while [ $# -gt 0 ]; do
     --labels) LABELS=1; shift ;;
     --set) [ $# -ge 2 ] || die 2 "--set needs <key>=<value>"; SETS+=("$2"); shift 2 ;;
     --get) [ $# -ge 2 ] || die 2 "--get needs a key"; GETS+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,49p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' ($USAGE)" ;;
   esac
 done
@@ -134,7 +140,13 @@ device_ok() { # terminal helpers need macOS, osascript and iTerm2
 }
 
 # ---------- --set / --get: machine keys in .local/config only ----------
-SETTABLE="launch.profile.orchestrator launch.profile.worker launch.profile_flag launch.command launch.model terminal_helpers limits.reader gh.config_dir transcripts.paths transcripts.exclude"
+SETTABLE="launch.profile.orchestrator launch.profile.worker launch.profile_flag launch.command launch.model terminal_helpers limits.reader gh.config_dir transcripts.paths transcripts.exclude term.sessions_dirs term.groups term.group.<name>.cwd term.group.<name>.home term.freeze.drafts term.freeze.busy term.freeze.default_mode term.freeze.soft_timeout term.freeze.hard_grace"
+# defaults of the term.* keys, as scripts/term/term.sh applies them (never written by --set)
+TERM_DEFAULTS="term.freeze.drafts=skip
+term.freeze.busy=wait
+term.freeze.default_mode=soft-then-hard
+term.freeze.soft_timeout=600
+term.freeze.hard_grace=120"
 if [ "$MACHINE_MODE" = 1 ]; then
   LCF="$ROOT/.local/config"
   file_val() { # file_val <file> <key>: the last value of the key (as written), exit 1 when absent
@@ -150,12 +162,13 @@ if [ "$MACHINE_MODE" = 1 ]; then
     local v
     if v=$(file_val "$LCF" "$1"); then :
     elif case "$1" in launch.*) false ;; esac && v=$(file_val "$ROOT/home.config" "$1"); then :
-    else v=$(printf '%s\n' "$MACHINE_DEFAULTS" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }')
+    else v=$(printf '%s\n%s\n' "$MACHINE_DEFAULTS" "$TERM_DEFAULTS" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }')
     fi
     printf '%s=%s\n' "$1" "$v"
   }
   settable() { # settable <key>: refuses committed, other and unknown keys
     case " $SETTABLE " in *" $1 "*) return 0 ;; esac
+    printf '%s' "$1" | grep -Eq '^term\.group\.[a-z0-9][a-z0-9_-]*\.(cwd|home)$' && return 0
     if printf '%s\n' "$COMMITTED_DEFAULTS" | grep -q "^$1="; then
       BAD+=("$1 is a committed key of home.config; --set changes machine keys only ($SETTABLE)")
     else
@@ -181,6 +194,33 @@ if [ "$MACHINE_MODE" = 1 ]; then
           printf '%s' "$v" | grep -Eq '^--?[A-Za-z0-9][A-Za-z0-9-]*$' || BAD+=("$k=$v (one flag, such as -p)") ;;
         launch.model)
           printf '%s' "$v" | grep -Eq '^[a-z]+(\[1m\])?$' || BAD+=("$k=$v (an alias such as opus or sonnet, not a pinned version)") ;;
+        term.sessions_dirs|term.group.*.cwd)
+          printf '%s\n' "$v" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -qvE '^(/|~/)' &&
+            BAD+=("$k=$v (a comma-separated list of folders, each starting with / or ~/)") ;;
+        term.groups)
+          printf '%s' "$v" | grep -Eq '^[a-z0-9][a-z0-9_-]*(,[a-z0-9][a-z0-9_-]*)*$' ||
+            BAD+=("$k=$v (a comma-separated list of group names: a-z, 0-9, _ and -)") ;;
+        term.group.*.home)
+          if [ "$v" != self ] && ! { printf '%s' "$v" | grep -Eq '^[A-Za-z0-9_-]+$' &&
+               { file_val "$LCF" "homes.$v.repo" || file_val "$ROOT/home.config" "homes.$v.repo"; } >/dev/null; }; then
+            BAD+=("$k=$v (self, or a name of homes.* in home.config)")
+          fi ;;
+        term.freeze.drafts)
+          case "$v" in
+            skip) ;;
+            save) BAD+=("$k=save (saving and clearing a draft waits for the owner's approval; allowed now: skip)") ;;
+            *) BAD+=("$k=$v (allowed: skip)") ;;
+          esac ;;
+        term.freeze.busy)
+          case "$v" in
+            wait) ;;
+            interrupt) BAD+=("$k=interrupt (interrupting a running turn waits for the owner's approval; allowed now: wait)") ;;
+            *) BAD+=("$k=$v (allowed: wait)") ;;
+          esac ;;
+        term.freeze.default_mode)
+          case "$v" in soft|hard|soft-then-hard) ;; *) BAD+=("$k=$v (allowed: soft hard soft-then-hard)") ;; esac ;;
+        term.freeze.soft_timeout|term.freeze.hard_grace)
+          case "$v" in *[!0-9]*) BAD+=("$k=$v (a whole number of seconds)") ;; esac ;;
         terminal_helpers)
           case "$v" in
             off) ;;

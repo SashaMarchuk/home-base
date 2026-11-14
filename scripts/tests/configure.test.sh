@@ -435,5 +435,28 @@ check "helpers on, Codex orchestrator: config off" grep -qx 'terminal_helpers=of
 check "helpers on, Codex orchestrator: answers off" [ "$(grep '^terminal_helpers=' "$W/answers.hcx")" = terminal_helpers=off ]
 check "helpers on, Codex orchestrator: reason reported" grep -q 'Claude Code tabs only' <<<"$out"
 
+# 13. --set for the term.* session keys: value checks; the held options are refused
+R8="$W/home8"; mkdir -p "$R8"; cp -R "$SRC/scripts" "$SRC/templates" "$R8/"
+printf 'repo=example-org/orchard-home\nhomes.peer.repo=example-org/peer-home\n' > "$R8/home.config"
+HC8=$(shasum "$R8/home.config")
+out=$("$R8/scripts/configure" --set 'term.sessions_dirs=~/.claude/sessions,/opt/p/*/sessions' --set term.groups=general,g1,g2 \
+  --set 'term.group.g1.cwd=~/Work/proj,~/Work/proj2' --set term.group.g1.home=peer --set term.group.general.home=self \
+  --set term.freeze.default_mode=soft --set term.freeze.hard_grace=30 2>&1); rc=$?
+check "term keys: exit 0" [ "$rc" = 0 ]
+check "term keys: group key written to .local/config" grep -qx 'term.group.g1.home=peer' "$R8/.local/config"
+check "term keys: groups written" grep -qx 'term.groups=general,g1,g2' "$R8/.local/config"
+check "term keys: home.config untouched" [ "$(shasum "$R8/home.config")" = "$HC8" ]
+check "term keys: freeze defaults readable without being written" [ "$("$R8/scripts/configure" --get term.freeze.drafts --get term.freeze.busy)" = "term.freeze.drafts=skip"$'\n'"term.freeze.busy=wait" ]
+check "term keys: no drafts or busy key written" sh -c "! grep -q -e '^term.freeze.drafts' -e '^term.freeze.busy' '$R8/.local/config'"
+lc=$(shasum "$R8/.local/config")
+for bad in term.freeze.drafts=save term.freeze.busy=interrupt term.freeze.default_mode=fast term.freeze.soft_timeout=10m \
+           term.group.g1.home=nowhere 'term.groups=G1,g 2' term.group.g1.cwd=relative/path 'term.group.Bad.cwd=~/x' term.sessions_dirs=sessions; do
+  out=$("$R8/scripts/configure" --set "$bad" 2>&1); rc=$?
+  check "term keys: '$bad' refused (exit 2)" [ "$rc" = 2 ]
+done
+out=$("$R8/scripts/configure" --set term.freeze.drafts=save 2>&1)
+check "term keys: drafts=save named as waiting for approval" grep -q "waits for the owner's approval" <<<"$out"
+check "term keys: refusals wrote nothing" [ "$(shasum "$R8/.local/config")" = "$lc" ]
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
