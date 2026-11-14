@@ -14,6 +14,7 @@
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #   term.sh freeze ... --hard         -> see scripts/term/freeze.sh
+#   term.sh thaw [<id>|latest] ...    -> see scripts/term/thaw.sh
 #   term.sh survey --json            -> one JSON object per live tab: tty, window, tab, pid, kind (claude,
 #                                       codex or shell), session_id and where it came from, profile, status,
 #                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
@@ -1085,6 +1086,7 @@ EOF
 
 . "$TERM_SH_DIR/sessions.sh"
 . "$TERM_SH_DIR/freeze.sh"
+. "$TERM_SH_DIR/thaw.sh"
 
 # Sourcing with TERM_SH_LIB=1 loads the functions only (used by the tests).
 if [ "${TERM_SH_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -1101,5 +1103,6 @@ case "$VERB" in
   close) cmd_close "$@" ;;
   survey) cmd_survey "$@" ;;
   freeze) cmd_freeze "$@" ;;
-  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|survey|freeze ... (see the header of this script and freeze.sh)" ;;
+  thaw) cmd_thaw "$@" ;;
+  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|survey|freeze|thaw ... (see the header of this script, freeze.sh and thaw.sh)" ;;
 esac

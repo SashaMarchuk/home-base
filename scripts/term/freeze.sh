@@ -123,7 +123,7 @@ freeze_body() { # freeze_body <repo> <redact 0|1> -> the issue body for that hom
 
 freeze_record() { # phase B for one repo: open and claim the issue, read it back; prints the issue number
   local repo=$1 bf n rc red=0 body
-  bf="$FREEZE_DIR/$FID.body"
+  bf="${FREEZE_DIR:?}/${FID:?}.body"
   while :; do
     freeze_body "$repo" "$red" > "$bf" || { rm -f "$bf"; return 1; }
     n=$("$HOME_LOG" new --repo "$repo" --run-id "freeze-$FID" --start \
@@ -356,7 +356,7 @@ EOF
 }
 
 freeze_act() { # phase C and D over the snapshot's entries still to act on
-  local e tty outcome rc linger=0 sid repo issue text
+  local e tty outcome rc linger=0 sid repo issue of rec
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     tty=$(printf '%s' "$e" | jq -r .tty)
@@ -378,11 +378,11 @@ EOF
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     repo=$(printf '%s' "$rec" | jq -r .repo); issue=$(printf '%s' "$rec" | jq -r .issue)
-    jq -r --arg r "$repo" '"Outcomes of Freeze \(.id):", (.entries[] | select(.home == $r and .recorded) | "- \(.session_id): \(.outcome)")' "$SNAP" \
-      > "$FREEZE_DIR/$FID.outcomes"
-    "$HOME_LOG" checkpoint "$issue" --repo "$repo" --run-id "freeze-$FID" --park --text-file "$FREEZE_DIR/$FID.outcomes" >/dev/null 2>>"$FREEZE_DIR/$FID.log" ||
+    of="${FREEZE_DIR:?}/${FID:?}.outcomes"
+    jq -r --arg r "$repo" '"Outcomes of Freeze \(.id):", (.entries[] | select(.home == $r and .recorded) | "- \(.session_id): \(.outcome)")' "$SNAP" > "$of"
+    "$HOME_LOG" checkpoint "$issue" --repo "$repo" --run-id "freeze-$FID" --park --text-file "$of" >/dev/null 2>>"$FREEZE_DIR/$FID.log" ||
       note "the outcomes could not be written to $repo#$issue"
-    rm -f "$FREEZE_DIR/$FID.outcomes"
+    rm -f "$of"
   done <<EOF
 $(jq -c '.records[]' "$SNAP")
 EOF

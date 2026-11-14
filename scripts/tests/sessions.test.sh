@@ -391,5 +391,51 @@ ts freeze "$otty" --hard >/dev/null 2>&1
 check "issue-bound: the tab's own issue gets the park checkpoint" grep -qF "Frozen by term.sh" <(issue_text test/home)
 check "issue-bound: and it closed" [ "$(outcome "$otty")" = exited ]
 
+# ---------------------------------------------------------------- thaw
+frozen_main() { # three closed sessions (g1, g2 with a question, an unmapped one) and their transcripts
+  setup_main
+  ts freeze --all --hard >/dev/null 2>&1
+  transcript work "$S1"; transcript work "$S2"; transcript work "$S3"
+  FROZEN=$(jq -r .id "$(snapf)")
+}
+launch_of() { grep -F -- "--resume $1" "$TERM_FAKE_DIR/launches"; }
+tty_of() { jq -r --arg s "$1" '.entries[] | select(.session_id == $s) | .thaw_tty // empty' "$(snapf)"; }
+frozen_main
+check "thaw: latest reopens the frozen sessions" [ "$(rc_of ts thaw latest)" = 0 ]
+check "thaw: three sessions reopened" [ "$(jq '[.entries[] | select(.thaw_outcome == "reopened")] | length' "$(snapf)")" = 3 ]
+check "thaw: same session id with the profile and model" launch_of "$S1" | grep -qF "&& 'claude' -p 'work' --model 'opus' --resume $S1 'You were resumed. Continue where you stopped.'"
+check "thaw: an open question is re-asked" launch_of "$S2" | grep -qF "Re-ask your open question with the ask tool"
+check "thaw: the g1 and g2 sessions open in different windows" [ "$(win_of "$(tty_of "$S1")")" != "$(win_of "$(tty_of "$S2")")" ]
+check "thaw: windows cached per group" [ "$(jq -r '[.[].group] | sort | join(" ")' "$HOME_ROOT/.local/windows.json")" = "g1 g2 general" ]
+check "thaw: nothing typed after the launch line" nokeys "$(tty_of "$S1")" "$(tty_of "$S2")"
+check "thaw: the peer freeze issue is finished" [ "$(cat "$GH_STUB_DIR"/test__peer/issues/*.json | jq -r .state)" = closed ]
+check "thaw: a second thaw reopens nothing" [ "$(ts thaw latest | grep -c REOPENED)" = 0 ]
+frozen_main
+live ttyz1 901 "$W1" w7 "$S1"
+rm -f "$TERM_FAKE_DIR/profiles/work/projects/p/$S3.jsonl"
+out=$(ts thaw latest)
+check "thaw: a session live already is skipped" grep -q "^SKIP $S1: it is live already" <<<"$out"
+check "thaw: never launched twice" [ -z "$(launch_of "$S1")" ]
+check "thaw: a missing transcript is skipped with its resume line" grep -q "^SKIP $S3: its transcript is not on this machine; resume it where it is: cd " <<<"$out"
+check "thaw: the rest reopened" grep -q "^REOPENED $S2 " <<<"$out"
+check "thaw: the freeze issue stays open while sessions are left" [ "$(cat "$GH_STUB_DIR"/test__home/issues/*.json | jq -r .state)" = open ]
+frozen_main
+printf '5' > "$TERM_FAKE_DIR/mem_free"
+check "thaw: low memory stops the run (exit 3)" [ "$(rc_of ts thaw latest)" = 3 ]
+check "thaw: it reports what is left and how to continue" grep -q "3 left; run 'term.sh thaw --continue $FROZEN' later" "$T/out"
+check "thaw: nothing opened under memory pressure" [ ! -f "$TERM_FAKE_DIR/launches" ] || [ -z "$(launch_of "$S1")" ]
+rm -f "$TERM_FAKE_DIR/mem_free"
+check "thaw: --continue reopens the rest" [ "$(ts thaw --continue "$FROZEN" | grep -c REOPENED)" = 3 ]
+frozen_main
+check "thaw: --group g2 reopens only that group" [ "$(ts thaw latest --group g2 | grep -c REOPENED)" = 1 ] && [ -z "$(launch_of "$S1")" ]
+check "thaw: an unknown group -> exit 2" [ "$(rc_of ts thaw latest --group nope)" = 2 ]
+frozen_main
+mv "$(snapf)" "$T/snap.bak"
+out=$(ts thaw --issue test/home#1)
+check "thaw: from the issue when the snapshot is gone" grep -q "^REOPENED $S1 " <<<"$out"
+check "thaw: an unmapped tab is not reopened from the issue" grep -q "^KEPT $S3: unmapped tab" <<<"$out"
+reset "${FKEYS[@]}"
+check "thaw: no snapshot -> exit 4" [ "$(rc_of ts thaw latest)" = 4 ]
+
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
