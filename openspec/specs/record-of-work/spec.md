@@ -198,3 +198,17 @@ When the orchestrator hands a request's issue to a worker, it SHALL open the iss
 #### Scenario: Invalid session id
 - **WHEN** `--handed "a b"` is passed
 - **THEN** the script exits 2 and writes nothing
+
+### Requirement: HOME-168 A resumed session's question is kept
+When a resumed session had stopped at a question, the finish text SHALL quote that question with its session, and while its menu is not seen again the issue finishes with `--review` instead of closing.
+
+#### Scenario: Four resumed sessions held questions
+- **WHEN** the orchestrator resumes four sessions that stopped at questions and their menus are not seen again
+- **THEN** the finish text quotes the four questions with their sessions and the issue is left for review, not closed
+
+### Requirement: HOME-172 An issue closes only when its task is met
+An issue SHALL be closed only when every item of its task, its "Done when" or the brief's task list, is met; otherwise it finishes with `--review`, naming the unmet item.
+
+#### Scenario: One item is unverified
+- **WHEN** a worker finishes with one item of its brief's task list unverified
+- **THEN** it runs `finish --review` naming that item and does not close the issue

@@ -92,3 +92,24 @@ A session in a home SHALL read the orchestrate skill before acting on a request,
 #### Scenario: Closing finished sessions
 - **WHEN** the orchestrator closes finished sessions and one of them holds an open question of the owner
 - **THEN** that session is parked or left open, not closed
+
+### Requirement: HOME-167 A session never raises its own tab cap
+A session SHALL never change `term.max_workers` itself; at the cap it queues the rest with a stated reason, and a child orchestrator's brief says how many tabs it may open, never to launch all.
+
+#### Scenario: More tasks than the cap
+- **WHEN** seven tasks are ready and the cap allows four tabs
+- **THEN** the session opens four, queues three with the reason stated and leaves `term.max_workers` unchanged
+
+### Requirement: HOME-171 A worker brief names the owner's language
+Every worker brief SHALL state that questions and every message to the owner, the final status included, are in the owner's language.
+
+#### Scenario: A worker runs in a code checkout
+- **WHEN** a worker starts in a folder with no home configuration
+- **THEN** its brief still names the owner's language for its questions and its final status
+
+### Requirement: HOME-173 Steps that do not wait go on
+When one step of the owner's ask waits on him, the session SHALL carry on with the later steps that do not depend on it.
+
+#### Scenario: A purchase waits on the owner
+- **WHEN** one step waits on the owner's click and a later step does not need it
+- **THEN** the session does the later step while the first one waits

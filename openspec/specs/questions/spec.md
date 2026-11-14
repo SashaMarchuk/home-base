@@ -226,3 +226,31 @@ A standing rule the owner states inside another request SHALL be recorded with t
 #### Scenario: A rule in passing
 - **WHEN** the owner states a rule for all future cases while asking for something else
 - **THEN** that task appends the rule to `DECISIONS.md` through the `decide` skill
+
+### Requirement: HOME-165 A yes to the pointer question approves the page as shown
+The first option of a pointer question SHALL be a plain yes to everything as shown on the review page, in the owner's language; after his yes the session reads the page, where a row he answered or text he edited wins, acts on it, reads it back and does not ask again.
+
+#### Scenario: He says yes to the pointer question
+- **WHEN** the owner picks the first option of a pointer question whose page holds a draft he did not edit
+- **THEN** the session sends the draft as shown, reads it back and asks nothing more about it
+
+### Requirement: HOME-166 A blocker report is its own question
+A report that a step is blocked SHALL be its own question, asked before any draft for that step and never bundled with a draft's approval.
+
+#### Scenario: A checkout is blocked
+- **WHEN** a purchase step is blocked and a message to a third party could be drafted
+- **THEN** the session first asks about the blocker alone, and any draft follows in a later question
+
+### Requirement: HOME-169 A review page saves each answer and splits options
+A review page SHALL save each answer as it is given, with no submit or Save button, and show each option in a finding as its own yes / no / note row.
+
+#### Scenario: A finding offers two options
+- **WHEN** a finding offers a custom page and a new block as options
+- **THEN** the page shows two separate rows and keeps each answer the moment he gives it
+
+### Requirement: HOME-170 Approved text keeps its words and takes the recipient's format
+Approved text SHALL be sent with its words unchanged, in the format the recipient's recorded rules give.
+
+#### Scenario: The recipient wants one point per message
+- **WHEN** an approved three-paragraph reply goes to a recipient whose recorded rule is one point per message
+- **THEN** it goes out as three messages with the approved words

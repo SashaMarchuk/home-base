@@ -33,6 +33,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - Ask the owner through the surface's ask tool, context first, recommended option first, at most four per round. Never ask what `DECISIONS.md`, the issue or an earlier answer already settles.
 - A message to a tab carries only what is new to it (read its log or screen first) and no instruction he did not give.
 - When he asked only to investigate or explain, the finding and the fix it needs go in the final status and the issue is finished; never put a fix he did not ask for to him as a question, and never park the issue on one.
+- When one step of his ask waits on him, carry on with the later steps that do not depend on it.
 - Never ask him to confirm an order, plan or launch he gave: report it. A waiting dialog in another tab that he did not ask you to relay into is listed in the status, never put to him as a question.
 
 ## 4. The queue
@@ -41,6 +42,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - Kill only PIDs this home launched or the owner named, by exact number.
 - "set profile <orchestrator|worker> <name>" (or "use profile <name> for workers"): run `scripts/configure --set launch.profile.<role>=<name>` and confirm in one line; "show profiles": `scripts/configure --get launch.profile.orchestrator --get launch.profile.worker`.
 - A cap the owner states ("3-4 sessions") counts every tab this session opens, child orchestrators included.
+- Never change `term.max_workers` yourself; only the owner sets it. At the cap, queue the rest with a stated reason. A child orchestrator's brief says how many tabs it may open, never "launch all".
 Pick `status:ready` issues, oldest first, one worker per issue. Before launching, check open claims (`status:claimed`) and `scripts/term/term.sh survey` so no task gets two sessions.
 
 Launch a worker with terminal helpers on (`terminal_helpers=on` in `.local/config`): write the brief below to `scratch/brief-<n>.md`, then `scripts/term/term.sh open <working dir> --issue <n> --role worker --brief-file scratch/brief-<n>.md` (prints `<session_id> <tty> <pid>`). Helpers off: give the brief to the owner as a ready-to-paste prompt, or start a subagent when the task fits in this session.
@@ -53,8 +55,9 @@ Record tool: <absolute path of this home>/scripts/home-log
 Rules:
 - Start with: <home path>/scripts/home-log start <n> --repo <repo>
 - End with:   <home path>/scripts/home-log finish <n> --repo <repo> --text "<summary: what was done, links, owner answers that changed the outcome>"
+- Questions and every message to the owner, the final status included, in <lang.owner>.
 - Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>".
-- Nothing external without the owner's yes; prepare a draft and show it for approval on a review page (the draft as an editable text, yes / no / note per row; see section 8 of <home path>/.claude/skills/orchestrate/SKILL.md), not as a plain question. After his yes on the exact text, send it yourself as approved, then read it back. Text the owner writes himself in direct answer to a question asking whether to send a specific text is his yes on exactly that text: send it as written, read it back, do not ask again.
+- Nothing external without the owner's yes; prepare a draft and show it for approval on a review page (the draft as an editable text, yes / no / note per row; see section 8 of <home path>/.claude/skills/orchestrate/SKILL.md), not as a plain question. After his yes on the exact text, send it yourself as approved, then read it back. Text the owner writes himself in direct answer to a question asking whether to send a specific text is his yes on exactly that text: send it as written, read it back, do not ask again. Approved text is sent with its words unchanged, in the format the recipient's recorded rules give (for example "one point per message": one message per paragraph).
 - Limits: <mode, only when set for this task>
 Owner's words for this task (verbatim):
 <quote>
@@ -70,7 +73,7 @@ Owner's words for this task (verbatim):
 
 ## 6. Park, resume, close
 - Park: `scripts/term/term.sh park <tty|session id> --issue <n>` (refuses on an unsent draft; then leave it). Never type into a busy tab or answer another session's dialog.
-- Resume: `scripts/term/term.sh resume <session id>`, message by class: by default it re-asks the run's open question for the owner, else says continue; `--message "<text>"` for another class (a timer, an answer to act on), `--silent` for none.
+- Resume: `scripts/term/term.sh resume <session id>`, message by class: by default it re-asks the run's open question for the owner, else says continue; `--message "<text>"` for another class (a timer, an answer to act on), `--silent` for none. When a resumed session had stopped at a question, the finish text quotes that question with its session; while its menu is not seen again (`term.sh state` or the screen), finish with `--review`, not close.
 - Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. Never edit `.local/registry.json` by hand; only term.sh writes it. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
@@ -84,12 +87,12 @@ Owner's words for this task (verbatim):
 - `off`: act only on what the owner says in this session.
 - `assigned` (default): work `status:ready` issues; prepare draft replies for the owner to pick.
 - `watch`: also check `proactivity.sources` every `proactivity.every_minutes` with the session's own scheduler; found work becomes `scripts/home-log new` (inbox) or goes to the session that owns it.
-- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions; a draft together with other choices counts as several approvals: one review page with the draft as an editable text and yes / no / note per row, plus one pointer question; never ask whether to prepare a draft: prepare it and ask for the send with the exact text shown); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
+- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions; a draft together with other choices counts as several approvals: one review page with the draft as an editable text and yes / no / note per row, plus one pointer question; the review page saves each answer as it is given (no submit or Save button), and each option in a finding is its own yes / no / note row; the pointer question's first option is a plain yes to everything as shown on the page (in lang.owner): read the page first (a row he answered or text he edited there wins), then act on it, read it back and never ask again; a blocker report is its own question, asked before any draft and never bundled with one; never ask whether to prepare a draft: prepare it and ask for the send with the exact text shown); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
 - Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only. Every decision or step that waits for him is stored before the final: this session's own on an issue it holds, this way; one a worker will hit goes in that worker's brief.
 - Record a hand-off only after `term.sh open` printed the session id, tty and pid; a hand-off to a worker is `scripts/home-log checkpoint <n> --handed <session id>`, which needs no claim.
-- Before closing an issue: every open question of the owner on it is answered or stored with `--park --question`.
+- Before closing an issue: every open question of the owner on it is answered or stored with `--park --question`. Close only when every item of the task (its "Done when" or the brief's task list) is met; otherwise `finish --review`, naming the unmet item.
 - When a fallback already carries the work, always offer "leave it as is and watch" as its own option. That answer means: file a follow-up issue for the watch (`scripts/home-log new`) holding the cause hypothesis your evidence supports and its log lines, then finish (do not park).
 - Write a result to the record only after you verified it (read back the effect); never report a count you did not observe. Counts in a result come from one source and add up to the total stated.
 - Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that. A login request names the service, the profile by name and one pasteable `! <login command>` from the home's login how-to (wiki), in the question text; its options never replace that command. After he confirms, run the identity check before anything else. After a re-check, name what the check cannot prove.
