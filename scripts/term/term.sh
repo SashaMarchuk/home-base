@@ -732,9 +732,11 @@ cmd_open() {
   prefix=$(launch_prefix "$role") || exit $?
   check_memory
   if [ -n "$group" ] || [ -n "$(local_cfg term.groups)" ]; then
-    [ -n "$group" ] || read -r group gfrom <<EOF
+    gfrom=explicit
+    if [ -z "$group" ]; then read -r group gfrom <<EOF
 $(group_of_cwd "$dir")
 EOF
+    fi
     win=$(window_for_group "$group" "$(survey_json)")
   fi
   sid=$(be_uuid)
@@ -744,10 +746,10 @@ EOF
   [ -n "$brief_file" ] && line="$line \"\$(cat $(shq "$(cd "$(dirname "$brief_file")" && pwd -P)/$(basename "$brief_file")"))\""
   match=$sid
   entry=$(jq -nc --arg sid "$sid" --arg cwd "$dir" --arg issue "$issue" --arg resume "$resume" \
-    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" --arg group "$group" \
+    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" --arg group "$group" --arg gfrom "${gfrom:-}" \
     '{session_id: $sid, tty: null, pid: null, cwd: $cwd, issue: (if $issue == "" then null else ($issue | tonumber) end),
       resume: $resume, opened: $opened, closed: null, role: $role, tab: null, match: $match,
-      group: (if $group == "" then null else $group end)}')
+      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}')
   reserve "$entry" "$role"
   out=$(launch_tab "$sid" "$line" "$match" "$win") || exit $?
   [ -n "$group" ] && [ "$win" = new ] && { cache_window "$group" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"; }
@@ -1028,7 +1030,8 @@ cmd_resume() {
   [ -n "$T_CLOSED" ] || die 3 "session $T_SID is still open on $T_TTY"
   sid=$T_SID
   role=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .role // "worker"')
-  line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume')
+  [ "$T_MATCH" = "$T_SID" ] || die 3 "session $T_SID was not a resumable session"
+  line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume // empty')
   [ -n "$line" ] || die 3 "no resume command recorded for $sid"
   check_memory
   if [ "$silent" = 0 ] && [ -z "$msg" ]; then

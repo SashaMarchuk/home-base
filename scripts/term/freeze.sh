@@ -60,9 +60,9 @@ snap_update() { # snap_update <jq args...>: apply a jq program to the snapshot, 
   fi
 }
 
-snap_outcome() { # snap_outcome <tty> <outcome>
+snap_outcome() { # snap_outcome <tty> <outcome>; rc 1 when the snapshot could not be written
   snap_update --arg t "$1" --arg o "$2" '.entries |= map(if .tty == $t then .outcome = $o else . end)' ||
-    note "snapshot not updated for $1"
+    { note "snapshot not updated for $1"; return 1; }
 }
 
 freeze_opt() { # freeze_opt <drafts|busy>: the conservative value; an opt-in value waits for the owner's approval
@@ -175,7 +175,7 @@ record_adopted() { # record_adopted <entry json>: a tab this home did not open e
   entry=$(printf '%s' "$e" | jq -c --arg o "$(now_utc)" --arg f "$FID" \
     '{session_id, tty, pid, cwd, issue: null, resume, opened: $o, closed: null, role: "owner", tab,
       match: (if (.session_id as $s | .command | contains($s)) then .session_id else .command end), adopted: true,
-      group, window, frozen: $f}') || return 1
+      group, group_from, window, frozen: $f}') || return 1
   reg_update --argjson e "$entry" '. + [$e]'
 }
 
@@ -211,6 +211,9 @@ freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints th
         [ $SECONDS -ge $end ] && { echo "kept:busy"; return 3; }   # busy=wait: never interrupted
         be_sleep "$POLL"; continue ;;
       dialog)
+        # Esc only on a dialog whose question and options the snapshot holds; any other dialog keeps the tab
+        printf '%s' "$e" | jq -e '(.question // "") != "" and ((.options // []) | length) > 0' >/dev/null ||
+          { echo "kept:dialog"; return 3; }
         [ "$escaped" = 0 ] || { echo "kept:dialog"; return 3; }
         escaped=1
         be_key "$T_TTY" "$T_TAB" esc || { echo "kept:gone"; return 4; }   # cancels; never answers
@@ -280,7 +283,7 @@ freeze_tab_soft() { # freeze_tab_soft <entry json> <checkpoint path> <nonce>: in
 
 cmd_freeze() {
   local mode="" sel="" vals="[]" excepts="[]" dry=0 localonly=0 cont="" all chosen n t repo issue out rc
-  local e tty sid rows scr st q opts
+  local e tty sid rows scr st q opts names="[]" g
   [ $# -ge 1 ] || die 2 "usage: freeze (--all | --group G | --window W | <tty|session id>...) [--soft|--hard|--soft-then-hard] [--except T]... [--dry-run] [--local-only] | freeze --continue <id>"
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -313,12 +316,20 @@ cmd_freeze() {
   all=$(survey_json | jq -sc .)
   if [ "$sel" = window ]; then
     vals=$(printf '%s' "$vals" | jq -c --arg f "$(be_front_window)" 'map(if . == "front" then $f else . end)')
+    for t in $(printf '%s' "$vals" | jq -r '.[]'); do group_known "$t" && names=$(printf '%s' "$names" | jq -c --arg g "$t" '. + [$g]'); done
     for t in $(printf '%s' "$vals" | jq -r '.[]'); do
       if group_known "$t"; then
         vals=$(printf '%s' "$vals" | jq -c --arg g "$t" --arg w "$(window_for_group "$t" "$(printf '%s' "$all" | jq -c '.[]')")" 'map(if . == $g then $w else . end)')
         continue
       fi
       printf '%s' "$all" | jq -e --arg w "$t" 'any(.[]; .window == $w)' >/dev/null || die 2 "unknown window '$t'"
+    done
+    for t in $(printf '%s' "$vals" | jq -r '.[]'); do   # a window named by its group must hold only that group's sessions
+      for g in $(printf '%s' "$all" | jq -r --arg w "$t" '[.[] | select(.window == $w and .kind == "claude" and .group != null) | .group] | unique | .[]'); do
+        [ "$(printf '%s' "$names" | jq length)" = 0 ] && continue   # a window named by its id or front
+        printf '%s' "$names" | jq -e --arg g "$g" 'index($g) != null' >/dev/null ||
+          die 2 "window $t also holds a tab of group '$g'; name the sessions instead"
+      done
     done
   fi
   if [ "$IN_SESSION" = 1 ] && [ -z "$CALLER_TTYS" ] && [ "$sel" != targets ]; then
@@ -332,8 +343,9 @@ cmd_freeze() {
     done
   fi
   # what happens to each tab, before anything is read or written
-  chosen=$(printf '%s' "$chosen" | jq -c --argjson x "$excepts" '[.[] |
-    . + {plan: (if .caller then "kept:caller"
+  chosen=$(printf '%s' "$chosen" | jq -c --argjson x "$excepts" --arg me "${CLAUDE_CODE_SESSION_ID:-}" '[.[] |
+    . + {plan: (if .caller or ($me != "" and .session_id == $me) then "kept:caller"
+                elif .registry_stale then "kept:changed"
                 elif .kind != "claude" then "kept:not-claude"
                 elif .processes != 1 then "kept:ambiguous"
                 elif (.tty as $t | (.session_id // "") as $s | any($x[]; . as $y | $y == $t or (($y | length) >= 8 and ($s | startswith($y)))))
@@ -366,7 +378,7 @@ cmd_freeze() {
       if [ -n "$scr" ]; then
         st=$(state_of "$scr")
         if [ "$st" = dialog ]; then
-          q=$(dialog_question "$scr") || q="(open question on screen; see the session)"
+          q=$(dialog_question "$scr") || q=""   # not read: the dialog counts as not recorded
           opts=$(dialog_options "$scr" | jq -R . | jq -sc .)
         fi
       fi
@@ -387,21 +399,24 @@ EOF
   # phase B: the record, read back, before any key
   snap_update '.entries |= map(.recorded = ((.outcome == "captured" or .outcome == "kept:caller") and .home != null))' ||
     die 3 "cannot update the snapshot; nothing was typed"
-  snap_update '.entries |= map(if .outcome == "captured" and .home == null then .outcome = "kept:no-record" else . end)'
+  snap_update '.entries |= map(if .outcome == "captured" and .home == null then .outcome = "kept:no-record" else . end)' ||
+    die 3 "cannot update the snapshot; nothing was typed"
   if [ "$localonly" = 0 ]; then
     for repo in $(jq -r '[.entries[] | select(.recorded) | .home] | unique | .[]' "$SNAP"); do
       if issue=$(freeze_record "$repo"); then
-        snap_update --arg r "$repo" --arg n "$issue" '.records += [{repo: $r, issue: ($n | tonumber)}]'
+        snap_update --arg r "$repo" --arg n "$issue" '.records += [{repo: $r, issue: ($n | tonumber)}]' ||
+          die 3 "cannot update the snapshot; nothing was typed"
       else
-        snap_update --arg r "$repo" '.entries |= map(if .home == $r and .outcome == "captured" then .outcome = "kept:no-record" else . end)'
+        snap_update --arg r "$repo" '.entries |= map(if .home == $r and .outcome == "captured" then .outcome = "kept:no-record" else . end)' ||
+          die 3 "cannot update the snapshot; nothing was typed"
       fi
     done
   fi
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     tty=$(printf '%s' "$e" | jq -r .tty)
-    park_own_issue "$e" || { snap_outcome "$tty" "kept:no-record"; continue; }
-    record_adopted "$e" || { snap_outcome "$tty" "kept:no-record"; continue; }
+    park_own_issue "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
+    record_adopted "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
     sid=$(printf '%s' "$e" | jq -r .session_id)
     printf '%s' "$e" | jq -e .registered >/dev/null &&
       { reg_update --arg t "$tty" --arg f "$FID" 'map(if .tty == $t and .closed == null then . + {frozen: $f} else . end)' || note "registry not updated for $tty"; }
@@ -439,7 +454,7 @@ freeze_act() { # phase C and D over the snapshot's entries still to act on
     fi
     [ -n "$outcome" ] || outcome="failed:exit-$rc"
     [ "$rc" = 5 ] && linger=1
-    snap_outcome "$tty" "$outcome"
+    snap_outcome "$tty" "$outcome" || true
     if [ "$outcome" = exited ]; then
       reg_update --arg t "$tty" --arg c "$(now_utc)" --arg f "$FID" \
         'map(if .tty == $t and .closed == null then . + {closed: $c, frozen: $f} else . end)' || note "registry not updated for $tty"
@@ -495,6 +510,10 @@ freeze_continue() { # freeze_continue <id>: act again on the entries not yet clo
   SNAP="$FREEZE_DIR/$FID.json"
   [ -f "$SNAP" ] || die 4 "no snapshot $SNAP"
   freeze_lock
+  find_caller
+  snap_update --arg c " $CALLER_TTYS " --arg me "${CLAUDE_CODE_SESSION_ID:-}" \
+    '.entries |= map(if ((.tty as $t | $c | contains(" " + $t + " ")) or ($me != "" and .session_id == $me)) and .outcome != "exited"
+                     then .outcome = "kept:caller" else . end)' || die 3 "cannot update the snapshot"
   # retried: a running turn, signals that disagreed, a draft, a soft timeout; never a dialog already cancelled once or a lingering PID
   snap_update '.entries |= map(if .outcome == "kept:busy" or .outcome == "kept:signals-disagree" or .outcome == "kept:draft"
                                or .outcome == "kept:soft-timeout" then .outcome = "captured" else . end)' ||

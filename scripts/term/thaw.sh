@@ -36,12 +36,14 @@ thaw_reserve() { # thaw_reserve <entry json> <resume line>: registry entry for t
   if [ "$role" = worker ] && [ "$(count_live_workers)" -ge "$(cfg term.max_workers 4)" ]; then reg_unlock; return 6; fi
   if [ "$(reg_read --arg s "$sid" '[.[] | select(.session_id == $s)] | length')" -gt 0 ]; then
     reg_write --arg s "$sid" --arg o "$(now_utc)" --arg r "$2" --arg g "$(printf '%s' "$e" | jq -r '.group // ""')" \
+      --arg gf "$(printf '%s' "$e" | jq -r '.group_from // ""')" \
       'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null,
-         match: $s, resume: $r, group: (if $g == "" then .group else $g end)} else . end)'
+         match: $s, resume: $r, group: (if $g == "" then .group else $g end),
+         group_from: (if $gf == "" then .group_from else $gf end)} else . end)'
   else
     reg_write --argjson e "$(printf '%s' "$e" | jq -c --arg o "$(now_utc)" --arg r "$2" \
       '{session_id, tty: null, pid: null, cwd, issue, resume: $r, opened: $o, closed: null, role: (.role // "owner"),
-        tab: null, match: .session_id, group, adopted: (.adopted // false)}')" '. + [$e]'
+        tab: null, match: .session_id, group, group_from, adopted: (.adopted // false)}')" '. + [$e]'
   fi
   rc=$?
   reg_unlock
@@ -64,7 +66,7 @@ snapshot_from_issue() { # snapshot_from_issue <owner/repo#n>: rebuild the snapsh
   [ -n "$data" ] || die 4 "$repo#$n holds no freeze data"
   printf '%s' "$data" | jq -c --arg r "$repo" --argjson n "$n" \
     '{id, created: null, mode: "hard", from_issue: true, records: [{repo: $r, issue: $n}],
-      entries: [.entries[] | . + {home: $r, recorded: true,
+      entries: [.entries[] | del(.resume) | . + {home: $r, recorded: true, from_issue: true,
         outcome: (if .local then "kept:local" elif .caller then "kept:caller" else "exited" end)}]}'
 }
 
@@ -128,7 +130,15 @@ cmd_thaw() {
       [ "$dry" = 1 ] || thaw_mark "$sid" skipped:live
       echo "SKIP $sid: it is live already"; continue
     fi
-    line=$(printf '%s' "$e" | jq -r '.resume // empty')
+    if printf '%s' "$e" | jq -e '.from_issue' >/dev/null; then
+      # never typed from the issue text: rebuilt from a checked session id, folder and profile
+      if ! is_uuid "$sid" || ! printf '%s' "$e" | jq -r '.profile // ""' | grep -Eq '^[A-Za-z0-9._@-]*$'; then
+        echo "SKIP $sid: the freeze data in the issue does not hold a valid session id or profile"; continue
+      fi
+      line=$(resume_line "$(printf '%s' "$e" | jq -r '.cwd // "."')" "" "$(printf '%s' "$e" | jq -r '.profile // ""')" "$sid") || line=""
+    else
+      line=$(printf '%s' "$e" | jq -r '.resume // empty')
+    fi
     if [ -z "$line" ] || ! has_transcript "$(printf '%s' "$e" | jq -r '.profile_dir // empty')" "$sid"; then
       [ "$dry" = 1 ] || thaw_mark "$sid" skipped:no-transcript
       echo "SKIP $sid: its transcript is not on this machine; resume it where it is: ${line:-(no resume line)}"; continue

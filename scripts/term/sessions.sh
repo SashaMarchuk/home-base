@@ -221,7 +221,7 @@ is_caller() { case " $CALLER_TTYS " in *" $1 "*) return 0 ;; esac; return 1; }
 tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
   local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
-  local group="" gfrom=""
+  local group="" gfrom="" stale=false
   name=$(launch_name)
   pids=$(printf '%s\n' "$procs" | awk -v t="$tty" -v c="$name" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }')
   n=$(printf '%s\n' "$pids" | grep -c .)
@@ -243,11 +243,15 @@ tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a l
         sid=$(printf '%s' "$entry" | jq -r '.session_id'); src=registry
         resume=$(printf '%s' "$entry" | jq -r '.resume // ""')
       fi
+      # the registry speaks for this tab only while its pid is the live one
+      printf '%s' "$entry" | jq -e --arg p "$pid" '(.pid | tostring) == $p' >/dev/null || stale=true
     fi
     if sf=$(session_of_pid "$pid"); then
       IFS=$US read -r s_sid status s_cwd sname prof pdir <<EOF
 $sf
 EOF
+      if [ "$src" = registry ] && is_uuid "$s_sid" && [ "$s_sid" != "$sid" ]; then stale=true; fi
+      if [ "$stale" = true ]; then sid=""; src=none; resume=""; fi
       if [ -z "$sid" ] && is_uuid "$s_sid"; then sid=$s_sid; src=file; fi
       [ -n "$cwd" ] || cwd=$s_cwd
     fi
@@ -257,7 +261,7 @@ EOF
     fi
     [ -n "$resume" ] || resume=$(resume_line "$cwd" "$cmd" "$prof" "$sid" "$role") || resume=""
     group=$(printf '%s' "$entry" | jq -r '.group // empty' 2>/dev/null)
-    if [ -n "$group" ]; then gfrom=registry; else read -r group gfrom <<EOF
+    if [ -n "$group" ]; then gfrom=$(printf '%s' "$entry" | jq -r '.group_from // "registry"'); else read -r group gfrom <<EOF
 $(group_of_cwd "$cwd")
 EOF
     fi
@@ -266,14 +270,15 @@ EOF
   jq -nc --arg tty "$tty" --arg win "$win" --arg tab "$tab" --arg pid "$pid" --arg kind "$kind" --argjson n "$n" \
     --arg cmd "$cmd" --arg sid "$sid" --arg src "$src" --arg prof "$prof" --arg pdir "$pdir" --arg status "$status" \
     --arg cwd "$cwd" --arg name "$sname" --argjson reg "$reg" --arg issue "$issue" --arg role "$role" \
-    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" \
+    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" \
     '{tty: $tty, window: $win, tab: $tab, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
       processes: $n, command: $cmd, session_id: (if $sid == "" then null else $sid end), id_from: $src,
       profile: $prof, profile_dir: $pdir, status: (if $status == "" then null else $status end), cwd: $cwd,
       name: $name, registered: $reg, issue: (if $issue == "" then null else ($issue | tonumber) end),
       role: (if $role == "" then null else $role end), adopted: $adopted,
       resume: (if $resume == "" then null else $resume end), caller: $caller,
-      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}'
+      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end),
+      registry_stale: $stale}'
 }
 
 survey_json() { # one JSON line per live tab

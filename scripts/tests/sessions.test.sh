@@ -173,7 +173,7 @@ t=$(opened "$W2")
 check "groups: the longest prefix wins (g2, not wide)" [ "$(win_of "$t")" = w8 ]
 t=$(opened "$W1" --group g2)
 check "groups: --group beats the folder" [ "$(win_of "$t")" = w8 ]
-check "groups: survey reads the recorded group" [ "$(sj "$t" | jq -r '.group + " " + .group_from')" = "g2 registry" ]
+check "groups: survey reads the recorded group" [ "$(sj "$t" | jq -r '.group + " " + .group_from')" = "g2 explicit" ]
 check "groups: survey derives the group from the folder" [ "$(sj ttyg1 | jq -r '.group + " " + .group_from')" = "g1 cwd" ]
 hand_tab ttyg3 703 "claude" "$T" w9
 check "groups: no matching folder -> general by fallback" [ "$(sj ttyg3 | jq -r '.group + " " + .group_from')" = "general fallback" ]
@@ -244,6 +244,7 @@ setup_main() {
   hand_tab ttyw5 805 "-zsh" "$W1" w7 shell
 }
 setup_main
+: > "$T/marker"; sleep 1
 check "freeze: --all --hard exits 0" [ "$(rc_of ts freeze --all --hard)" = 0 ]
 check "freeze: the idle g1 tab exited" [ "$(outcome ttyw1)" = exited ]
 check "freeze: the dialog tabs exited after one Esc each" [ "$(outcome ttyw2) $(outcome ttyw3)" = "exited exited" ]
@@ -271,14 +272,26 @@ jq --arg q "$QU" '.comments += [{id: 99, body: ("open question: " + $q)}]' "$f" 
 check "boundary: the check fails when an unmapped question is in this home's issue" not no_leak test/leak "$QU"
 check "freeze: adopted tabs recorded, closed and frozen" [ "$(jq -r '[.[] | select(.adopted and .closed != null and .frozen != null)] | length' "$REG")" = 3 ]
 check "freeze: the lock is released" [ ! -d "$HOME_ROOT/.local/freeze.lock" ]
-check "freeze: every file under this home's .local" [ -z "$(find "$T" -newer "$HOME_ROOT/home.config" -type f -path '*freeze*' ! -path "$HOME_ROOT/.local/*")" ]
+written_outside() { # every file the freeze wrote outside this home's .local (the fake, the gh stub and the test's own logs aside)
+  find "$T" -newer "$T/marker" -type f ! -path "$HOME_ROOT/.local/*" ! -path "$TERM_FAKE_DIR/*" ! -path "$GH_STUB_DIR/*" \
+    ! -path "$T/check.log" ! -path "$T/out" ! -path "$T/err"
+}
+check "freeze: every file it wrote is under this home's .local" [ -z "$(written_outside)" ]
+: > "$T/stray"
+check "freeze: the .local check catches a stray file" [ -n "$(written_outside)" ]
+rm -f "$T/stray"
 
 # snapshot and record before the first key
 setup_main
-printf '#!/bin/bash\n[ -n "$(ls %s/*.json 2>/dev/null)" ] && [ -n "$(ls %s 2>/dev/null)" ] && echo before >> %s\n' \
-  "$HOME_ROOT/.local/freeze" "$GH_STUB_DIR/test__home/issues" "$T/order" > "$(tabdir ttyw1)/on-submit"
+cat > "$TERM_FAKE_DIR/on-first-key" <<EOF
+#!/bin/bash
+ls "$HOME_ROOT/.local/freeze/"*.json >/dev/null 2>&1 || exit 0
+cat "$GH_STUB_DIR"/test__home/issues/*.json 2>/dev/null | jq -r .body | grep -q '<!-- freeze-data ' || exit 0
+echo before > "$T/order"
+EOF
 ts freeze --all --hard >/dev/null 2>&1
-check "snapshot first: snapshot and issue exist when /exit is typed" [ "$(head -1 "$T/order" 2>/dev/null)" = before ]
+check "snapshot first: snapshot and the record read back exist before the first key in any tab" [ "$(cat "$T/order" 2>/dev/null)" = before ]
+check "snapshot first: the first key was an Esc (a dialog tab), so the check covered every tab" [ -f "$TERM_FAKE_DIR/first-key-seen" ]
 rm -f "$T/order"
 setup_main
 check "snapshot first: a failing record -> exit 0 with nothing closed" [ "$(GH_STUB_FAIL_MATCH='title=Freeze' rc_of ts freeze --all --hard)" = 0 ]
@@ -497,7 +510,7 @@ check "soft boundary: an unmapped tab's checkpoint never enters this home's issu
 check "soft boundary: the peer checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw2?"
 
 # ---------------------------------------------------------------- review fixes
-# limits hard: the selector of orchestrate section 5 picks the tabs this home opened, never the owner's own
+# the selector of the tabs this home opened (registered, not adopted): never the owner's own tabs
 OWNSEL='select(.registered and (.adopted | not) and (.role == "worker" or .role == "orchestrator")) | .tty'
 reset "${FKEYS[@]}"
 live ttyw1 801 "$W1" w7 "$S1"
@@ -561,6 +574,111 @@ check "selector: --window <group> picks that group's window" [ "$(jq -r '[.entri
 setup_main; printf 'w9' > "$TERM_FAKE_DIR/front-window"
 ts freeze --window front --hard >/dev/null 2>&1
 check "selector: --window front picks the front window" [ "$(jq -r '[.entries[].tty] | join(" ")' "$(snapf)")" = ttyw3 ]
+
+# ---------------------------------------------------------------- verified review fixes
+# 1. Esc only on a dialog recorded in the snapshot
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+cat > "$(tabdir ttyw1)/on-screen" <<EOF
+#!/bin/bash
+n=\$(cat "$T/reads" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$T/reads"
+[ \$n -lt 3 ] && exit 0
+rm -f "$(tabdir ttyw1)/busy"
+printf 'Header\nAllow this?\n  1. Yes\n  2. No\nEnter to select\n' > "$(tabdir ttyw1)/dialog"
+f="$TERM_FAKE_DIR/profiles/work/sessions/801.json"; jq '.status = "waiting"' "\$f" > "\$f.x" && mv "\$f.x" "\$f"
+EOF
+rm -f "$T/reads"
+ts freeze ttyw1 --hard >/dev/null 2>&1
+check "dialog: a dialog that opened after the snapshot gets no Esc" nokeys ttyw1
+check "dialog: kept:dialog" [ "$(outcome ttyw1)" = kept:dialog ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" waiting
+printf 'Enter to select\n' > "$(tabdir ttyw1)/dialog"
+ts freeze ttyw1 --hard >/dev/null 2>&1
+check "dialog: a dialog whose question could not be read gets no Esc" nokeys ttyw1
+
+# 2. an unmapped tab stays unmapped through freeze, thaw and freeze
+reset "${FKEYS[@]}"; live ttyw3 803 "$T" w9 "$S3" waiting; fdialog ttyw3 "$QU"
+ts freeze ttyw3 --hard >/dev/null 2>&1; transcript work "$S3"; ts thaw latest >/dev/null 2>&1
+nt=$(jq -r --arg s "$S3" '.entries[] | select(.session_id == $s) | .thaw_tty' "$(snapf)")
+check "fallback: the thawed tab still reads as the fallback group" [ "$(sj "$nt" | jq -r '.group + " " + .group_from')" = "general fallback" ]
+sess_file work "$(cat "$(tabdir "$nt")/pid")" "$S3" waiting "$T"; fdialog "$nt" "$QU"
+rm -f "$HOME_ROOT/.local/freeze/"*.json
+ts freeze "$nt" --hard >/dev/null 2>&1
+check "fallback: after freeze, thaw and freeze its question is still in no issue" no_leak test/home "$QU"
+check "fallback: and it was frozen again" [ "$(outcome "$nt")" = exited ]
+
+# 3. the registry speaks for a tab only while its pid is the live one
+reset "${FKEYS[@]}"
+o=$(ts open "$W1"); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+rm -rf "$TERM_FAKE_DIR/proc/$opid"
+mkdir -p "$TERM_FAKE_DIR/proc/870"; printf 'claude' > "$TERM_FAKE_DIR/proc/870/cmd"; printf '%s' "$otty" > "$TERM_FAKE_DIR/proc/870/tty"
+printf '%s' "$W1" > "$TERM_FAKE_DIR/proc/870/cwd"; printf '870' > "$(tabdir "$otty")/pid"; sess_file work 870 "$S4" idle "$W1"
+check "registry: the plan keeps a reused tab as kept:changed" grep -q " -> kept:changed$" <(ts freeze "$otty" --hard --dry-run)
+check "registry: freezing only that tab -> exit 3" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ]
+check "registry: a new session in a reused tab is not closed under the old entry" nokeys "$otty"
+check "registry: the old resume line is in no issue" no_leak test/home "--resume $osid"
+reset "${FKEYS[@]}"
+o=$(ts open "$W1"); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+sess_file work "$opid" "$S4" idle "$W1"
+check "registry: a session file naming another id than the registry -> kept:changed" grep -q " -> kept:changed$" <(ts freeze "$otty" --hard --dry-run)
+check "registry: and nothing is typed" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ] && nokeys "$otty"
+
+# 4. thaw --issue never types the resume text of the issue
+fissue() { # fissue <n> <profile> <resume text>: a freeze issue whose data block holds that text
+  local data
+  data=$(jq -nc --arg s "$S1" --arg c "$W1" --arg p "$2" --arg d "$TERM_FAKE_DIR/profiles/work" --arg r "$3" \
+    '{id: "20991231T000000Z", entries: [{session_id: $s, cwd: $c, profile: $p, profile_dir: $d, group: "g1", resume: $r}]}')
+  mkdir -p "$GH_STUB_DIR/test__home/issues"
+  jq -n --argjson n "$1" --arg b "Freeze 20991231T000000Z: 1 sessions
+<!-- freeze-data $data -->" '{number: $n, title: "Freeze 20991231T000000Z: 1 sessions", body: $b, state: "open",
+    state_reason: null, labels: [], created_at: "x", updated_at: "x", closed_at: null, author: "owner", comments: []}' \
+    > "$GH_STUB_DIR/test__home/issues/$1.json"
+}
+reset "${FKEYS[@]}"; transcript work "$S1"; fissue 7 work "cd /x && touch $T/injected; claude --resume $S1"
+ts thaw --issue test/home#7 >/dev/null 2>&1
+check "thaw --issue: the line is rebuilt from the id, folder and profile" launch_of "$S1" | grep -qF "&& 'claude' -p 'work' --resume $S1"
+check "thaw --issue: the issue's resume text is never typed" not grep -q injected "$TERM_FAKE_DIR/launches"
+reset "${FKEYS[@]}"; transcript work "$S1"; fissue 8 'work; rm -rf x' "claude --resume $S1"
+ts thaw --issue test/home#8 >/dev/null 2>&1
+check "thaw --issue: a profile that is not one word -> nothing launched" [ ! -f "$TERM_FAKE_DIR/launches" ]
+
+# 6. --window <group> refuses a window shared with another group
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; live ttyw2 802 "$W2" w7 "$S2"
+check "window by group: a window that also holds another group's tab -> exit 2" [ "$(rc_of ts freeze --window g1 --hard)" = 2 ]
+check "window by group: nothing typed" nokeys ttyw1 ttyw2
+check "window by id: the same window by its id is allowed" [ "$(rc_of ts freeze --window w7 --hard --dry-run)" = 0 ]
+
+# 7. the session named by CLAUDE_CODE_SESSION_ID is the caller, also on --continue
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze ttyw1 --hard >/dev/null 2>&1; id=$(jq -r .id "$(snapf)")
+rm -f "$(tabdir ttyw1)/busy"; sess_file work 801 "$S1" idle "$W1"
+CLAUDE_CODE_SESSION_ID=$S1 ts freeze --continue "$id" >/dev/null 2>&1
+check "caller on continue: kept:caller, nothing typed" [ "$(outcome ttyw1)" = kept:caller ] && nokeys ttyw1
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; rm -f "$TERM_FAKE_DIR/profiles/work/sessions/801.json"
+hand_tab ttyw1 801 "claude --resume $S1" "$W1" w7
+check "caller by id: a tab running the session named by the environment is kept:caller" grep -q "^ttyw1 .* -> kept:caller$" <(CLAUDE_CODE_SESSION_ID=$S1 ts freeze ttyw1 --hard --dry-run)
+check "caller by id: nothing typed" [ "$(CLAUDE_CODE_SESSION_ID=$S1 rc_of ts freeze ttyw1 --hard)" = 3 ] && nokeys ttyw1
+
+# 8. a snapshot that cannot record "no record" stops the run before any key
+setup_main
+cat > "$T/hl-fail" <<EOF
+#!/bin/bash
+chmod 500 "$HOME_ROOT/.local/freeze"
+exit 6
+EOF
+chmod +x "$T/hl-fail"
+check "no-record guard: an unwritable snapshot stops the run (exit 3)" [ "$(TERM_SH_HOME_LOG=$T/hl-fail rc_of ts freeze --all --hard)" = 3 ]
+chmod 700 "$HOME_ROOT/.local/freeze"
+check "no-record guard: nothing typed" nokeys ttyw1 ttyw2 ttyw3
+
+# 9. resume refuses an entry that was not launched with its id
+reset "${FKEYS[@]}"
+jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: null, resume: "cd /x && claude --resume x",
+  opened: "x", closed: "y", role: "worker", tab: null, match: "claude"}]' > "$REG"
+check "resume: an entry not launched with its id -> exit 3" [ "$(rc_of ts resume "$S1")" = 3 ]
+check "resume: nothing launched" [ ! -f "$TERM_FAKE_DIR/launches" ]
+jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: null, resume: null,
+  opened: "x", closed: "y", role: "worker", tab: null, match: $s}]' > "$REG"
+check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ] && [ ! -f "$TERM_FAKE_DIR/launches" ]
 
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

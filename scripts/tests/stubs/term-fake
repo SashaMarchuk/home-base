@@ -13,6 +13,8 @@
 #   window  the window id of the tab (default w1)
 #   on-submit  a script run with the submitted line as $1 (stands in for the session acting on it)
 #   on-key     a script run with the key name (cr, esc, bs) as $1 after the key took effect
+#   on-screen  a script run before each screen read (stands in for a session that changes on its own)
+# $TERM_FAKE_DIR/on-first-key: a script run once, before the first key reaches any tab
 # Logs: keys (every keystroke), sent (submitted lines), answered (dialog answers).
 # Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd and ppid; kills go to $TERM_FAKE_DIR/kills.
 # $TERM_FAKE_DIR/self-pid is the pid term.sh sees as its own (start of the walk to the calling
@@ -31,10 +33,17 @@ fake_live() { # fake_live <tty> <tab>
   [ -z "$2" ] || [ "$(fake_get "$1" tab)" = "$2" ]
 }
 
+fake_first_key() { # the first key of the run into any tab: run the global hook once, before the key lands
+  [ -f "$TERM_FAKE_DIR/on-first-key" ] && [ ! -f "$TERM_FAKE_DIR/first-key-seen" ] || return 0
+  : > "$TERM_FAKE_DIR/first-key-seen"
+  /bin/bash "$TERM_FAKE_DIR/on-first-key" >/dev/null 2>&1
+}
+
 be_screen() {
   local d mode box ghost
   fake_live "$1" "$2" || return 4
   d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  [ -f "$d/on-screen" ] && /bin/bash "$d/on-screen" >/dev/null 2>&1
   [ -f "$d/body" ] && cat "$d/body"
   if [ "$mode" = shell ]; then printf '$ %s\n' "$(fake_get "$1" box)"; return 0; fi
   [ -f "$d/headsup" ] && cat "$d/headsup"
@@ -57,6 +66,7 @@ be_type() {
   local d mode n
   fake_live "$1" "$2" || return 4
   d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  fake_first_key
   printf 'type:%s\n' "$3" >> "$d/keys"
   [ -f "$d/drop-typing" ] && return 0
   if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
@@ -76,6 +86,7 @@ be_key() {
   local d mode line s pid
   fake_live "$1" "$2" || return 4
   d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
+  fake_first_key
   printf 'key:%s\n' "$3" >> "$d/keys"
   fake_key "$@"; local rc=$?
   [ -f "$d/on-key" ] && /bin/bash "$d/on-key" "$3" >/dev/null 2>&1
