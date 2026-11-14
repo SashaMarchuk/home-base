@@ -317,10 +317,12 @@ if [ "$IS_GIT" = 1 ]; then
   { git -C "$ROOT" config --local configure.probe 1 && git -C "$ROOT" config --local --unset configure.probe; } >/dev/null 2>&1 || GIT_OK=0
 fi
 
-# ---------- terminal helpers: on only after the device check ----------
+# ---------- terminal helpers: on only after the device check, and never for launch.command=codex ----------
 HELPERS=$(ans terminal_helpers)
 HELPERS_NOTE=""
-if [ "$HELPERS" = on ] && ! device_ok; then
+if [ "$HELPERS" = on ] && [ "$(ans launch.command)" = codex ]; then
+  HELPERS=off; HELPERS_NOTE=" (asked on; the terminal helpers drive Claude Code tabs only, so a Codex orchestrator runs with them off)"
+elif [ "$HELPERS" = on ] && ! device_ok; then
   HELPERS=off; HELPERS_NOTE=" (asked on; device check failed: needs macOS, osascript and iTerm2)"
 fi
 if [ "$(ans terminal_helpers)" != "$HELPERS" ]; then # the answers file keeps the value actually written

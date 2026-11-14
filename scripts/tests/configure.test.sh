@@ -403,5 +403,16 @@ check "no codex steps for a Claude user" sh -c "! grep -q '^codex:' <<'X'
 $cout
 X"
 
+# 15. terminal helpers: a Codex orchestrator runs with them off; a Claude one keeps on (device check stubbed to pass)
+mkdir -p "$W/mac"; printf '#!/bin/sh\necho Darwin\n' > "$W/mac/uname"; printf '#!/bin/sh\necho ok\n' > "$W/mac/osascript"; chmod +x "$W/mac/uname" "$W/mac/osascript"
+sed -e 's/^terminal_helpers=.*/terminal_helpers=on/' -e 's/^launch.command=.*/launch.command=claude/' "$W/answers.codex" > "$W/answers.hon"
+PATH="$W/mac:$PATH" "$R2/scripts/configure" --answers "$W/answers.hon" >/dev/null 2>&1
+check "helpers on, Claude orchestrator: config on" grep -qx 'terminal_helpers=on' "$R2/.local/config"
+sed -e 's/^terminal_helpers=.*/terminal_helpers=on/' "$W/answers.codex" > "$W/answers.hcx"
+out=$(PATH="$W/mac:$PATH" "$R2/scripts/configure" --answers "$W/answers.hcx" 2>&1)
+check "helpers on, Codex orchestrator: config off" grep -qx 'terminal_helpers=off' "$R2/.local/config"
+check "helpers on, Codex orchestrator: answers off" [ "$(grep '^terminal_helpers=' "$W/answers.hcx")" = terminal_helpers=off ]
+check "helpers on, Codex orchestrator: reason reported" grep -q 'Claude Code tabs only' <<<"$out"
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -384,6 +384,11 @@ check "r11 stale reservation does not hold a slot" ts open "$WORK"
 reset; printf '%s\n' terminal_helpers=off > "$HOME_ROOT/.local/config"
 check "r11 helpers off -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
 check "r11 helpers off -> survey refused too" [ "$(rc_of ts survey)" = 3 ]
+reset launch.command=codex
+check "r11 Codex orchestrator (launch.command=codex) -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
+check "r11 Codex orchestrator: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
+reset launch.command=claude
+check "r11 launch.command=claude -> open works" ts open "$WORK"
 
 # ---------------------------------------------------------------- rule 12: kill exact PID after checking it
 check "r12 no verb signals a PID (pid_kill is never called)" not grep -n 'pid_kill "' "$TERM_SH"

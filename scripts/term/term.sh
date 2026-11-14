@@ -14,7 +14,7 @@
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #
 # Supports Claude Code sessions only: a tab counts as a session when a claude process runs
-# on it; any other tool's tab reads as a shell.
+# on it; any other tool's tab reads as a shell. With launch.command=codex every verb exits 3.
 #
 # <target> is a tty (ttys003 or /dev/ttys003) or a session id from .local/registry.json.
 # A tab title is never accepted: titles drift.
@@ -206,6 +206,7 @@ now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 need_helpers() {
   [ "$(cfg terminal_helpers off)" = "on" ] || die 3 "terminal_helpers is not 'on' in .local/config; nothing is opened or typed"
+  [ "$(cfg launch.command claude)" = codex ] && die 3 "launch.command=codex: these helpers drive Claude Code tabs only, so a Codex orchestrator runs with terminal_helpers=off; nothing is opened or typed"
   command -v jq >/dev/null 2>&1 || die 3 "jq is required"
 }
 
