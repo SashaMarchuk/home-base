@@ -69,7 +69,7 @@ Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anyt
 - **THEN** the dialog's question is written to the issue as the open question and the dialog is cancelled, not answered
 
 ### Requirement: HOME-060 Resume
-`term.sh resume <session_id>` SHALL reopen only a closed, resumable session from its recorded resume command, respect the worker cap, and ask the session to re-ask its open question.
+`term.sh resume <session_id>` SHALL reopen only a closed, resumable session from its recorded resume command, respect the worker cap, and send the session the one message HOME-122 sets.
 
 #### Scenario: Session still open
 - **WHEN** the session id is still open in a tab
@@ -174,3 +174,18 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 #### Scenario: Check that proves nothing
 - **WHEN** `send --after true` runs instead of a check that proves the login, e.g. a CLI identity call
 - **THEN** send exits 3 and nothing is typed
+
+### Requirement: HOME-122 The resume message
+`term.sh resume` SHALL send `--message <text>` when given, no message with `--silent`, and otherwise ask the session to re-ask its open question only when the run's `home-log` comment on the issue holds "Open question for the owner", else to continue where it stopped, and SHALL refuse with exit 2 when both options or an empty text are given.
+
+#### Scenario: Open question on the issue
+- **WHEN** the run's comment holds "Open question for the owner" and `term.sh resume <session_id>` runs
+- **THEN** the session is asked to re-ask its open question
+
+#### Scenario: No open question
+- **WHEN** the run's comment holds no open question
+- **THEN** the session is asked to continue where it stopped
+
+#### Scenario: A message by class
+- **WHEN** `term.sh resume <session_id> --message "The timer fired; run the next step."` runs
+- **THEN** that text is the only message sent, and `--silent` sends none

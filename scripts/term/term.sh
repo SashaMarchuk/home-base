@@ -9,7 +9,7 @@
 #   term.sh send   <target> --relay "<the owner's own words>"
 #   term.sh send   <target> --cancel-dialog
 #   term.sh park   <target> [--issue N] [--adopt] [--timeout S]
-#   term.sh resume <session_id> [--timeout S]
+#   term.sh resume <session_id> [--message TEXT | --silent]
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #
@@ -41,7 +41,9 @@
 #    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed
 #  9 park writes the open question and the resume command to the issue, then exits; it refuses
 #    when a real unsent draft exists or a turn is running (a running turn is never interrupted)
-# 10 resume reopens the recorded session id and asks it to re-ask its open question
+# 10 resume reopens the recorded session id with one message: --message TEXT replaces the default,
+#    --silent sends none; the default asks it to re-ask its open question only when the run's
+#    home-log comment on the issue holds "Open question for the owner", else to continue
 # 11 open refuses under memory pressure, when memory cannot be read, or at the worker cap
 # 12 a PID is signalled only by exact number, after its command line was checked
 # 13 no function name starts with an underscore
@@ -925,12 +927,30 @@ cmd_park() {
   echo "PARKED $T_SID issue #$issue"
 }
 
+run_has_question() { # run_has_question <repo> <n> <run id>: 0 when the run's last home-log comment holds an open owner question
+  local raw
+  raw=$(gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null) || return 2
+  printf '%s' "$raw" | jq -s -e --arg r "$3" '
+    [(add // [])[] | .body | select(startswith("<!-- home-log run=" + $r + " "))] | last // "" |
+    test("(^|\n)- Open question for the owner: ")' >/dev/null
+}
+
 cmd_resume() {
-  local sid line role
-  [ $# -ge 1 ] || die 2 "usage: resume <session_id>"
+  local sid line role issue msg="" silent=0 nopt=0
+  [ $# -ge 1 ] || die 2 "usage: resume <session_id> [--message TEXT | --silent]"
+  sid=$1; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --message) [ $# -ge 2 ] && [ -n "$2" ] || die 2 "resume: --message needs a text"; msg=$2; nopt=$((nopt + 1)); shift 2 ;;
+      --silent) silent=1; nopt=$((nopt + 1)); shift ;;
+      --timeout) shift 2 ;;   # accepted for older callers; resume does not wait
+      *) die 2 "resume: unknown option '$1'" ;;
+    esac
+  done
+  [ "$nopt" -le 1 ] || die 2 "resume: use one of --message or --silent"
   need_helpers
-  resolve "$1" any
-  [ "$T_REG" = 1 ] || die 4 "no registry entry for '$1'"
+  resolve "$sid" any
+  [ "$T_REG" = 1 ] || die 4 "no registry entry for '$sid'"
   [ -n "$T_CLOSED" ] || die 3 "session $T_SID is still open on $T_TTY"
   [ "$T_MATCH" = "$T_SID" ] || die 3 "session $T_SID was not a resumable session"
   sid=$T_SID
@@ -938,7 +958,17 @@ cmd_resume() {
   line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume')
   [ -n "$line" ] || die 3 "no resume command recorded for $sid"
   check_memory
-  line="$line $(shq "You were parked and are resumed now. Re-ask your open question with the ask tool, then continue.")"
+  if [ "$silent" = 0 ] && [ -z "$msg" ]; then
+    issue=$T_ISSUE; msg="You were resumed. Continue where you stopped."
+    if [ -n "$issue" ] && [ -n "$HOME_REPO" ]; then
+      run_has_question "$HOME_REPO" "$issue" "$sid"
+      case $? in
+        0) msg="You were parked and are resumed now. Re-ask your open question with the ask tool, then continue." ;;
+        2) note "cannot read issue #$issue; sending the continue message" ;;
+      esac
+    fi
+  fi
+  [ "$silent" = 1 ] || line="$line $(shq "$msg")"
   reg_lock || die 3 "could not lock the registry"
   if [ "$role" = worker ] && [ "$(count_live_workers)" -ge "$(cfg term.max_workers 4)" ]; then
     reg_unlock; die 3 "worker cap reached; not resuming"

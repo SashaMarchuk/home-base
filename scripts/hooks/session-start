@@ -10,6 +10,7 @@ cd "$HOME_ROOT" || exit 0
 [ "$(git config --local core.hooksPath 2>/dev/null)" = .githooks ] || git config --local core.hooksPath .githooks 2>/dev/null
 NEEDS=$(cfg labels.needs_owner needs-owner)
 echo "== home: ${HOME_REPO:-?} =="
+echo "Every request gets an issue first: scripts/home-log new --title ... then scripts/home-log start <n>, then work."
 q=$(gh api "repos/$HOME_REPO/issues?state=open&labels=$NEEDS&per_page=20" --jq '.[] | "- \(.html_url | sub(".*/issues/"; "#")) \(.title)"' 2>/dev/null)
 [ -n "$q" ] && { echo "Open owner questions ($NEEDS):"; printf '%s\n' "$q"; }
 for name in $(grep -hoE '^homes\.[A-Za-z0-9_-]+\.repo' home.config .local/config 2>/dev/null | cut -d. -f2 | sort -u); do

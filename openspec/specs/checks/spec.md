@@ -83,6 +83,13 @@ The session-start hook SHALL print a short report of open owner questions, sweep
 - **WHEN** the repo has no `home.config`
 - **THEN** the hook prints nothing
 
+### Requirement: HOME-124 Issue first, at session start
+The session-start hook SHALL print the line "Every request gets an issue first: scripts/home-log new --title ... then scripts/home-log start <n>, then work.", and the `orchestrate` and `task` skills SHALL open with that step.
+
+#### Scenario: A short ask
+- **WHEN** the owner asks for an explanation in a new session
+- **THEN** the session has seen the issue-first line and opens an issue before it answers
+
 ### Requirement: HOME-073 Checks of the base itself
 The base's own CI workflow SHALL fail when a secret is found in the tree or the history, a tracked file holds a home-directory path or an email address other than a noreply address, a tracked path is not covered by `base.manifest`, or the script tests fail, and it confirms that the home checks stay silent without `home.config`.
 

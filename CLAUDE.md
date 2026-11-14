@@ -9,7 +9,7 @@
 - A home may hand work to other homes (parent, child, peer). The topology is in `home.config` (`homes.*`).
 
 ## Hard rules
-1. Every owner request gets an issue in the home that owns it before work starts, even when this session does the work itself. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist. Until `home.config` exists, the only task is the `configure` skill, and it opens no issue.
+1. Every owner request gets an issue in the home that owns it before work starts, even when this session does the work itself. Real work starts with `scripts/home-log start <issue>` and ends with `scripts/home-log finish <issue>`. Work without an issue does not exist. Write a result to the record only after you verified it (read back the effect); never report a count you did not observe. Until `home.config` exists, the only task is the `configure` skill, and it opens no issue.
 2. One session per task. Check open claims before launching anything.
 3. Anything that needs the owner goes through the surface's ask tool, context first, recommended option first. One decision per question. A question written only in your final message is not asked: ask with the tool, then continue.
 4. Never ask what is already answered. Search `DECISIONS.md`, the issue and earlier answers first. When the recommended option is free and reversible, take it and say so; ask only what only the owner can decide. Before asking the owner to do a step, try every tool you have for it, once each, and do the read-only part yourself; never say a tool is blocked without having run it.
@@ -18,7 +18,7 @@
 7. Money: prepare everything; the owner clicks pay.
 8. Production is read-only unless the task says otherwise.
 9. Kill exact PIDs only, never by pattern.
-10. Never type into a busy tab, never answer another session's dialog on your own (relaying the owner's own words into its free-text row is allowed), never erase an unsent draft.
+10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only his exact words), never erase an unsent draft.
 11. No personal values, secrets, call copies or raw data in git. Links only.
 12. Use the GitHub account this home's config names. Never switch the CLI account.
 13. Model aliases only, never pinned versions.

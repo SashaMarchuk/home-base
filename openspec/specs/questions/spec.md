@@ -82,3 +82,21 @@ Before asking the owner to do a step, a session SHALL try every tool it has for 
 #### Scenario: A launch fails
 - **WHEN** opening a worker for a task fails
 - **THEN** the session does the read-only part of the task itself or in a subagent, and asks the owner only for what needs him
+
+### Requirement: HOME-125 Run the check before a hand-off
+Before handing a step to the owner, a session SHALL run the check that proves what is left, such as an identity call or a status command, and hand over only what that check shows is left.
+
+#### Scenario: A login step
+- **WHEN** a task needs a cloud login from the owner
+- **THEN** the session runs the identity call first and asks for the login only when the call fails
+
+### Requirement: HOME-126 Relay only on the owner's request
+A session SHALL relay the owner's words into another session only when the owner asked for that relay, and only his exact words.
+
+#### Scenario: The owner asked for a package
+- **WHEN** the owner asks only for a package and a recorded answer of his fits a waiting dialog
+- **THEN** nothing is relayed into that dialog
+
+#### Scenario: The owner asked for a relay
+- **WHEN** the owner asks to pass his answer to a session
+- **THEN** his exact words are typed, with nothing added

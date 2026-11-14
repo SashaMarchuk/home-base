@@ -327,10 +327,38 @@ check "r10 resume works" [ "$rc" = 0 ]
 NEWTTY=$(echo "$out" | awk '{ print $2 }')
 check "r10 same session id" [ "$(echo "$out" | awk '{ print $1 }')" = "$SID" ]
 check "r10 new tab" [ -n "$NEWTTY" -a "$NEWTTY" != "$OLD" ]
-check "r10 launched with --resume and the re-ask prompt" grep -q -- "--resume $SID 'You were parked.*Re-ask your open question" "$TERM_FAKE_DIR/launches"
+check "r10 no open question on the issue -> continue prompt" grep -q -- "--resume $SID 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
 check "r10 registry reopened" [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | (.closed == null and .tty == "'"$NEWTTY"'")' "$REG")" = true ]
 check "r10 resume of an open session -> refused" [ "$(rc_of ts resume "$SID")" = 3 ]
 check "r10 unknown session -> not found" [ "$(rc_of ts resume deadbeef-0000)" = 4 ]
+run_comment() { # run_comment <n> <run id> <extra line or ""> : the issue holds that run's home-log comment
+  issue "$1" -
+  jq --arg b "$(printf '<!-- home-log run=%s state=parked -->\n**home-log** . parked\n- run: %s\n%s\n' "$2" "$2" "$3")" \
+    '.comments += [{id: 3, body: $b}]' "$GH_STUB_DIR/test__home/issues/$1.json" > "$T/i.json" &&
+    mv "$T/i.json" "$GH_STUB_DIR/test__home/issues/$1.json"
+}
+parked() { # parked: a fresh session on issue 21, parked; sets SID
+  reset; new_tab --issue 21; ts park "$TTY" >/dev/null 2>&1
+}
+parked; run_comment 21 "$SID" "- Open question for the owner: Which branch?"
+check "r10 open question -> resume works" ts resume "$SID"
+check "r10 open question -> re-ask prompt" grep -q -- "--resume $SID 'You were parked.*Re-ask your open question" "$TERM_FAKE_DIR/launches"
+parked; run_comment 21 "$SID" ""; run_comment 21 other-run "- Open question for the owner: Not this run's"
+jq --arg b "<!-- home-log run=$SID state=parked -->" '.comments += [{id: 4, body: $b}]' "$GH_STUB_DIR/test__home/issues/21.json" > "$T/i.json" && mv "$T/i.json" "$GH_STUB_DIR/test__home/issues/21.json"
+check "r10 another run's question -> resume works" ts resume "$SID"
+check "r10 another run's question -> continue prompt" grep -q -- "--resume $SID 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
+parked; run_comment 21 "$SID" "- Open question for the owner: Which branch?"
+check "r10 --message replaces the default" ts resume "$SID" --message "The timer fired; run the next step."
+check "r10 --message text sent" grep -q -- "--resume $SID 'The timer fired; run the next step.'" "$TERM_FAKE_DIR/launches"
+check "r10 --message: no re-ask prompt" not grep -q "Re-ask" "$TERM_FAKE_DIR/launches"
+parked
+check "r10 --silent works" ts resume "$SID" --silent
+check "r10 --silent sends no message" grep -q -- "--resume $SID\$" "$TERM_FAKE_DIR/launches"
+parked
+check "r10 --message with --silent -> usage" [ "$(rc_of ts resume "$SID" --message x --silent)" = 2 ]
+check "r10 empty --message -> usage" [ "$(rc_of ts resume "$SID" --message "")" = 2 ]
+check "r10 unknown option -> usage" [ "$(rc_of ts resume "$SID" --loud)" = 2 ]
+check "r10 refused resume leaves the session closed" [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | .closed != null' "$REG")" = true ]
 
 # ---------------------------------------------------------------- rule 11: memory and worker cap
 reset

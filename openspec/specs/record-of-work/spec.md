@@ -139,3 +139,10 @@ The orchestrator SHALL close each gap the sweep reports with `home-log finish`, 
 #### Scenario: Dead claim
 - **WHEN** a stale claim's tab and recorded process are both gone
 - **THEN** the orchestrator resumes it or releases it with the dead run's id
+
+### Requirement: HOME-123 The record follows reality
+A session SHALL write a result to the record only after it verified that result by reading back its effect, and SHALL never report a count it did not observe.
+
+#### Scenario: A loop of writes
+- **WHEN** a session posts entries in a loop and some of them fail
+- **THEN** the record reports only the entries whose responses confirm them
