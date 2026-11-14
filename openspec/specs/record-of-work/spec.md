@@ -115,7 +115,7 @@ The session-end hook SHALL, for each claim of the ending session whose comment i
 - **THEN** issue 3 shows a `stub` comment with the resume command and carries `needs-summary`
 
 #### Scenario: Codex session
-- **WHEN** the ending session's surface is codex (`CODEX_THREAD_ID` is set, or the hook runs as `session-end --surface codex`)
+- **WHEN** the hook runs as `session-end --surface codex`, or the claim is found by `CODEX_THREAD_ID`
 - **THEN** the stub's resume command is `codex resume <id>`
 
 #### Scenario: Codex hook returns at once
