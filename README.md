@@ -36,3 +36,5 @@ In your home, the `base-update` skill fetches `base`, merges, removes base-only 
 The terminal helpers and the session-end stub support Claude Code sessions.
 
 Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git; no network; a full run takes a few minutes).
+
+Licence: MIT (see LICENSE)

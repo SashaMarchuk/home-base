@@ -26,4 +26,5 @@ base-only openspec/
 base-only .claude/commands/opsx/
 base-only .claude/skills/openspec-*
 base-only README.md
+base-only LICENSE
 base-only .github/workflows/base-checks.yml
