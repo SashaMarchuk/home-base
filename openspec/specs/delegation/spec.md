@@ -61,3 +61,10 @@ The orchestrator SHALL never also do, through its own subagents, a task it hande
 #### Scenario: An analysis goes to a child
 - **WHEN** the orchestrator hands an analysis to a child home's session
 - **THEN** it starts no subagent of its own for that analysis
+
+### Requirement: HOME-157 A hand-off to another home is recorded here
+When the orchestrator hands work to another home, it SHALL open and claim an issue in its own home first, also when the owner said to do nothing in this home, because the record and the `Parent:` link are not work.
+
+#### Scenario: The owner says to do nothing here
+- **WHEN** the owner asks to hand a task to another home and says to do nothing more in this one
+- **THEN** this home holds a claimed issue for the hand-off and the target issue's body starts with `Parent:` naming it

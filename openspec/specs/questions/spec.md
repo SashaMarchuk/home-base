@@ -177,3 +177,52 @@ When the owner is away, the orchestrator SHALL store every decision or step that
 #### Scenario: A night run ends with steps for the owner
 - **WHEN** an unattended run ends with a decision only the owner can take
 - **THEN** that decision is stored as a question on an issue, not only listed in the final message
+
+### Requirement: HOME-158 An investigation ends with its finding
+When the owner asked only to investigate or explain, the session SHALL put the finding and the fix it needs in the final status and finish the issue, never putting a fix he did not ask for to him as a question or parking the issue on one.
+
+#### Scenario: A cause is found
+- **WHEN** an investigation the owner asked for finds the cause and a possible fix
+- **THEN** the final status names the cause and the fix, the issue is finished and no question about the fix is asked
+
+### Requirement: HOME-159 A message to a tab carries only what is new
+A message the orchestrator sends to another tab SHALL carry only what that tab does not have yet, read from its log or screen first, and no instruction the owner did not give.
+
+#### Scenario: A tab already has a rule
+- **WHEN** a tab's log shows it already received an owner rule
+- **THEN** the next message to that tab does not repeat it and adds no instruction of its own
+
+### Requirement: HOME-160 A draft is prepared, not offered
+The session SHALL never ask the owner whether to prepare a draft; it SHALL prepare the draft and ask for the send with the exact text shown.
+
+#### Scenario: A message is the next step
+- **WHEN** the next step is a message that needs the owner's yes
+- **THEN** the question that asks for the send shows the drafted text and no earlier question asks whether to draft it
+
+### Requirement: HOME-161 Counts in a result add up
+Counts in a result SHALL come from one source and add up to the total stated.
+
+#### Scenario: Notices split by cause
+- **WHEN** a result splits seven notices by cause
+- **THEN** the parts add up to seven and come from the same source
+
+### Requirement: HOME-162 A login request carries its command
+A login request to the owner SHALL name the service, the profile by name and one pasteable `! <login command>` taken from the home's login how-to, in the question text, with options that never replace that command, and after his confirmation the session SHALL run the identity check before anything else.
+
+#### Scenario: A cloud login has expired
+- **WHEN** an identity check fails on an expired login
+- **THEN** the question names the service and profile and holds the pasteable login command, and the identity check runs right after he confirms
+
+### Requirement: HOME-163 A re-check names its limits
+After a re-check, the session SHALL name what the check cannot prove.
+
+#### Scenario: An account is re-checked
+- **WHEN** the session re-checks which account a profile uses
+- **THEN** its report names what that check cannot prove
+
+### Requirement: HOME-164 A standing rule inside a request is recorded
+A standing rule the owner states inside another request SHALL be recorded with the `decide` skill in that task.
+
+#### Scenario: A rule in passing
+- **WHEN** the owner states a rule for all future cases while asking for something else
+- **THEN** that task appends the rule to `DECISIONS.md` through the `decide` skill

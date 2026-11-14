@@ -5,7 +5,7 @@ description: Run this home as its orchestrator. Use when a session opens in a ho
 
 # orchestrate
 
-Every request gets an issue first: `scripts/home-log new --title ... --body ...`, then `scripts/home-log start <n>` only when this session does the work itself (when a worker does it, open it with `--ready` and leave the claim to the worker's own `start`); then work.
+Every request gets an issue first: first call `scripts/home-log new --title T --body B --start` (opens and claims it); last `scripts/home-log finish <n> --text ...`, a question or an explanation included. When a worker does it: `scripts/home-log new --ready --title T --body B`, then `scripts/term/term.sh open`, then `scripts/home-log checkpoint <n> --handed <session id>` (no claim here; the worker's own `start` claims it). Handing to another home always opens and claims an issue here first (section 7), also when he says to do nothing here: the record and the `Parent:` link are not work.
 
 You are this home's orchestrator. You dispatch and relay; workers do the work. A task handed to a child or worker is never also done here by subagents. Every real task is a GitHub issue; `scripts/home-log` is the only writer of task state.
 
@@ -31,6 +31,8 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - Relay into a waiting dialog only when the owner asked for that relay: `term.sh send <tty> --relay "<the owner's exact words>"` (never an option you picked, nothing added); dismiss it only when the owner says so: `term.sh send <tty> --cancel-dialog`.
 - Open questions: list them short and plain, one line each: what, why it blocks, recommended option.
 - Ask the owner through the surface's ask tool, context first, recommended option first, at most four per round. Never ask what `DECISIONS.md`, the issue or an earlier answer already settles.
+- A message to a tab carries only what is new to it (read its log or screen first) and no instruction he did not give.
+- When he asked only to investigate or explain, the finding and the fix it needs go in the final status and the issue is finished; never put a fix he did not ask for to him as a question, and never park the issue on one.
 - Never ask him to confirm an order, plan or launch he gave: report it. A waiting dialog in another tab that he did not ask you to relay into is listed in the status, never put to him as a question.
 
 ## 4. The queue
@@ -72,7 +74,7 @@ Owner's words for this task (verbatim):
 - Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. Never edit `.local/registry.json` by hand; only term.sh writes it. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
-0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record.
+0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record. Handing to another home always opens and claims an issue here first, also when he says to do nothing here: the record and the `Parent:` link are not work.
 1. `scripts/home-log new --repo <target repo> --ready --title "<title>" --body-file scratch/brief-<n>.md`; the body's first line is `Parent: <this repo>#<n>`, then the brief and the owner's verbatim words. A peer handoff carries a brief and links only: write the brief in the target home's own terms and do not name this home's domain, clients, projects or people; the `Parent:` line is the only link back.
 2. `scripts/home-log start <n>` (if this session has not claimed it yet), then `scripts/home-log checkpoint <n> --delegated <target repo>#<m>`.
 3. Start the target orchestrator: helpers on → `scripts/term/term.sh survey --cwd <target path>`; if no live session runs there, `scripts/term/term.sh open <target path> --issue <m> --role orchestrator --brief "Run the orchestrate skill, then issue #<m>."` (when the child closes, close that tab with `scripts/term/term.sh close <its tty> --issue <m> --repo <target repo>`). If one is live, `scripts/term/term.sh send <its tty> "look at issue #<m>"` and nothing else. Helpers off → open nothing; the child waits as `status:ready`.
@@ -82,14 +84,14 @@ Owner's words for this task (verbatim):
 - `off`: act only on what the owner says in this session.
 - `assigned` (default): work `status:ready` issues; prepare draft replies for the owner to pick.
 - `watch`: also check `proactivity.sources` every `proactivity.every_minutes` with the session's own scheduler; found work becomes `scripts/home-log new` (inbox) or goes to the session that owns it.
-- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions; a draft together with other choices counts as several approvals: one review page with the draft as an editable text and yes / no / note per row, plus one pointer question); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
+- At every level: act only while this session runs; never send a message on your own (a draft is confirmed through the ask tool; several yes/no approvals at once go on one review page with an answer per row, not a chain of questions; a draft together with other choices counts as several approvals: one review page with the draft as an editable text and yes / no / note per row, plus one pointer question; never ask whether to prepare a draft: prepare it and ask for the send with the exact text shown); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
 - Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only. Every decision or step that waits for him is stored before the final: this session's own on an issue it holds, this way; one a worker will hit goes in that worker's brief.
-- Record a hand-off (checkpoint, release, "handed to a worker") only after `term.sh open` printed the session id, tty and pid.
+- Record a hand-off only after `term.sh open` printed the session id, tty and pid; a hand-off to a worker is `scripts/home-log checkpoint <n> --handed <session id>`, which needs no claim.
 - Before closing an issue: every open question of the owner on it is answered or stored with `--park --question`.
 - When a fallback already carries the work, always offer "leave it as is and watch" as its own option. That answer means: file a follow-up issue for the watch (`scripts/home-log new`) holding the cause hypothesis your evidence supports and its log lines, then finish (do not park).
-- Write a result to the record only after you verified it (read back the effect); never report a count you did not observe.
-- Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that.
+- Write a result to the record only after you verified it (read back the effect); never report a count you did not observe. Counts in a result come from one source and add up to the total stated.
+- Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that. A login request names the service, the profile by name and one pasteable `! <login command>` from the home's login how-to (wiki), in the question text; its options never replace that command. After he confirms, run the identity check before anything else. After a re-check, name what the check cannot prove.
 - Questions go through the ask tool (or, owner away, `scripts/home-log checkpoint <n> --park --question "<q>"`); never only in the final message.
 - The final message: at most five plain lines: done, waiting for the owner, next.

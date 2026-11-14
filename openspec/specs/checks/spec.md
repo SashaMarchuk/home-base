@@ -84,7 +84,7 @@ The session-start hook SHALL print a short report of open owner questions, sweep
 - **THEN** the hook prints nothing
 
 ### Requirement: HOME-124 Issue first, at session start
-The session-start hook SHALL print the line "Every request gets an issue first: scripts/home-log new --title ... then scripts/home-log start <n>, then work.", and the `orchestrate` and `task` skills SHALL open with that step.
+The session-start hook SHALL print the line "Every request gets an issue first: first call scripts/home-log new --title T --body B --start (opens and claims it); last scripts/home-log finish <n> --text ..., a question or an explanation included.", and the `orchestrate` and `task` skills SHALL open with that step.
 
 #### Scenario: A short ask
 - **WHEN** the owner asks for an explanation in a new session

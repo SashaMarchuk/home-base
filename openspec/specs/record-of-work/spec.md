@@ -51,14 +51,14 @@ Every task of a home is a GitHub issue, and `scripts/home-log` is the only write
 - **THEN** it exits 0 and reports that this run already holds the claim
 
 ### Requirement: HOME-004 Checkpoints and pauses
-`home-log checkpoint <n>` SHALL rewrite the run's comment only while it is `active`, `parked`, `blocked` or `delegated`, exiting 5 when it is `final`, `released` or `stub`, keep its earlier text, question and delegation unless replaced, and with `--park`, `--blocked <reason>` or `--delegated <repo>#<m>` set the state and the matching `status:` label and remove the local run file.
+`home-log checkpoint <n>` SHALL rewrite the run's comment only while it is `active`, `parked`, `blocked` or `delegated` (or, with `--handed`, post it when the run has none), exiting 5 when it is `final`, `released` or `stub`, keep its earlier text, question and delegation unless replaced, and with `--park`, `--blocked <reason>` or `--delegated <repo>#<m>` set the state and the matching `status:` label and remove the local run file.
 
 #### Scenario: Park
 - **WHEN** `home-log checkpoint 7 --park` runs
 - **THEN** the comment state is `parked`, the issue carries `status:parked` and the local run file is removed
 
 #### Scenario: Checkpoint without a claim
-- **WHEN** a run with no comment on the issue writes a checkpoint
+- **WHEN** a run with no comment on the issue writes a checkpoint without `--handed`
 - **THEN** it exits 2 and says to run `home-log start` first
 
 #### Scenario: Checkpoint after the run ended
@@ -168,3 +168,33 @@ When the orchestrator hands a request's issue to a worker, it SHALL open the iss
 #### Scenario: A task goes to a worker tab
 - **WHEN** the orchestrator opens issue 5 and launches a worker for it
 - **THEN** the orchestrator has not claimed issue 5 and the worker's `home-log start 5` succeeds
+
+### Requirement: HOME-155 Open and claim in one call
+`home-log new --start` SHALL open the issue (or take the open issue with exactly the same title), print only its number on stdout, and then claim it for the run with the same logic and exit codes as `home-log start`, refusing with exit 2 when combined with `--ready`, `--status` or the label `dreams`, while `home-log new` without `--start` writes no comment and claims nothing.
+
+#### Scenario: One call opens and claims
+- **WHEN** `home-log new --title T --body B --start` runs and no open issue has that title
+- **THEN** stdout holds only the new number, the issue carries `status:claimed` and the run's one `active` comment, and the run is recorded in `.local/runs/`
+
+#### Scenario: The same title is held by another run
+- **WHEN** `home-log new --start` runs with the title of an open issue on which another run holds an active comment
+- **THEN** stdout holds that issue's number, no comment is added and the script exits 3
+
+#### Scenario: A forgotten finish
+- **WHEN** a session that ran `home-log new --start` ends without `finish`
+- **THEN** the session-end hook turns its comment into a stub and adds `needs-summary`
+
+#### Scenario: Plain new
+- **WHEN** `home-log new --title T --body B` runs without `--start`
+- **THEN** the issue is `status:inbox` with no comment and no run recorded
+
+### Requirement: HOME-156 A hand-off to a worker is recorded without a claim
+`home-log checkpoint <n> --handed <session id>` SHALL write the run's comment as `delegated` with the session id in its own `- handed:` line, posting it when the run has no comment yet, change no label, record no run in `.local/runs/`, refuse with exit 2 an id holding characters other than letters, digits, dot, underscore and hyphen or a combination with `--park`, `--blocked` or `--delegated`, and keep the id out of the sensitive-text check.
+
+#### Scenario: The orchestrator hands an issue to a worker
+- **WHEN** the orchestrator runs `home-log new --ready`, opens a worker tab and runs `home-log checkpoint 5 --handed <session id>` without having claimed issue 5
+- **THEN** issue 5 holds one `delegated` comment of the orchestrator's run with the `- handed:` line, keeps `status:ready`, and the worker's `home-log start 5` exits 0
+
+#### Scenario: Invalid session id
+- **WHEN** `--handed "a b"` is passed
+- **THEN** the script exits 2 and writes nothing

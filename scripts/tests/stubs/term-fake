@@ -140,4 +140,4 @@ be_pid_tty() { cat "$TERM_FAKE_DIR/proc/$1/tty" 2>/dev/null; }
 be_pid_cwd() { cat "$TERM_FAKE_DIR/proc/$1/cwd" 2>/dev/null; }
 be_kill() { echo "$1" >> "$TERM_FAKE_DIR/kills"; rm -rf "$TERM_FAKE_DIR/proc/$1"; }
 be_mem_free() { cat "$TERM_FAKE_DIR/mem_free" 2>/dev/null || echo 80; }
-be_uuid() { printf '%08x-0000-4000-8000-%012x\n' "$$" "$RANDOM$RANDOM"; }
+be_uuid() { uuidgen | tr 'A-Z' 'a-z'; }

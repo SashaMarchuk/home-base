@@ -24,6 +24,7 @@ CARD="4111""1111""1111""1111"
 PHONE="+44 20""79 46 0""958"
 IBAN="GB82WEST""12345698765432"
 DOC="passport AB12""3456"
+LUHNID="00005498-0000""-4000-8000-""00000ed31993"   # a session id whose digits pass the card check
 
 # A scratch home: a copy of the scripts plus a config, in its own git repo.
 mkhome() { # mkhome <dir> [repo]
@@ -128,6 +129,42 @@ if sel home-log; then
   "$HL" start 6 --run-id codex-x >/dev/null
   echo '{}' | env -u CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID=codex-x "$H/scripts/hooks/session-end"
   gh api repos/test/hl/issues/6/comments --jq '.[0].body' | grep -q 'codex resume codex-x' && ok || bad "session-end in codex must write a codex resume command"
+  # new --start: opens and claims in one call; stdout is only the number
+  n7=$("$HL" new --title "One call" --body "b" --start --run-id s7 2>/dev/null); rc=$?
+  [ "$rc" = 0 ] && [ "$n7" = 7 ] && ok || bad "new --start must exit 0 and print only the number (rc=$rc out='$n7')"
+  [ "$(gh api repos/test/hl/issues/7 --jq '[.labels[].name]|join(",")')" = status:claimed ] && ok || bad "new --start must leave status:claimed"
+  gh api repos/test/hl/issues/7/comments --jq '.[0].body' | head -1 | grep -qx '<!-- home-log run=s7 state=active -->' && ok || bad "new --start must post this run's active comment"
+  [ "$(sed -n 's/^run=//p' "$H/.local/runs/7" 2>/dev/null)" = s7 ] && ok || bad "new --start must record the run file"
+  n7b=$("$HL" new --title "One call" --body "b" --start 2>/dev/null); rc=$?
+  [ "$rc" = 0 ] && [ "$n7b" = 7 ] && [ "$(gh api repos/test/hl/issues/7/comments --jq length)" = 1 ] && ok || bad "new --start again (stored run) must reuse the issue and the comment (rc=$rc out='$n7b')"
+  n7c=$("$HL" new --title "One call" --body "b" --start --run-id intruder 2>/dev/null); rc=$?
+  [ "$rc" = 3 ] && [ "$n7c" = 7 ] && [ "$(gh api repos/test/hl/issues/7/comments --jq length)" = 1 ] && ok || bad "new --start on an issue another run holds must print the number and exit 3 (rc=$rc out='$n7c')"
+  echo '{"session_id":"s7","cwd":"/x"}' | "$H/scripts/hooks/session-end"
+  gh api repos/test/hl/issues/7/comments --jq '.[0].body' | head -1 | grep -q 'state=stub' && ok || bad "a forgotten finish after new --start must become a stub"
+  expect "new --start refuses --ready" 2 "$HL" new --title "x2" --body "b" --start --ready
+  expect "new --start refuses --status" 2 "$HL" new --title "x2" --body "b" --start --status inbox
+  expect "new --start refuses the dreams label" 2 "$HL" new --title "x2" --body "b" --start --label dreams
+  expect "start refuses --start" 2 "$HL" start 7 --start
+  "$HL" new --title "Plain new" --body "b" >/dev/null
+  [ "$(gh api repos/test/hl/issues/8/comments --jq length)" = 0 ] && [ "$(gh api repos/test/hl/issues/8 --jq '[.labels[].name]|join(",")')" = status:inbox ] && [ ! -f "$H/.local/runs/8" ] \
+    && ok || bad "plain new must stay status:inbox with no comment and no run file"
+  # checkpoint --handed: the parent records the hand-off without a claim; the worker's start still claims
+  "$HL" new --title "Handed" --body "b" --ready >/dev/null
+  expect "checkpoint without a claim still refused" 2 "$HL" checkpoint 9 --run-id par --text "x"
+  expect "checkpoint --handed with no claim" 0 "$HL" checkpoint 9 --run-id par --handed $LUHNID --text "Handed to a worker."
+  b9=$(gh api repos/test/hl/issues/9/comments --jq '.[0].body')
+  printf '%s\n' "$b9" | head -1 | grep -qx '<!-- home-log run=par state=delegated -->' && printf '%s\n' "$b9" | grep -qx -- "- handed: $LUHNID" \
+    && ! printf '%s\n' "$b9" | grep -q '^- delegated:' && ok || bad "--handed must write a delegated comment with the id in its own field: $b9"
+  [ "$(gh api repos/test/hl/issues/9 --jq '[.labels[].name]|join(",")')" = status:ready ] && [ ! -f "$H/.local/runs/9" ] && ok || bad "--handed must change no label and record no run"
+  expect "checkpoint --handed again: same comment" 0 "$HL" checkpoint 9 --run-id par --handed sess-w1
+  [ "$(gh api repos/test/hl/issues/9/comments --jq length)" = 1 ] && ok || bad "--handed twice must keep one comment of the run"
+  expect "the worker's start after --handed" 0 "$HL" start 9 --run-id worker1
+  expect "the worker's finish after --handed" 0 "$HL" finish 9 --run-id worker1 --text "Done."
+  expect "checkpoint --handed after the run ended refused" 5 "$HL" checkpoint 4 --run-id orch --handed sess-z
+  expect "--handed refuses a bad id" 2 "$HL" checkpoint 9 --run-id par --handed "a b"
+  expect "--handed refuses --park" 2 "$HL" checkpoint 9 --run-id par --handed sess-w1 --park
+  expect "--handed refuses --delegated" 2 "$HL" checkpoint 9 --run-id par --handed sess-w1 --delegated "test/child#1"
+  expect "--handed belongs to checkpoint" 2 "$HL" finish 9 --run-id par --handed sess-w1
 fi
 
 # ---------------------------------------------------------------- sweep
