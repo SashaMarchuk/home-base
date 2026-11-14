@@ -12,7 +12,8 @@ Read only. No tool beyond `gh` reads and the files of this home.
 3. One read per repo, open issues:
    `gh api "repos/<repo>/issues?state=open&per_page=100" --jq '.[] | select(.pull_request|not) | [.number, .title, ([.labels[].name]|join(","))] | @tsv'`
    (or one `gh api -X GET search/issues -f q='is:open is:issue repo:<a> repo:<b>'` across all of them).
-4. Skip issues labelled `dreams`. Group, in this order, one line per issue (`<repo short>#<n> <title>`, plus why when it needs the owner):
+   Plus, per repo, one read for an open Dreams PR: `gh api "repos/<repo>/issues?state=open&labels=dreams" --jq '.[] | select(.pull_request) | [.number, .title] | @tsv'`.
+4. Skip issues labelled `dreams` (an open PR labelled `dreams` goes under **Needs you**: its proposals wait for the owner's review). Group, in this order, one line per issue (`<repo short>#<n> <title>`, plus why when it needs the owner):
    - **Needs you**: owner label set. Say the question in plain words.
    - **Only you can do**: `status:blocked` whose reason is an owner action (pay, sign in, approve).
    - **Running**: `status:claimed`.
