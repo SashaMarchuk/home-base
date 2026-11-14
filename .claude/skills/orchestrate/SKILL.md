@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run this home as its orchestrator. Use when a session opens in a home and the owner says "run the queue", "orchestrate", "what's next", "start the tasks", "launch workers", "park", "resume", "close the finished tabs", "hand this to the other home", or sets a limit ("soft stop", "hard stop"). Status first, then repair, base update, the queue, questions, delegation, limits and proactivity.
+description: Run this home as its orchestrator. Use when a session opens in a home and the owner says "run the queue", "orchestrate", "what's next", "start the tasks", "launch workers", "park", "resume", "close the finished tabs", "freeze", "thaw", "close <a group or window>", "hand this to the other home", or sets a limit ("soft stop", "hard stop"). Status first, then repair, base update, the queue, questions, delegation, limits and proactivity.
 ---
 
 # orchestrate
@@ -35,6 +35,8 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - When the owner asked only to investigate or explain, the finding and the fix it needs go in the final status and the issue is finished; never put a fix the owner did not ask for to the owner as a question, and never park the issue on one.
 - When one step of the owner's ask waits on the owner, carry on with the later steps that do not depend on it.
 - Never ask the owner to confirm an order, plan or launch the owner gave: report it. A waiting dialog in another tab that the owner did not ask you to relay into is listed in the status, never put to the owner as a question.
+- Closing sessions: close or freeze only the sessions the owner named, and ask once before closing or freezing several at once. Never offer to freeze every session.
+- (Inactive until the real-tab check of freeze and thaw has passed; until then the line above applies.) A freeze, thaw or close whose scope the owner named (all, a group, a window, or listed sessions) runs without a confirmation; only a scope the owner left vague ("close the extra ones") gets one question listing the groups and windows with their counts, recommended option first.
 
 ## 4. The queue
 - When the owner asks for a separate session or terminal for a task, open it (`scripts/term/term.sh open`) with a brief; never do that task in this session instead, and never hand the launch back to the owner.
@@ -42,6 +44,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - Kill only PIDs this home launched or the owner named, by exact number.
 - "set profile <orchestrator|worker> <name>" (or "use profile <name> for workers"): run `scripts/configure --set launch.profile.<role>=<name>` and confirm in one line; "show profiles": `scripts/configure --get launch.profile.orchestrator --get launch.profile.worker`.
 - A cap the owner states ("3-4 sessions") counts every tab this session opens, child orchestrators included.
+- Groups and windows: a tab opens in its group's window (`term.groups`, `term.group.<g>.cwd|home` in `.local/config` only; `scripts/term/term.sh open <dir> --group <g>` when the folder does not say it). Never write group keys into `home.config` or any committed file.
 - Never change `term.max_workers` yourself; only the owner sets it. At the cap, queue the rest with a stated reason. A child orchestrator's brief says how many tabs it may open, never "launch all".
 Pick `status:ready` issues, oldest first, one worker per issue. Before launching, check open claims (`status:claimed`) and `scripts/term/term.sh survey` so no task gets two sessions.
 
@@ -67,22 +70,24 @@ Owner's words for this task (verbatim):
 ## 5. Limits (`scripts/limits`; the owner's live word is written to `.local/limits` as `mode=soft|hard` and optional `until=<ISO time>`)
 - `ok`: work normally.
 - `soft`: start nothing new; running tasks finish.
-- `hard`: park every running task (`scripts/term/term.sh park <tty|session id> --issue <n>` per tab; it writes the resume command and open question to the issue) and start nothing. `park` refuses a tab in the middle of a turn (it never interrupts one): re-check that tab and park it as soon as its turn ends.
-- After the reset time passes, while this session runs, re-check and resume parked tasks (`term.sh resume <session id>`).
+- `hard`: freeze the tabs this home opened (`scripts/term/term.sh freeze <their ttys> --hard`; the ttys are the `registered` tabs of `term.sh survey --json`) and start nothing. Freeze saves every resume line and open question to a `Freeze <id>` issue before any key, closes idle tabs and keeps a tab running while its turn runs or a real draft is in its box: re-run `scripts/term/term.sh freeze --continue <id>` as soon as that turn ends.
+- After the reset time passes, while this session runs, re-check and reopen them (`scripts/term/term.sh thaw <id>`; a parked task: `term.sh resume <session id>`).
 - Keeping the Mac awake: only `caffeinate -w <pid of this session>`; never a timed or orphan caffeinate.
 - A task brief's `Limits: <mode>` line applies to that worker: its session runs `scripts/limits` with `LIMITS_MODE=<mode>`.
 
-## 6. Park, resume, close
+## 6. Park, resume, close, freeze, thaw
 - Park: `scripts/term/term.sh park <tty|session id> --issue <n>` (refuses on an unsent draft; then leave it). Never type into a busy tab or answer another session's dialog.
 - Resume: `scripts/term/term.sh resume <session id>`, message by class: by default it re-asks the run's open question for the owner, else says continue; `--message "<text>"` for another class (a timer, an answer to act on), `--silent` for none. When a resumed session had stopped at a question, the finish text quotes that question with its session; while its menu is not seen again (`term.sh state` or the screen), finish with `--review`, not close.
 - Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. Never edit `.local/registry.json` by hand; only term.sh writes it. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
+- Freeze (close unfinished sessions and keep their state): `scripts/term/term.sh freeze <tty|session id>... | --group <g> | --window <group|window id> [--soft | --hard | --soft-then-hard]`. "Pause them" is `--soft` (a prompt asks each session to write its checkpoint and stop); "hard stop" or "close them now" is `--hard`; no mode named takes `term.freeze.default_mode`. Run `--dry-run` first when the scope is more than one session and show its plan. Freeze never touches this session, other tools' tabs or a session it could not reopen, never answers a dialog (one Esc after its question is saved), never clears a real draft and never interrupts a running turn: such tabs are listed as kept; re-run `freeze --continue <id>`. Never set `term.freeze.drafts` or `term.freeze.busy`.
+- Thaw: `scripts/term/term.sh thaw latest` (or `thaw <id>`, `--group <g>`, session ids). It reopens each session in its group's window with one message and skips sessions that are live already; a stop for memory names `thaw --continue <id>`. A reopened session's dialog (such as "resume this conversation?") is listed for the owner, never answered.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
 0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record. Handing to another home always opens and claims an issue here first, also when the owner says to do nothing here: the record and the `Parent:` link are not work.
 1. `scripts/home-log new --repo <target repo> --ready --title "<title>" --body-file scratch/brief-<n>.md`; the body's first line is `Parent: <this repo>#<n>`, then the brief and the owner's verbatim words. A peer handoff carries a brief and links only: write the brief in the target home's own terms and do not name this home's domain, clients, projects or people; the `Parent:` line is the only link back.
 2. `scripts/home-log start <n>` (if this session has not claimed it yet), then `scripts/home-log checkpoint <n> --delegated <target repo>#<m>`.
 3. Start the target orchestrator: helpers on → `scripts/term/term.sh survey --cwd <target path>`; if no live session runs there, `scripts/term/term.sh open <target path> --issue <m> --role orchestrator --brief "Run the orchestrate skill, then issue #<m>."` (when the child closes, close that tab with `scripts/term/term.sh close <its tty> --issue <m> --repo <target repo>`). If one is live, `scripts/term/term.sh send <its tty> "look at issue #<m>"` and nothing else. Helpers off → open nothing; the child waits as `status:ready`.
-4. A question the child raised lives on the child's issue only: the parent's status links it and never copies it onto the parent issue. Never claim, checkpoint, finish or label the child's issue, and never tell a worker to claim an issue this session already claimed; only read the child. When it closes, the sweep reports it (step 2).
+4. A question the child raised lives on the child's issue only: the parent's status links it and never copies it onto the parent issue. Never claim, checkpoint, finish or label the child's issue, and never tell a worker to claim an issue this session already claimed; only read the child. When it closes, the sweep reports it (step 2). A freeze run's own `Freeze <id>` issue in a related home is not a child's task issue: the freeze and thaw it belongs to create, claim, checkpoint and finish it there.
 
 ## 8. Proactivity (`proactivity.mode`)
 - `off`: act only on what the owner says in this session.

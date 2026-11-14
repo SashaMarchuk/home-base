@@ -1,6 +1,6 @@
 ---
 name: status
-description: Short, plain status of this home and its child homes. Use when the owner asks "status", "what's going on", "what needs me", "what's running", "what can I close", or at the start of orchestration.
+description: Short, plain status of this home and its child homes. Use when the owner asks "status", "what's going on", "what needs me", "what's running", "what can I close", "what is frozen", or at the start of orchestration.
 ---
 
 # status
@@ -17,6 +17,7 @@ Read only. No tool beyond `gh` reads and the files of this home.
    - **Needs you**: owner label set. Say the question in plain words.
    - **Only you can do**: `status:blocked` whose reason is an owner action (pay, sign in, approve).
    - **Running**: `status:claimed`.
+   - **Frozen**: open issues whose title starts with `Freeze ` (one per freeze of sessions). One line each: how many sessions it holds and how many of them hold an open question of the owner (the rows of its table whose open question is not `-`). Not listed again under Parked.
    - **Parked**: `status:parked`.
    - **Can close**: `status:review`, and `needs-summary`.
    - **Ready**: count of `status:ready`; **Inbox**: count of `status:inbox`.
