@@ -165,6 +165,26 @@ if sel home-log; then
   expect "--handed refuses --park" 2 "$HL" checkpoint 9 --run-id par --handed sess-w1 --park
   expect "--handed refuses --delegated" 2 "$HL" checkpoint 9 --run-id par --handed sess-w1 --delegated "test/child#1"
   expect "--handed belongs to checkpoint" 2 "$HL" finish 9 --run-id par --handed sess-w1
+  # Codex's id wins over inherited Claude variables (a Codex run started from a Claude session)
+  n10=$(env CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=claude-id CODEX_THREAD_ID=codex-id "$HL" new --title "From codex" --body b --start 2>/dev/null)
+  b10=$(gh api repos/test/hl/issues/10/comments --jq '.[0].body')
+  [ "$n10" = 10 ] && [ "$(sed -n 's/^run=//p' "$H/.local/runs/10")" = codex-id ] && printf '%s\n' "$b10" | grep -q '^- runner: .* · codex · ' \
+    && printf '%s\n' "$b10" | grep -q 'codex resume codex-id' && ok || bad "CODEX_THREAD_ID must win run id and surface over Claude variables: $b10"
+  n11=$(env CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=claude-id "$HL" new --title "From claude" --body b --start 2>/dev/null)
+  [ "$(sed -n 's/^run=//p' "$H/.local/runs/11")" = claude-id ] && gh api repos/test/hl/issues/11/comments --jq '.[0].body' | grep -q '^- runner: .* · claude-code · ' \
+    && ok || bad "without CODEX_THREAD_ID the Claude session id and surface stay"
+  # session-end --surface codex returns at once with a slow gh; the stub still lands
+  mkdir -p "$T/slowbin"; printf '#!/bin/sh\nsleep 2\nexec "%s/scripts/tests/stubs/gh" "$@"\n' "$SRC" > "$T/slowbin/gh"; chmod +x "$T/slowbin/gh"
+  ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+  "$HL" new --title "Codex ends" --body b --start --run-id cx-12 >/dev/null 2>&1
+  t0=$(ms); out=$(echo '{"session_id":"cx-12","cwd":"/x","hook_event_name":"SessionEnd"}' | PATH="$T/slowbin:$PATH" "$H/scripts/hooks/session-end" --surface codex 2>&1); t1=$(ms)
+  [ $((t1 - t0)) -lt 1500 ] && [ -z "$out" ] && ok || bad "session-end --surface codex must return at once ($((t1 - t0)) ms, output '$out')"
+  i=0; until gh api repos/test/hl/issues/12/comments --jq '.[0].body' | head -1 | grep -q 'state=stub' || [ $i -ge 30 ]; do sleep 1; i=$((i + 1)); done
+  gh api repos/test/hl/issues/12/comments --jq '.[0].body' | grep -q 'cd /x && codex resume cx-12' && ok || bad "the detached session-end must still write the codex stub"
+  "$HL" new --title "Claude ends" --body b --start --run-id cl-13 >/dev/null 2>&1
+  t0=$(ms); echo '{"session_id":"cl-13","cwd":"/x"}' | PATH="$T/slowbin:$PATH" "$H/scripts/hooks/session-end" >/dev/null 2>&1; t1=$(ms)
+  [ $((t1 - t0)) -ge 2000 ] && gh api repos/test/hl/issues/13/comments --jq '.[0].body' | grep -q 'claude --resume cl-13' \
+    && ok || bad "session-end without --surface stays in the foreground and writes a claude resume command ($((t1 - t0)) ms)"
 fi
 
 # ---------------------------------------------------------------- sweep

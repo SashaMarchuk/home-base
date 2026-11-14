@@ -91,8 +91,10 @@ scan_text() { # scan_text <text>; exits 4 on a hit
 }
 
 # --- run identity ---
-if [ -n "${CLAUDECODE:-}" ]; then SURFACE=claude-code
-elif [ -n "${CODEX_THREAD_ID:-}${CODEX_SANDBOX:-}${CODEX_HOME:-}" ]; then SURFACE=codex
+# A Codex run started from inside a Claude Code session inherits the Claude variables: Codex's id wins.
+if [ -n "${CODEX_THREAD_ID:-}" ]; then SURFACE=codex
+elif [ -n "${CLAUDECODE:-}" ]; then SURFACE=claude-code
+elif [ -n "${CODEX_SANDBOX:-}${CODEX_HOME:-}" ]; then SURFACE=codex
 else SURFACE=other; fi
 CWD_SHOWN=${PWD/#$HOME/\~}
 HOSTN=$(hostname -s 2>/dev/null || echo host)
@@ -106,8 +108,8 @@ resolve_run() { # resolve_run <start|other>
   STORED=""; [ -n "$N" ] && STORED=$(stored_run)
   if [ -n "$RUN_ARG" ]; then RUN=$RUN_ARG
   elif [ "$1" != start ] && [ -n "$STORED" ]; then RUN=$STORED
-  elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then RUN=$CLAUDE_CODE_SESSION_ID
   elif [ -n "${CODEX_THREAD_ID:-}" ]; then RUN=$CODEX_THREAD_ID
+  elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then RUN=$CLAUDE_CODE_SESSION_ID
   elif [ -n "$STORED" ]; then RUN=$STORED
   else RUN=$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z'); [ -n "$RUN" ] || RUN="run-$$-$(date +%s)"; fi
   case "$RUN" in *[!A-Za-z0-9._-]*) die 2 "run id may hold only letters, digits, . _ -" ;; esac

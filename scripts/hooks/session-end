@@ -2,23 +2,43 @@
 # SessionEnd hook. One case only: this session holds a claim (.local/runs/<n>)
 # whose comment is still active and has no final text. It rewrites that comment
 # as a stub (session id, resume command) and adds needs-summary. Never blocks.
-# Supports Claude Code sessions (its SessionEnd hook: session_id on stdin or
-# CLAUDE_CODE_SESSION_ID). When CODEX_THREAD_ID is set (the surface is codex),
-# the resume command is "codex resume <id>".
+#   session-end                  Claude Code (session_id on stdin or CLAUDE_CODE_SESSION_ID)
+#   session-end --surface codex  Codex (.codex/hooks.json): the resume command is
+#                                "codex resume <id>", and the GitHub work runs in a
+#                                detached child so the hook returns at once (Codex
+#                                stops a SessionEnd hook after a few seconds).
+# Without --surface, a set CODEX_THREAD_ID also means codex (resume command only).
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
+SURFACE=""
+[ "${1:-}" = --surface ] && SURFACE=${2:-}
 IN=$(cat 2>/dev/null)
 SID=$(printf '%s' "$IN" | jq -r '.session_id // empty' 2>/dev/null)
-[ -n "$SID" ] || SID=${CLAUDE_CODE_SESSION_ID:-}
-[ -n "$SID" ] || SID=${CODEX_THREAD_ID:-}
+if [ "$SURFACE" = codex ]; then
+  [ -n "$SID" ] || SID=${CODEX_THREAD_ID:-}
+else
+  [ -n "$SID" ] || SID=${CLAUDE_CODE_SESSION_ID:-}
+  [ -n "$SID" ] || SID=${CODEX_THREAD_ID:-}
+fi
 [ -n "$SID" ] || exit 0
 CWD=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$CWD" ] || CWD=$PWD
-RESUME_CMD="claude --resume"; [ -n "${CODEX_THREAD_ID:-}" ] && RESUME_CMD="codex resume"
-for f in "$HOME_ROOT"/.local/runs/*; do
-  [ -f "$f" ] || continue
-  [ "$(sed -n 's/^run=//p' "$f")" = "$SID" ] || continue
-  repo=$(sed -n 's/^repo=//p' "$f"); n=${f##*/}; n=${n##*_}
-  "$HERE/home-log" stub "$n" --repo "$repo" --run-id "$SID" --resume "cd ${CWD/#$HOME/~} && $RESUME_CMD $SID" >/dev/null 2>&1 || true
-done
+RESUME_CMD="claude --resume"
+{ [ "$SURFACE" = codex ] || { [ -z "$SURFACE" ] && [ -n "${CODEX_THREAD_ID:-}" ]; }; } && RESUME_CMD="codex resume"
+stubs() {
+  local f repo n
+  for f in "$HOME_ROOT"/.local/runs/*; do
+    [ -f "$f" ] || continue
+    [ "$(sed -n 's/^run=//p' "$f")" = "$SID" ] || continue
+    repo=$(sed -n 's/^repo=//p' "$f"); n=${f##*/}; n=${n##*_}
+    "$HERE/home-log" stub "$n" --repo "$repo" --run-id "$SID" --resume "cd ${CWD/#$HOME/~} && $RESUME_CMD $SID" >/dev/null 2>&1 || true
+  done
+}
+if [ "$SURFACE" = codex ]; then
+  # Detached: own session (setsid), no open stdin/stdout/stderr, so the hook returns at once.
+  export -f stubs; export HERE SID CWD RESUME_CMD
+  perl -MPOSIX -e 'exit 0 if fork; POSIX::setsid(); exec @ARGV' bash -c stubs </dev/null >/dev/null 2>&1
+  exit 0
+fi
+stubs
 exit 0
