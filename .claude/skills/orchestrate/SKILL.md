@@ -74,7 +74,7 @@ Owner's words for this task (verbatim):
 1. `scripts/home-log new --repo <target repo> --ready --title "<title>" --body-file scratch/brief-<n>.md`; the body's first line is `Parent: <this repo>#<n>`, then the brief and the owner's verbatim words. A peer handoff carries a brief and links only: write the brief in the target home's own terms and do not name this home's domain, clients, projects or people; the `Parent:` line is the only link back.
 2. `scripts/home-log start <n>` (if this session has not claimed it yet), then `scripts/home-log checkpoint <n> --delegated <target repo>#<m>`.
 3. Start the target orchestrator: helpers on → `scripts/term/term.sh survey --cwd <target path>`; if no live session runs there, `scripts/term/term.sh open <target path> --issue <m> --role orchestrator --brief "Run the orchestrate skill, then issue #<m>."` (when the child closes, close that tab with `scripts/term/term.sh close <its tty> --issue <m> --repo <target repo>`). If one is live, `scripts/term/term.sh send <its tty> "look at issue #<m>"` and nothing else. Helpers off → open nothing; the child waits as `status:ready`.
-4. Never claim, checkpoint, finish or label the child's issue, and never tell a worker to claim an issue this session already claimed; only read the child. When it closes, the sweep reports it (step 2).
+4. A question the child raised lives on the child's issue only: the parent's status links it and never copies it onto the parent issue. Never claim, checkpoint, finish or label the child's issue, and never tell a worker to claim an issue this session already claimed; only read the child. When it closes, the sweep reports it (step 2).
 
 ## 8. Proactivity (`proactivity.mode`)
 - `off`: act only on what the owner says in this session.
