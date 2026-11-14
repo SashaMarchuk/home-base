@@ -365,7 +365,9 @@ check "answers rerun keeps the Standing approvals list" grep -qx -- '- D9: close
 check "answers rerun keeps the list once" [ "$(grep -c '^### Standing approvals' "$R2/CLAUDE.md")" = 1 ]
 
 # 13. .codex/config.toml mirrors the plugins; lines outside the marked block are kept; drift is reported
-toml_ok() { python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$1"; }
+toml_ok() { # valid TOML; without python 3.11 (tomllib) the parse is skipped
+  python3 -c 'import tomllib' 2>/dev/null || return 0
+  python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$1"; }
 CT="$R/.codex/config.toml"
 check "codex config written" [ -f "$CT" ]
 check "codex config is valid TOML" toml_ok "$CT"

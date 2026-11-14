@@ -9,7 +9,9 @@
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
-CMD=$(jq -r '.tool_input.command // .tool_input.cmd // empty | if type == "array" then join(" ") else . end' 2>/dev/null)
+# A list "<shell> -c|-lc <script>" is checked as its script.
+CMD=$(jq -r '.tool_input.command // .tool_input.cmd // empty
+  | if type == "array" then (if length >= 3 and (.[0] | test("(^|/)(ba|z|k|da)?sh$")) and (.[1] | test("^-l?c$")) then .[2:] else . end | join(" ")) else . end' 2>/dev/null)
 [ -n "$CMD" ] || exit 0
 block() { echo "bash-guard: blocked: $1. $2" >&2; exit 2; }
 # pkill and killall anywhere (a path prefix, bash -c, sudo, xargs) are kills by pattern.

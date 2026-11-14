@@ -15,6 +15,7 @@ export TERM_SH_BACKEND=fake TERM_FAKE_DIR="$T/fake"
 export TERM_SH_POLL=0.05 TERM_SH_SETTLE=0 TERM_SH_OPEN_WAIT=1 TERM_SH_EXIT_WAIT=1 TERM_SH_LOCK_TIMEOUT=1
 export TERM_SH_HOME_LOG="$T/home-log"
 export PATH="$ROOT/scripts/tests/stubs:$PATH" GH_STUB_DIR="$T/ghstore"
+unset CODEX_THREAD_ID   # the helpers refuse inside a Codex session; the tests set it where they mean it
 unset GH_CONFIG_DIR
 mkdir -p "$T/bin"; printf '#!/bin/bash\nexit 0\n' > "$T/bin/cli-whoami"; chmod +x "$T/bin/cli-whoami"
 export PATH="$T/bin:$PATH"   # cli-whoami: a stand-in for a CLI identity call that passes
@@ -389,6 +390,9 @@ check "r11 Codex orchestrator (launch.command=codex) -> refused" [ "$(rc_of ts o
 check "r11 Codex orchestrator: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
 reset launch.command=claude
 check "r11 launch.command=claude -> open works" ts open "$WORK"
+reset
+check "r11 called from a Codex session (CODEX_THREAD_ID) -> refused" [ "$(rc_of env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
+check "r11 called from a Codex session: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
 
 # ---------------------------------------------------------------- rule 12: kill exact PID after checking it
 check "r12 no verb signals a PID (pid_kill is never called)" not grep -n 'pid_kill "' "$TERM_SH"
