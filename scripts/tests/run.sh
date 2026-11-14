@@ -185,6 +185,17 @@ if sel home-log; then
   t0=$(ms); echo '{"session_id":"cl-13","cwd":"/x"}' | PATH="$T/slowbin:$PATH" "$H/scripts/hooks/session-end" >/dev/null 2>&1; t1=$(ms)
   [ $((t1 - t0)) -ge 2000 ] && gh api repos/test/hl/issues/13/comments --jq '.[0].body' | grep -q 'claude --resume cl-13' \
     && ok || bad "session-end without --surface stays in the foreground and writes a claude resume command ($((t1 - t0)) ms)"
+  # session-end --surface claude: never "codex resume" for the Claude session; a claim stored under CODEX_THREAD_ID is still found
+  grep -q 'session-end --surface claude"' "$SRC/templates/settings.json" && ok || bad "Claude's SessionEnd hook must call session-end --surface claude"
+  "$HL" new --title "Claude in codex shell" --body b --start --run-id cs-14 >/dev/null 2>&1
+  echo '{"session_id":"cs-14","cwd":"/x"}' | env CODEX_THREAD_ID=th-x "$H/scripts/hooks/session-end" --surface claude
+  gh api repos/test/hl/issues/14/comments --jq '.[0].body' | grep -q 'cd /x && claude --resume cs-14' && ok || bad "--surface claude must write claude --resume even with CODEX_THREAD_ID set"
+  "$HL" new --title "Stored as codex" --body b --start --run-id th-15 >/dev/null 2>&1
+  echo '{"session_id":"cs-other","cwd":"/x"}' | env CODEX_THREAD_ID=th-15 "$H/scripts/hooks/session-end" --surface claude
+  gh api repos/test/hl/issues/15/comments --jq '.[0].body' | grep -q 'cd /x && codex resume th-15' && ok || bad "a claim stored under CODEX_THREAD_ID must be found and resumed with codex resume"
+  "$HL" new --title "Not mine" --body b --start --run-id other-16 >/dev/null 2>&1
+  echo '{"session_id":"cs-other","cwd":"/x"}' | env CODEX_THREAD_ID=th-15 "$H/scripts/hooks/session-end" --surface claude
+  gh api repos/test/hl/issues/16/comments --jq '.[0].body' | head -1 | grep -q 'state=active' && ok || bad "a claim of another run must stay active"
 fi
 
 # ---------------------------------------------------------------- sweep
