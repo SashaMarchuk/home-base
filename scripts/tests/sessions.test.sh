@@ -9,7 +9,7 @@ SESS="$ROOT/scripts/term/sessions.sh"
 FAKE="$ROOT/scripts/tests/stubs/term-fake"
 mkdir -p "$ROOT/.local"
 T=$(mktemp -d "$ROOT/.local/sessions-test.XXXXXX") || exit 1
-trap 'rm -rf "$T"' EXIT
+trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
 
 export HOME_ROOT="$T/home"
 export TERM_SH_BACKEND=fake TERM_FAKE_DIR="$T/fake"
@@ -120,8 +120,7 @@ check "identity: a sessions glob with a space in the path" [ "$(sj ttya1 | jq -r
 reset launch.profile_flag=-p
 hand_tab ttya1 501 "/opt/bin/codex" "$W1" w1
 check "identity: a codex tab is kind codex" [ "$(sj ttya1 | jq -r .kind)" = codex ]
-check "identity: default survey still reads codex as shell" ts survey
-check "identity: default survey line unchanged" grep -q '^ttya1 - shell - ' "$T/check.log" -e ''
+check "identity: default survey still reads codex as shell" [ "$(ts survey)" = "ttya1 - shell - $W1" ]
 
 # adopt and park use the session file (the profile is no longer dropped)
 claim() { # claim <n> <run id>: the run has an active home-log comment on issue n
@@ -156,6 +155,56 @@ rm -f "$TERM_FAKE_DIR/self-pid"
 check "caller: CLAUDE_CODE_SESSION_ID finds the calling tab" [ "$(CLAUDE_CODE_SESSION_ID=$S2 ts survey --json | jq -r 'select(.tty == "ttyc2") | .caller')" = true ]
 check "caller: no signal -> no caller" [ "$(ts survey --json | jq -s '[.[] | select(.caller)] | length')" = 0 ]
 check "caller: an id with no session file -> no caller" [ "$(CLAUDE_CODE_SESSION_ID=$S4 ts survey --json | jq -s '[.[] | select(.caller)] | length')" = 0 ]
+
+# ---------------------------------------------------------------- groups and windows
+GRPS="term.groups=g1,g2,wide"
+GKEYS=("$GRPS" "term.group.g1.cwd=$W1" "term.group.g2.cwd=$W2" "term.group.wide.cwd=$T/work")
+opened() { ts open "$@" | awk '{ print $2 }'; }   # opened <open args> -> the new tab's tty
+win_of() { cat "$(tabdir "$1")/window"; }
+reset "${GKEYS[@]}"
+hand_tab ttyg1 701 "claude" "$W1" w7; sess_file work 701 "$S1" idle "$W1"
+hand_tab ttyg2 702 "claude" "$W2" w8; sess_file work 702 "$S2" idle "$W2"
+t=$(opened "$W1/sub")
+check "groups: a g1 folder opens in the window holding the live g1 tab" [ "$(win_of "$t")" = w7 ]
+check "groups: group and window recorded" [ "$(jq -r --arg t "$t" '.[] | select(.tty == $t) | .group + " " + .window' "$REG")" = "g1 w7" ]
+t=$(opened "$W2")
+check "groups: the longest prefix wins (g2, not wide)" [ "$(win_of "$t")" = w8 ]
+t=$(opened "$W1" --group g2)
+check "groups: --group beats the folder" [ "$(win_of "$t")" = w8 ]
+check "groups: survey reads the recorded group" [ "$(sj "$t" | jq -r '.group + " " + .group_from')" = "g2 registry" ]
+check "groups: survey derives the group from the folder" [ "$(sj ttyg1 | jq -r '.group + " " + .group_from')" = "g1 cwd" ]
+hand_tab ttyg3 703 "claude" "$T" w9
+check "groups: no matching folder -> general by fallback" [ "$(sj ttyg3 | jq -r '.group + " " + .group_from')" = "general fallback" ]
+t=$(opened "$T/work")
+check "groups: no live tab of the group -> a new window" grep -qx "$(win_of "$t")" "$TERM_FAKE_DIR/windows"
+check "groups: the new window is cached" [ "$(jq -r '.[] | select(.group == "wide") | .window' "$HOME_ROOT/.local/windows.json")" = "$(win_of "$t")" ]
+reset "${GKEYS[@]}"
+printf '[{"group": "g1", "window": "w5", "created": "x"}]\n' > "$HOME_ROOT/.local/windows.json"
+hand_tab ttys5 705 "zsh" "$WX" w5 shell
+t=$(opened "$W1")
+check "groups: the cached window is reused while it holds no other group's tab" [ "$(win_of "$t")" = w5 ]
+reset "${GKEYS[@]}"
+printf '[{"group": "g1", "window": "w5", "created": "x"}]\n' > "$HOME_ROOT/.local/windows.json"
+hand_tab ttyg2 702 "claude" "$W2" w5; sess_file work 702 "$S2" idle "$W2"
+t=$(opened "$W1")
+check "groups: a cached window that now holds a g2 tab is not reused for g1" [ "$(win_of "$t")" != w5 ]
+check "groups: a new window was created instead" grep -qx "$(win_of "$t")" "$TERM_FAKE_DIR/windows"
+reset "${GKEYS[@]}"
+check "groups: an unknown group -> exit 2" [ "$(rc_of ts open "$W1" --group nope)" = 2 ]
+check "groups: nothing launched for an unknown group" [ ! -f "$TERM_FAKE_DIR/launches" ]
+reset
+printf 'w3' > "$TERM_FAKE_DIR/front-window"
+t=$(opened "$W1")
+check "groups: without term.groups the current window is used" [ "$(win_of "$t")" = w3 ]
+check "groups: without term.groups no window is cached" [ ! -f "$HOME_ROOT/.local/windows.json" ]
+reset
+cp "$HOME_ROOT/home.config" "$T/hc.bak"
+printf '%s\n' "$GRPS" "term.group.g1.cwd=$W1" >> "$HOME_ROOT/home.config"
+printf 'w3' > "$TERM_FAKE_DIR/front-window"
+t=$(opened "$W1")
+check "groups: group keys in home.config are ignored" [ "$(win_of "$t")" = w3 ]
+check "groups: an unknown group from home.config -> exit 2" [ "$(rc_of ts open "$W1" --group g1)" = 2 ]
+cp "$T/hc.bak" "$HOME_ROOT/home.config"
 
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

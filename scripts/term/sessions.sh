@@ -9,6 +9,16 @@
 #
 # The calling session (the one running this script) is found by two signals: the first claude process
 # above this script's own process, and CLAUDE_CODE_SESSION_ID matched against the session files.
+#
+# Groups and windows (keys read from .local/config only, never from home.config):
+#   term.groups=g1,g2                 the groups, in thaw order; "general" always exists and catches the rest
+#   term.group.<g>.cwd=~/a,~/b        folders of the group; the longest matching prefix wins
+#   term.group.<g>.home=self|<name>   where the group's freeze record goes (a name of homes.* in home.config)
+# The group of a tab: its registry entry's group, else the longest cwd prefix, else general (a fallback).
+# The window of a group is resolved on each open and never trusted from storage: the window holding most
+# live tabs of the group, else the window cached in .local/windows.json while it still exists and holds no
+# tab of another group, else a new window (then cached). With no term.groups and no --group, open uses the
+# current window as before.
 
 US=$'\x1f'   # field separator that keeps empty fields
 
@@ -18,7 +28,7 @@ launch_name() { local c; c=$(local_cfg launch.command claude); printf '%s\n' "${
 
 session_globs() { # one glob per line from term.sessions_dirs, "~/" expanded
   local v d
-  v=$(cfg term.sessions_dirs "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")
+  v=$(local_cfg term.sessions_dirs "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions")
   printf '%s\n' "$v" | tr ',' '\n' | while IFS= read -r d; do
     d=$(printf '%s' "$d" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
     [ -n "$d" ] || continue
@@ -95,6 +105,76 @@ resume_line() { # resume_line <cwd> <command line> <profile> <session id> [role]
   printf '%s --resume %s\n' "$line" "$sid"
 }
 
+# ------------------------------------------------------------------ groups and windows
+
+groups_list() { # the configured groups, then general
+  printf '%s\n' "$(local_cfg term.groups)" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep . | grep -vx general
+  echo general
+}
+
+group_known() { groups_list | grep -xF -- "$1" >/dev/null; }
+
+real_dir() { # real_dir <path>: "~/" expanded and symlinks resolved when the folder exists
+  local d=$1
+  case "$d" in "~/"*) d="$HOME/${d#\~/}" ;; esac
+  (cd "$d" 2>/dev/null && pwd -P) || printf '%s\n' "${d%/}"
+}
+
+group_of_cwd() { # group_of_cwd <cwd> -> "<group> cwd" for the longest matching prefix, else "general fallback"
+  local cwd=$1 g p best="" blen=0 list
+  if [ -n "$cwd" ]; then
+    while IFS= read -r g; do
+      list=$(local_cfg "term.group.$g.cwd")
+      [ -n "$list" ] || continue
+      while IFS= read -r p; do
+        p=$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'); [ -n "$p" ] || continue
+        p=$(real_dir "$p")
+        case "$cwd/" in "$p/"*) [ ${#p} -gt $blen ] && { best=$g; blen=${#p}; } ;; esac
+      done <<EOF
+$(printf '%s\n' "$list" | tr ',' '\n')
+EOF
+    done <<EOF
+$(groups_list)
+EOF
+  fi
+  if [ -n "$best" ]; then echo "$best cwd"; else echo "general fallback"; fi
+}
+
+group_repo() { # group_repo <group> -> the repo its freeze record goes to (empty when its home is unknown)
+  local h
+  h=$(local_cfg "term.group.$1.home" self)
+  if [ "$h" = self ]; then printf '%s\n' "$HOME_REPO"; else cfg "homes.$h.repo"; fi
+}
+
+WINDOWS="$LOCAL_DIR/windows.json"
+
+window_for_group() { # window_for_group <group> <survey --json lines> -> a window id, or "new"
+  local g=$1 w cached
+  w=$(printf '%s\n' "$2" | jq -rs --arg g "$g" '[.[] | select(.group == $g)] | group_by(.window)
+    | map({w: .[0].window, n: length}) | sort_by(-.n) | .[0].w // empty' 2>/dev/null)
+  [ -n "$w" ] && { echo "$w"; return 0; }
+  cached=$(jq -r --arg g "$g" '[.[] | select(.group == $g)] | last | .window // empty' "$WINDOWS" 2>/dev/null)
+  if [ -n "$cached" ] &&
+     printf '%s\n' "$2" | jq -es --arg w "$cached" 'any(.[]; .window == $w)' >/dev/null 2>&1 &&
+     ! printf '%s\n' "$2" | jq -es --arg w "$cached" --arg g "$g" 'any(.[]; .window == $w and .group != null and .group != $g)' >/dev/null 2>&1; then
+    echo "$cached"; return 0
+  fi
+  echo new
+}
+
+cache_window() { # cache_window <group> <window id>: remember the group's window in .local/windows.json
+  local tmp cur=$WINDOWS
+  [ -n "$2" ] || return 0
+  [ -f "$cur" ] || cur=/dev/null
+  tmp=$(mktemp "$LOCAL_DIR/windows.json.XXXXXX") || return 1
+  if { [ "$cur" = /dev/null ] && echo '[]' || cat "$cur"; } |
+     jq --arg g "$1" --arg w "$2" --arg c "$(now_utc)" '[.[] | select(.group != $g)] + [{group: $g, window: $w, created: $c}]' > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$WINDOWS"
+  else
+    rm -f "$tmp"; return 1
+  fi
+}
+
 # ------------------------------------------------------------------ the calling session
 
 CALLER_TTYS=""; IN_SESSION=0
@@ -141,6 +221,7 @@ is_caller() { case " $CALLER_TTYS " in *" $1 "*) return 0 ;; esac; return 1; }
 tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
   local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
+  local group="" gfrom=""
   name=$(launch_name)
   pids=$(printf '%s\n' "$procs" | awk -v t="$tty" -v c="$name" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }')
   n=$(printf '%s\n' "$pids" | grep -c .)
@@ -175,18 +256,24 @@ EOF
       if is_uuid "$sid"; then src=cmdline; else sid=""; fi
     fi
     [ -n "$resume" ] || resume=$(resume_line "$cwd" "$cmd" "$prof" "$sid" "$role") || resume=""
+    group=$(printf '%s' "$entry" | jq -r '.group // empty' 2>/dev/null)
+    if [ -n "$group" ]; then gfrom=registry; else read -r group gfrom <<EOF
+$(group_of_cwd "$cwd")
+EOF
+    fi
   fi
   is_caller "$tty" && caller=true
   jq -nc --arg tty "$tty" --arg win "$win" --arg tab "$tab" --arg pid "$pid" --arg kind "$kind" --argjson n "$n" \
     --arg cmd "$cmd" --arg sid "$sid" --arg src "$src" --arg prof "$prof" --arg pdir "$pdir" --arg status "$status" \
     --arg cwd "$cwd" --arg name "$sname" --argjson reg "$reg" --arg issue "$issue" --arg role "$role" \
-    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" \
+    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" \
     '{tty: $tty, window: $win, tab: $tab, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
       processes: $n, command: $cmd, session_id: (if $sid == "" then null else $sid end), id_from: $src,
       profile: $prof, profile_dir: $pdir, status: (if $status == "" then null else $status end), cwd: $cwd,
       name: $name, registered: $reg, issue: (if $issue == "" then null else ($issue | tonumber) end),
       role: (if $role == "" then null else $role end), adopted: $adopted,
-      resume: (if $resume == "" then null else $resume end), caller: $caller}'
+      resume: (if $resume == "" then null else $resume end), caller: $caller,
+      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}'
 }
 
 survey_json() { # one JSON line per live tab

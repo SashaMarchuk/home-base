@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # term.sh: open, read, type into and close terminal tabs (iTerm2) for this home.
 #
-#   term.sh open <dir> [--issue N] [--role worker|orchestrator] [--brief TEXT | --brief-file F]
+#   term.sh open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--brief TEXT | --brief-file F]
+#                                    (placed in its group's window when term.groups is set or --group is given)
 #                                    -> prints "<session_id> <tty> <pid>"
 #   term.sh screen <target> [--lines N]
 #   term.sh state  <target>          -> gone | dialog | headsup | busy | bg | draft | idle | shell
@@ -703,13 +704,14 @@ EOF
 # ------------------------------------------------------------------ verbs
 
 cmd_open() {
-  local dir="" issue="" role=worker brief="" brief_file="" sid prefix line resume match entry
-  [ $# -ge 1 ] || die 2 "usage: open <dir> [--issue N] [--role worker|orchestrator] [--brief T|--brief-file F]"
+  local dir="" issue="" role=worker brief="" brief_file="" sid prefix line resume match entry group="" gfrom win=current out
+  [ $# -ge 1 ] || die 2 "usage: open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--brief T|--brief-file F]"
   dir=$1; shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --issue) issue=${2:-}; shift 2 ;;
       --role) role=${2:-}; shift 2 ;;
+      --group) group=${2:-}; [ -n "$group" ] || die 2 "--group needs a group name"; shift 2 ;;
       --brief) brief=${2:-}; shift 2 ;;
       --brief-file) brief_file=${2:-}; shift 2 ;;
       *) die 2 "open: unknown option '$1'" ;;
@@ -722,8 +724,17 @@ cmd_open() {
 "*) die 2 "the brief must be one line; use --brief-file for more" ;; esac
   [ -z "$brief_file" ] || [ -f "$brief_file" ] || die 2 "no brief file '$brief_file'"
   dir=$(cd "$dir" 2>/dev/null && pwd -P) || die 2 "no such directory"
+  if [ -n "$group" ]; then
+    group_known "$group" || die 2 "unknown group '$group' (term.groups in .local/config: $(groups_list | tr '\n' ' '))"
+  fi
   prefix=$(launch_prefix "$role") || exit $?
   check_memory
+  if [ -n "$group" ] || [ -n "$(local_cfg term.groups)" ]; then
+    [ -n "$group" ] || read -r group gfrom <<EOF
+$(group_of_cwd "$dir")
+EOF
+    win=$(window_for_group "$group" "$(survey_json)")
+  fi
   sid=$(be_uuid)
   resume="cd $(shq "$dir") && $prefix --resume $sid"
   line="cd $(shq "$dir") && $prefix --session-id $sid"
@@ -731,11 +742,14 @@ cmd_open() {
   [ -n "$brief_file" ] && line="$line \"\$(cat $(shq "$(cd "$(dirname "$brief_file")" && pwd -P)/$(basename "$brief_file")"))\""
   match=$sid
   entry=$(jq -nc --arg sid "$sid" --arg cwd "$dir" --arg issue "$issue" --arg resume "$resume" \
-    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" \
+    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" --arg group "$group" \
     '{session_id: $sid, tty: null, pid: null, cwd: $cwd, issue: (if $issue == "" then null else ($issue | tonumber) end),
-      resume: $resume, opened: $opened, closed: null, role: $role, tab: null, match: $match}')
+      resume: $resume, opened: $opened, closed: null, role: $role, tab: null, match: $match,
+      group: (if $group == "" then null else $group end)}')
   reserve "$entry" "$role"
-  launch_tab "$sid" "$line" "$match"
+  out=$(launch_tab "$sid" "$line" "$match" "$win") || exit $?
+  [ -n "$group" ] && [ "$win" = new ] && { cache_window "$group" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"; }
+  echo "$out"
 }
 
 cmd_screen() {
