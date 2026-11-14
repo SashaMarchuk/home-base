@@ -29,11 +29,12 @@ In your home, the `base-update` skill fetches `base`, merges, removes base-only 
 | `CLAUDE.md` | base block (rules, where things live), a fixed four-line buffer, then your home section |
 | `.claude/skills/` | `orchestrate`, `task`, `status`, `wiki`, `decide`, `configure`, `dreams`, `base-update` |
 | `scripts/` | `home-log`, `home-sweep`, `labels`, `limits`, `configure`, `checks/run`, `hooks/`, `term/term.sh`, `tests/` |
+| `.codex/` | `hooks.json`: the same hooks for Codex (the home's own `config.toml` sits beside it) |
 | `templates/` | the files `configure` writes into a home |
 | `base.manifest` | which paths the base owns and which stay in the base only |
 | `openspec/` | the base's requirements |
 
-The terminal helpers and the session-end stub support Claude Code sessions.
+The terminal helpers drive Claude Code tabs only. The hooks and the session-end stub support Claude Code and Codex; Codex runs them once you trust the folder and, with `/hooks`, the home's hooks.
 
 Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git; no network; a full run takes a few minutes).
 
