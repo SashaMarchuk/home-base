@@ -116,7 +116,7 @@ fi
 #    Reported, never failed: a plugin may exist for one tool only.
 if [ -f .codex/config.toml ] && [ -f .claude/settings.json ]; then
   jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' .claude/settings.json 2>/dev/null | sort -u > "$TMP/pl.claude"
-  awk '/^\[/ { p = ""; if (match($0, /^\[plugins\."[^"]+"\]/)) p = substr($0, 11, RLENGTH - 12); next }
+  awk '/^\[/ { p = ""; if (match($0, /^\[plugins\.("[^"]+"|\047[^\047]+\047)\]/)) p = substr($0, 11, RLENGTH - 12); next }
        p != "" && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true/ { print p }' .codex/config.toml | sort -u > "$TMP/pl.codex"
   comm -23 "$TMP/pl.claude" "$TMP/pl.codex" | sed 's/^/checks: drift: plugin enabled for Claude Code only (.claude\/settings.json): /' >&2
   comm -13 "$TMP/pl.claude" "$TMP/pl.codex" | sed 's/^/checks: drift: plugin enabled for Codex only (.codex\/config.toml): /' >&2

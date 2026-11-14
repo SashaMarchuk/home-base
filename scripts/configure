@@ -309,6 +309,9 @@ done
 BUF4='<!-- BUFFER 4/4: the home section starts on the next line. -->'
 [ -f "$ROOT/CLAUDE.md" ] && grep -qxF "$BUF4" "$ROOT/CLAUDE.md" \
   || die 3 "CLAUDE.md with the base block and the four BUFFER lines is required; take it from the base first"
+CB='# BEGIN configure: plugins (rewritten by scripts/configure; edit the plugins answer instead)'; CE='# END configure'
+[ ! -f "$ROOT/.codex/config.toml" ] || awk -v b="$CB" -v e="$CE" '$0 == b { if (s) exit 1; s = 1 } $0 == e { s = 0 } END { exit s }' "$ROOT/.codex/config.toml" \
+  || die 3 ".codex/config.toml has a \"$CB\" line without its \"$CE\" line after it; fix the file, nothing is written"
 
 # ---------- may this session change the git settings? (probe before any write) ----------
 IS_GIT=0; [ "$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$ROOT" ] && IS_GIT=1
@@ -423,7 +426,6 @@ put .claude/settings.json "$ST"
 # file (TOML gives bare keys after a table to that table); every other line is kept.
 # A marketplace gets a source only when .claude/settings.json names one
 # (extraKnownMarketplaces); a table the kept lines already hold is not written again.
-CB='# BEGIN configure: plugins (rewritten by scripts/configure; edit the plugins answer instead)'; CE='# END configure'
 CBASE="$T/codex-config.toml"; [ -f "$ROOT/.codex/config.toml" ] && CBASE="$ROOT/.codex/config.toml"
 CKEPT=$(awk -v b="$CB" -v e="$CE" '$0 == b { s = 1; next } $0 == e { s = 0; next } !s' "$CBASE" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
 CTABLES=$(printf '%s\n' "$ST" | jq -r '
@@ -437,8 +439,9 @@ CTABLES=$(printf '%s\n' "$ST" | jq -r '
         elif .source == "directory" then ["[marketplaces.\($m | q)]", "source_type = \"local\"", "source = \(.path | q)"]
         else empty end | join("\n")),
     ($p[] | "[plugins.\(q)]\nenabled = true")' | V_KEPT=$CKEPT awk '
-  BEGIN { n = split(ENVIRON["V_KEPT"], k, "\n"); for (i = 1; i <= n; i++) have[k[i]] = 1 }
-  /^\[/ { skip = ($0 in have) } !skip { if (/^\[/ && out) print ""; print; out = 1 }') \
+  function key(l) { sub(/#.*$/, "", l); gsub(/[[:space:]"\047]/, "", l); return l }   # [plugins.'x' ] # c -> [plugins.x]
+  BEGIN { n = split(ENVIRON["V_KEPT"], k, "\n"); for (i = 1; i <= n; i++) if (k[i] ~ /^[[:space:]]*\[/) have[key(k[i])] = 1 }
+  /^\[/ { skip = (key($0) in have) } !skip { if (/^\[/ && out) print ""; print; out = 1 }') \
   || die 3 "cannot build .codex/config.toml from .claude/settings.json"
 CBLOCK=$CB; [ -n "$CTABLES" ] && CBLOCK="$CBLOCK"$'\n'"$CTABLES"; CBLOCK="$CBLOCK"$'\n'"$CE"
 put .codex/config.toml "${CKEPT:+$CKEPT$'\n\n'}$CBLOCK"

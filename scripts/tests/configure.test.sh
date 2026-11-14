@@ -394,6 +394,25 @@ check "codex config: second run changes nothing" [ "$(shasum "$CT8")" = "$c8" ]
 dout=$(cd "$R" && scripts/checks/run 2>&1); rc=$?
 check "drift: a plugin enabled for Codex only is reported" grep -q 'drift: plugin enabled for Codex only (.codex/config.toml): plugin-c@example-market' <<<"$dout"
 check "drift: reported only, checks still pass" [ "$rc" = 0 ]
+{ printf "[plugins.'plugin-d@example-market']\nenabled = true\n\n"; cat "$CT"; } > "$CT.new" && mv "$CT.new" "$CT"
+check "drift: a single-quoted plugin table is read" sh -c "(cd '$R' && scripts/checks/run 2>&1) | grep -q 'Codex only (.codex/config.toml): plugin-d@example-market'"
+# the owner's table written another way (single quotes, spaces, a comment) is not written twice
+printf "[ plugins.'plugin-a@example-market' ]  # mine\nenabled = true\n" > "$CT8"
+"$R8/scripts/configure" --answers "$W/answers.plug" >/dev/null 2>&1; rc=$?
+check "codex config: owner's table in another spelling: exit 0" [ "$rc" = 0 ]
+check "codex config: owner's table in another spelling: valid TOML" toml_ok "$CT8"
+check "codex config: owner's table in another spelling is not written twice" [ "$(grep -c 'plugin-a@example-market' "$CT8")" = 1 ]
+check "codex config: the other plugin is still written" grep -qx '\[plugins."plugin-b@example-market"\]' "$CT8"
+# a BEGIN line without its END line: exit 3, nothing written
+printf '# BEGIN configure: plugins (rewritten by scripts/configure; edit the plugins answer instead)\n[plugins."x@y"]\nenabled = true\n' > "$CT8"
+sum8() { (cd "$R8" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs shasum | shasum); }
+b8=$(sum8); out=$("$R8/scripts/configure" --answers "$W/answers.plug" 2>&1); rc=$?
+check "codex config: BEGIN without END exits 3" [ "$rc" = 3 ]
+check "codex config: BEGIN without END writes nothing" [ "$(sum8)" = "$b8" ]
+check "codex config: BEGIN without END is named" grep -q 'without its' <<<"$out"
+printf '# END configure\n' >> "$CT8"
+"$R8/scripts/configure" --answers "$W/answers.plug" >/dev/null 2>&1; rc=$?
+check "codex config: BEGIN with END runs" [ "$rc" = 0 ]
 
 # 14. a Codex user gets the one-time Codex steps; a Claude user does not
 cout=$("$R8/scripts/configure" --answers "$W/answers.plug" 2>&1)

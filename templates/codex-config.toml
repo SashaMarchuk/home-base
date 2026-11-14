@@ -1,5 +1,7 @@
 # .codex/config.toml: this home's Codex settings. The home owns this file; scripts/configure writes it.
 # Everything above the "BEGIN configure" line is yours and is kept when configure runs again.
+# Lines below the "END configure" line are kept too, but moved above BEGIN on the next run: a key there
+# that belonged to a plugin table then becomes a top-level key. Put your own lines above BEGIN.
 # The block between the two marker lines mirrors enabledPlugins of .claude/settings.json; configure rewrites it.
 # Hooks are defined in .codex/hooks.json only, never here (Codex would run both).
 # BEGIN configure: plugins (rewritten by scripts/configure; edit the plugins answer instead)
