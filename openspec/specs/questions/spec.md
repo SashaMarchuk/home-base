@@ -151,6 +151,13 @@ Every worker brief SHALL tell the worker to show a draft for the owner's approva
 - **WHEN** a worker has a reply draft that needs the owner's approval
 - **THEN** it shows the draft on a review page with an editable text and a yes / no / note row
 
+### Requirement: HOME-188 A worker brief carries the standing approvals of its task
+Every worker brief SHALL carry, in its `Rules:` block, one line with the id for each active standing approval in the home section's `Standing approvals` list that touches the task.
+
+#### Scenario: A standing approval touches the task
+- **WHEN** the home section lists an active standing approval whose scope covers the task
+- **THEN** the brief's `Rules:` block has one line naming its id, action, scope and conditions
+
 ### Requirement: HOME-143 No confirmation of the owner's own order
 The orchestrator SHALL report an order, plan or launch the owner gave instead of asking the owner to confirm it.
 
