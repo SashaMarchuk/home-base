@@ -3,11 +3,13 @@
 #   pkill, killall, kill with anything but numeric PIDs; gh auth switch;
 #   a force push to the default branch; gh repo delete; a repo visibility change;
 #   git push base ... ; and every extended regex in guard.extra (home.config).
+# The command is .tool_input.command (Claude Code, Codex Bash) or .tool_input.cmd
+# (a string or a list of words; Codex exec_command).
 # Usage outside a hook: echo '{"tool_input":{"command":"..."}}' | bash-guard
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
-CMD=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+CMD=$(jq -r '.tool_input.command // .tool_input.cmd // empty | if type == "array" then join(" ") else . end' 2>/dev/null)
 [ -n "$CMD" ] || exit 0
 block() { echo "bash-guard: blocked: $1. $2" >&2; exit 2; }
 # pkill and killall anywhere (a path prefix, bash -c, sudo, xargs) are kills by pattern.

@@ -235,6 +235,31 @@ if sel guards; then
   expect "sensitive-guard allows a table row with a link" 0 sh -c 'jq -n --arg p "$1/a.md" "{tool_input:{file_path:\$p,content:\"| notes/x.md | link | https://drive.google.com/file/d/EXAMPLE-FILE-ID/view |\"}}" | "$2"' _ "$H" "$SG"
   expect "sensitive-guard skips gitignored .local" 0 sh -c 'jq -n --arg p "$1/.local/x" --arg t "card $2" "{tool_input:{file_path:\$p,content:\$t}}" | "$3"' _ "$H" "$CARD" "$SG"
   expect "sensitive-guard skips files outside the repo" 0 sh -c 'jq -n --arg p "/elsewhere/x" --arg t "card $1" "{tool_input:{file_path:\$p,content:\$t}}" | "$2"' _ "$CARD" "$SG"
+  # Codex apply_patch: the captured shape (whole patch in tool_input.command, absolute paths, no file_path).
+  ap() { # ap <cwd> <patch>: a Codex apply_patch payload
+    jq -n --arg c "$2" --arg d "$1" '{session_id:"s-1",cwd:$d,model:"m",source:"cli",hook_event_name:"PreToolUse",tool_name:"apply_patch",tool_input:{command:$c}}'; }
+  P_ADD=$(printf '*** Begin Patch\n*** Add File: %s/wiki/pay.md\n+# Payments\n+card %s\n*** End Patch' "$H" "$CARD")
+  P_CLEAN=$(printf '*** Begin Patch\n*** Add File: %s/wiki/ok.md\n+# Notes\n+see https://drive.google.com/drive/folders/EXAMPLE-FOLDER-ID\n*** End Patch' "$H")
+  P_UPD=$(printf '*** Begin Patch\n*** Update File: wiki/a.md\n@@\n-old line\n+call %s\n*** End Patch' "$PHONE")
+  P_DEL=$(printf '*** Begin Patch\n*** Update File: wiki/a.md\n@@\n-card %s\n+removed\n*** End Patch' "$CARD")
+  P_MOVE=$(printf '*** Begin Patch\n*** Update File: %s/.local/x.md\n*** Move to: %s/wiki/moved.md\n@@\n+card %s\n*** End Patch' "$H" "$H" "$CARD")
+  P_TWO=$(printf '*** Begin Patch\n*** Add File: %s/.local/n.md\n+card %s\n*** Add File: %s/wiki/b.md\n+card %s\n*** End Patch' "$H" "$CARD" "$H" "$CARD")
+  P_LOCAL=$(printf '*** Begin Patch\n*** Add File: %s/.local/n.md\n+card %s\n*** End Patch' "$H" "$CARD")
+  for c in ADD UPD MOVE TWO; do
+    eval "pt=\$P_$c"
+    ap "$H" "$pt" > "$T/ap.json"
+    expect "sensitive-guard blocks apply_patch ($c)" 2 sh -c '"$1" < "$2"' _ "$SG" "$T/ap.json"
+  done
+  for c in CLEAN DEL LOCAL; do
+    eval "pt=\$P_$c"
+    ap "$H" "$pt" > "$T/ap.json"
+    expect "sensitive-guard allows apply_patch ($c)" 0 sh -c '"$1" < "$2"' _ "$SG" "$T/ap.json"
+  done
+  [ ! -e "$H/wiki/pay.md" ] && ok || bad "a blocked apply_patch must not create the file"
+  # bash-guard: the Codex exec_command shape (.tool_input.cmd, a string or a list of words)
+  expect "bash-guard blocks .cmd string: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh auth switch -u a\"}}" | "$1"' _ "$BG"
+  expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
 fi
 
 # ---------------------------------------------------------------- checks

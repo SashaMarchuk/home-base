@@ -1,31 +1,57 @@
 #!/usr/bin/env bash
-# PreToolUse hook for Write, Edit and MultiEdit. Blocks (exit 2) writing a
-# personal value (scripts/lib/sensitive-patterns, plus the private literals of
-# guard.private_values) into any file inside this repo that git does not ignore.
-# New files count. Gitignored paths (.local/, scratch/) and files outside the
-# repo are not checked here.
+# PreToolUse hook for Write, Edit and MultiEdit (Claude Code) and apply_patch
+# (Codex). Blocks (exit 2) writing a personal value (scripts/lib/sensitive-patterns,
+# plus the private literals of guard.private_values) into any file inside this
+# repo that git does not ignore. New files count. Gitignored paths (.local/,
+# scratch/) and files outside the repo are not checked here.
+# apply_patch: the patch is in .tool_input.command; each file of the patch
+# ("*** Add File:", "*** Update File:", "*** Move to:") is checked with the text
+# of its "+" lines. Relative paths resolve against the payload's cwd.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
 IN=$(cat)
-FP=$(printf '%s' "$IN" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-[ -n "$FP" ] || exit 0
-case "$FP" in /*) ;; *) FP="$PWD/$FP" ;; esac
-# Resolve the parent directory (the file may not exist yet).
-dir=$(dirname "$FP"); while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
-rdir=$(cd "$dir" && pwd -P); RFP="$rdir/${FP#"$dir"/}"
-case "$RFP" in "$HOME_ROOT"/*) ;; *) exit 0 ;; esac
-REL=${RFP#"$HOME_ROOT"/}
-case "$REL" in .git/*) exit 0 ;; esac
-git -C "$HOME_ROOT" check-ignore -q --no-index -- "$REL" 2>/dev/null && exit 0
-TEXT=$(printf '%s' "$IN" | jq -r '[.tool_input.content, .tool_input.new_string, (.tool_input.edits // [] | .[].new_string)] | map(select(. != null)) | join("\n")')
-[ -n "$TEXT" ] || exit 0
 args=()
 pv=$(cfg guard.private_values); [ -n "$pv" ] && [ -f "$pv" ] && args+=(--private "$pv")
-if ! out=$(printf '%s\n' "$TEXT" | "$HERE/lib/sensitive-patterns" --name "$REL" ${args[@]+"${args[@]}"}); then
-  echo "sensitive-guard: blocked writing a personal value into $REL:" >&2
-  printf '%s\n' "$out" >&2
-  echo "Personal values never go into the repo (rule 11). Keep a link, or put it in .local/." >&2
-  exit 2
+
+check() { # check <path> <text>: exit 2 when the text holds a personal value and the path is tracked here
+  local FP=$1 TEXT=$2 dir rdir RFP REL out
+  [ -n "$FP" ] && [ -n "$TEXT" ] || return 0
+  case "$FP" in /*) ;; *) FP="$BASE_DIR/$FP" ;; esac
+  # Resolve the parent directory (the file may not exist yet).
+  dir=$(dirname "$FP"); while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+  rdir=$(cd "$dir" && pwd -P); RFP="$rdir/${FP#"$dir"/}"
+  case "$RFP" in "$HOME_ROOT"/*) ;; *) return 0 ;; esac
+  REL=${RFP#"$HOME_ROOT"/}
+  case "$REL" in .git/*) return 0 ;; esac
+  git -C "$HOME_ROOT" check-ignore -q --no-index -- "$REL" 2>/dev/null && return 0
+  if ! out=$(printf '%s\n' "$TEXT" | "$HERE/lib/sensitive-patterns" --name "$REL" ${args[@]+"${args[@]}"}); then
+    echo "sensitive-guard: blocked writing a personal value into $REL:" >&2
+    printf '%s\n' "$out" >&2
+    echo "Personal values never go into the repo (rule 11). Keep a link, or put it in .local/." >&2
+    exit 2
+  fi
+  return 0
+}
+
+BASE_DIR=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$BASE_DIR" ] || BASE_DIR=$PWD
+TOOL=$(printf '%s' "$IN" | jq -r '.tool_name // empty' 2>/dev/null)
+if [ "$TOOL" = apply_patch ]; then
+  PATCH=$(printf '%s' "$IN" | jq -r '.tool_input.command // .tool_input.input // .tool_input.patch // empty | if type == "array" then join("\n") else . end' 2>/dev/null)
+  # One record per file of the patch: <path> NUL <added text> NUL. A moved file is checked at its new path.
+  while IFS= read -r -d '' p && IFS= read -r -d '' t; do
+    check "$p" "$t"
+  done < <(printf '%s\n' "$PATCH" | perl -ne '
+    sub flush { print "$p\0$t\0" if defined $p; undef $p; $t = "" }
+    chomp;
+    if (/^\*\*\* (?:Add|Update) File: (.*)$/) { flush(); $p = $1; next }
+    if (/^\*\*\* Move to: (.*)$/) { $p = $1 if defined $p; next }
+    if (/^\*\*\* /) { flush(); next }
+    $t .= substr($_, 1) . "\n" if /^\+/ && defined $p;
+    END { flush() }')
+  exit 0
 fi
+FP=$(printf '%s' "$IN" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+TEXT=$(printf '%s' "$IN" | jq -r '[.tool_input.content, .tool_input.new_string, (.tool_input.edits // [] | .[].new_string)] | map(select(. != null)) | join("\n")' 2>/dev/null)
+check "$FP" "$TEXT"
 exit 0
