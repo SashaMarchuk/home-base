@@ -21,6 +21,8 @@
 # settings; when it may not, it does every other step, prints one line
 # "pending: cd <root> && <the git steps still needed>" for the person's own
 # terminal and still exits 0. It never pushes. --labels then runs scripts/labels.
+# With launch.command=codex it also prints "codex: ..." lines: the one-time Codex
+# steps on this computer (trust the folder, trust the hooks, add the plugins).
 # Exit: 0 ok (check for a "pending:" line), 2 missing or invalid answers (nothing
 # written), 3 repo not ready or a write or git step failed (the file or step is
 # named), 4 files written but --labels failed (the last line says whether the repo
@@ -59,7 +61,7 @@ while [ $# -gt 0 ]; do
     --labels) LABELS=1; shift ;;
     --set) [ $# -ge 2 ] || die 2 "--set needs <key>=<value>"; SETS+=("$2"); shift 2 ;;
     --get) [ $# -ge 2 ] || die 2 "--get needs a key"; GETS+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,49p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' ($USAGE)" ;;
   esac
 done
@@ -558,6 +560,15 @@ ans_all guard.extra | grep -v '^$' | sed 's/^/  guard.extra=/'
 
 # the git steps this session may not do, as one line for the person's own terminal
 [ -n "$PENDING" ] && echo "pending: $PENDING"
+
+# Codex (launch.command=codex): the one-time steps on this computer, printed only;
+# they change Codex's own settings, so configure never runs them.
+if [ "$(printf '%s\n' "$LC" | sed -n 's/^launch.command=//p' | tail -1)" = codex ]; then
+  echo "codex: accept the trust question for this folder the first time Codex opens $ROOT"
+  echo "codex: in Codex, run /hooks once and trust this home's hooks"
+  printf '%s\n' "$ST" | jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' \
+    | while IFS= read -r p; do echo "codex: cd $(q "$ROOT") && codex plugin add $(q "$p")"; done
+fi
 
 # ---------- labels last, so a failure is the last thing said ----------
 if [ "$LABELS" = 1 ]; then

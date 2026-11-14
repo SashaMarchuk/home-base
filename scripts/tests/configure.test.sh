@@ -393,5 +393,15 @@ dout=$(cd "$R" && scripts/checks/run 2>&1); rc=$?
 check "drift: a plugin enabled for Codex only is reported" grep -q 'drift: plugin enabled for Codex only (.codex/config.toml): plugin-c@example-market' <<<"$dout"
 check "drift: reported only, checks still pass" [ "$rc" = 0 ]
 
+# 14. a Codex user gets the one-time Codex steps; a Claude user does not
+cout=$("$R8/scripts/configure" --answers "$W/answers.plug" 2>&1)
+check "codex steps: trust the folder" grep -q '^codex: accept the trust question' <<<"$cout"
+check "codex steps: trust the hooks with /hooks" grep -q '^codex: in Codex, run /hooks once' <<<"$cout"
+check "codex steps: one plugin add line per plugin" [ "$(grep -c '^codex: cd .* && codex plugin add plugin-[ab]@example-market$' <<<"$cout")" = 2 ]
+cout=$("$R/scripts/configure" --answers "$A" 2>&1)
+check "no codex steps for a Claude user" sh -c "! grep -q '^codex:' <<'X'
+$cout
+X"
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
