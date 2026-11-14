@@ -100,3 +100,10 @@ A session SHALL relay the owner's words into another session only when the owner
 #### Scenario: The owner asked for a relay
 - **WHEN** the owner asks to pass the owner's answer to a session
 - **THEN** the owner's exact words are typed, with nothing added
+
+### Requirement: HOME-134 No issue closes over an open question
+Before closing an issue, the orchestrator SHALL answer or store with `home-log checkpoint <n> --park --question` every open question of the owner on it.
+
+#### Scenario: Resumed sessions stopped at questions
+- **WHEN** the orchestrator is about to close an issue while sessions on it still wait on questions of the owner
+- **THEN** each of those questions is answered or stored on the issue first

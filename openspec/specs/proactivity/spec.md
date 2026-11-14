@@ -40,3 +40,10 @@ A home SHALL act only while one of its sessions runs, with no database, daemon o
 #### Scenario: No session open
 - **WHEN** no session of the home is running
 - **THEN** nothing in the home acts except its scheduled CI workflows
+
+### Requirement: HOME-135 Leave it and watch
+When the owner chooses to leave something and watch it, the orchestrator SHALL file a follow-up issue for the watch and then finish.
+
+#### Scenario: The owner says leave it and watch
+- **WHEN** the owner picks "leave it and watch"
+- **THEN** a follow-up issue for the watch exists before the orchestrator's final comment

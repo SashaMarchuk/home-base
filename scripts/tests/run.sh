@@ -117,7 +117,11 @@ if sel home-log; then
   # session-end stub
   "$HL" new --title "Dies" --body "d" --ready >/dev/null
   "$HL" start 5 --run-id sess-x >/dev/null
+  "$HL" checkpoint 5 --run-id sess-x --text "Halfway there." --question "Which region?" >/dev/null
   echo '{"session_id":"sess-x","cwd":"/x"}' | "$H/scripts/hooks/session-end"
+  body5=$(gh api repos/test/hl/issues/5/comments --jq '.[0].body')
+  printf '%s\n' "$body5" | grep -qx 'Halfway there.' && printf '%s\n' "$body5" | grep -qx 'Session ended without a final summary.' \
+    && printf '%s\n' "$body5" | grep -qx -- '- Open question for the owner: Which region?' && ok || bad "stub must keep the text and question and add the stub line"
   gh api repos/test/hl/issues/5/comments --jq '.[0].body' | head -1 | grep -q 'state=stub' && ok || bad "session-end must write a stub"
   gh api repos/test/hl/issues/5 --jq '[.labels[].name]|index("needs-summary")' | grep -qv null && ok || bad "session-end must add needs-summary"
   echo '{"session_id":"other"}' | "$H/scripts/hooks/session-end"; ok

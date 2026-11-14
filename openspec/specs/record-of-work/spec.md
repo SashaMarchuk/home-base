@@ -150,3 +150,10 @@ A session SHALL write a result to the record only after it verified that result 
 #### Scenario: A loop of writes
 - **WHEN** a session posts entries in a loop and some of them fail
 - **THEN** the record reports only the entries whose responses confirm them
+
+### Requirement: HOME-130 A stub keeps the run's text and question
+`home-log stub` SHALL keep the run's previous text and open question and add the line "Session ended without a final summary." after that text.
+
+#### Scenario: A session ends after a checkpoint
+- **WHEN** a run checkpointed issue 5 with a text and a question and its session ends without `home-log finish`
+- **THEN** the stub comment on issue 5 still holds that text and that question, followed by the stub line

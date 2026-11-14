@@ -193,3 +193,17 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 #### Scenario: A message by class
 - **WHEN** `term.sh resume <session_id> --message "The timer fired; run the next step."` runs
 - **THEN** that text is the only message sent, and `--silent` sends none
+
+### Requirement: HOME-129 An adopted tab resumes with its launch flags
+When `term.sh` adopts a tab whose command line names a session id, the resume command it records SHALL keep that command line's command, its configured profile flag with the value and its `--model <alias>`, followed by `--resume <session id>`.
+
+#### Scenario: Parking an adopted tab started with a profile and a model
+- **WHEN** `launch.profile_flag` is `-a` and `term.sh park <tty> --adopt --issue 21` runs on a tab started as `claude -a personal --model opus --resume <id>`
+- **THEN** the resume command written to issue 21 is `cd <cwd> && 'claude' -a 'personal' --model 'opus' --resume <id>`
+
+### Requirement: HOME-132 Only term.sh writes the registry
+A session SHALL never edit `.local/registry.json` by hand; only `term.sh` writes it.
+
+#### Scenario: A tab is bound to the wrong issue
+- **WHEN** a registry entry names the wrong issue
+- **THEN** the session uses a `term.sh` command with the right `--issue` and does not edit the file

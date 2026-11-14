@@ -36,6 +36,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - When the owner asks for a separate session or terminal for a task, open it (`scripts/term/term.sh open`) with a brief; never do that task in this session instead, and never hand the launch back to him.
 - A session that holds an open question of the owner is never closed unless he says so: park it (its question moves to the issue) or leave it.
 - Kill only PIDs this home launched or the owner named, by exact number.
+- A cap the owner states ("3-4 sessions") counts every tab this session opens, child orchestrators included.
 Pick `status:ready` issues, oldest first, one worker per issue. Before launching, check open claims (`status:claimed`) and `scripts/term/term.sh survey` so no task gets two sessions.
 
 Launch a worker with terminal helpers on (`terminal_helpers=on` in `.local/config`): write the brief below to `scratch/brief-<n>.md`, then `scripts/term/term.sh open <working dir> --issue <n> --role worker --brief-file scratch/brief-<n>.md` (prints `<session_id> <tty> <pid>`). Helpers off: give the brief to the owner as a ready-to-paste prompt, or start a subagent when the task fits in this session.
@@ -60,12 +61,13 @@ Owner's words for this task (verbatim):
 - `soft`: start nothing new; running tasks finish.
 - `hard`: park every running task (`scripts/term/term.sh park <tty|session id> --issue <n>` per tab; it writes the resume command and open question to the issue) and start nothing. `park` refuses a tab in the middle of a turn (it never interrupts one): re-check that tab and park it as soon as its turn ends.
 - After the reset time passes, while this session runs, re-check and resume parked tasks (`term.sh resume <session id>`).
+- Keeping the Mac awake: only `caffeinate -w <pid of this session>`; never a timed or orphan caffeinate.
 - A task brief's `Limits: <mode>` line applies to that worker: its session runs `scripts/limits` with `LIMITS_MODE=<mode>`.
 
 ## 6. Park, resume, close
 - Park: `scripts/term/term.sh park <tty|session id> --issue <n>` (refuses on an unsent draft; then leave it). Never type into a busy tab or answer another session's dialog.
 - Resume: `scripts/term/term.sh resume <session id>`, message by class: by default it re-asks the run's open question for the owner, else says continue; `--message "<text>"` for another class (a timer, an answer to act on), `--silent` for none.
-- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
+- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. Never edit `.local/registry.json` by hand; only term.sh writes it. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
 0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record.
@@ -83,6 +85,8 @@ Owner's words for this task (verbatim):
 ## 9. Close every turn
 - Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.
 - Record a hand-off (checkpoint, release, "handed to a worker") only after `term.sh open` printed the session id, tty and pid.
+- Before closing an issue: every open question of the owner on it is answered or stored with `--park --question`.
+- "Leave it and watch" means: file a follow-up issue for the watch (`scripts/home-log new`), then finish.
 - Write a result to the record only after you verified it (read back the effect); never report a count you did not observe.
 - Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that.
 - Questions go through the ask tool (or, owner away, `scripts/home-log checkpoint <n> --park --question "<q>"`); never only in the final message.

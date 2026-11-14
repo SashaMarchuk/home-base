@@ -413,10 +413,29 @@ adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner 
   T_PID=$pids; T_ALIVE=1; T_ADOPTED=1; ADOPT_NEW=1
   if printf '%s' "$sid" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$'; then
     T_SID=$sid; T_MATCH=$sid
-    ADOPT_RESUME="cd $(shq "${cwd:-.}") && $(shq "$(printf '%s\n' "$cmd" | awk '{ print $1 }')") --resume $sid"
+    ADOPT_RESUME="cd $(shq "${cwd:-.}") && $(adopt_flags "$cmd") --resume $sid"
   else
     T_SID=$(be_uuid); T_MATCH=$cmd   # no session id: the exact command line is the match
   fi
+}
+
+adopt_flags() { # adopt_flags <command line> -> "<command> [<profile flag> P] [--model M]" kept from that line
+  local flag prof="" model="" line
+  flag=$(local_cfg launch.profile_flag)
+  set -f; set -- $1; set +f
+  line=$(shq "$1"); shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --model) [ $# -gt 1 ] && { model=$2; shift; } ;;
+      --model=*) model=${1#--model=} ;;
+      *) if [ -n "$flag" ] && [ "$1" = "$flag" ] && [ $# -gt 1 ]; then prof=$2; shift
+         elif [ -n "$flag" ] && [ "${1%%=*}" = "$flag" ] && [ "$1" != "${1#*=}" ]; then prof=${1#*=}; fi ;;
+    esac
+    shift
+  done
+  [ -n "$prof" ] && line="$line $flag $(shq "$prof")"
+  printf '%s' "$model" | grep -Eq '^[a-z]+(\[1m\])?$' && line="$line --model $(shq "$model")"
+  printf '%s\n' "$line"
 }
 
 adopt_record() { # adopt_record <issue>: add the adopted tab to the registry; nothing is typed before this

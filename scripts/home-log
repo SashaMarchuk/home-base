@@ -268,7 +268,9 @@ stub)
   [ -n "$OWN" ] || exit 0
   ST=$(markers "$C" | awk -F'\t' -v r="$RUN" '$2 == r { print $3; exit }')
   [ "$ST" = active ] || exit 0
-  TEXT="Session ended without a final summary."; TEXT_SET=1
+  TEXT=$(old_text "$(comment_body "$C" "$OWN")")
+  [ -n "$TEXT" ] && TEXT+=$'\n\n'
+  TEXT+="Session ended without a final summary."; TEXT_SET=1
   patch_comment "$OWN" "$(build_body stub "$(comment_body "$C" "$OWN")")"
   add_label needs-summary
   drop_run

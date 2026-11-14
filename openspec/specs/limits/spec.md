@@ -41,3 +41,17 @@ The orchestrator SHALL work normally on `ok`, start nothing new on `soft`, and o
 #### Scenario: Limit for one task
 - **WHEN** a worker brief carries a `Limits: <mode>` line
 - **THEN** that worker runs `scripts/limits` with `LIMITS_MODE=<mode>`
+
+### Requirement: HOME-131 Keeping the machine awake
+An orchestrator that keeps the machine awake SHALL run only `caffeinate -w <pid of this session>`, never a timed or orphan caffeinate.
+
+#### Scenario: A long unattended run
+- **WHEN** the orchestrator must keep the machine awake while its session runs
+- **THEN** it starts `caffeinate -w` with its own session's PID, and the assertion ends with that session
+
+### Requirement: HOME-133 A stated cap counts every tab
+A cap on sessions that the owner states SHALL count every tab the orchestrator opens, child orchestrators included.
+
+#### Scenario: A cap of three to four sessions
+- **WHEN** the owner says "3-4 sessions" and the orchestrator has opened two child orchestrators
+- **THEN** at most two more tabs are opened across all homes
