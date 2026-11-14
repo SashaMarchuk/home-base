@@ -41,7 +41,7 @@ Before asking the owner, a session SHALL search `DECISIONS.md`, the issue and ea
 - **THEN** the owner is not asked
 
 ### Requirement: HOME-021 Decisions are recorded verbatim and append-only
-The `decide` skill SHALL append each owner decision to `DECISIONS.md` in the file's own entry format, by default `### <ID> — <title>` followed by plain `Quote:`, `Gloss:` (when the quote is not in English), `Source:`, `Status:` and `Kind:` lines, with the next id in the file's own id family, and change an older entry only by setting its `Status:` line to `superseded-by <ID>`.
+The `decide` skill SHALL append each owner decision to `DECISIONS.md` in the file's own entry format, by default `### <ID> — <title>` followed by plain `Quote:`, `Gloss:` (when the quote is not in English), `Source:`, `Status:` and `Kind:` lines (and an optional `Supersedes:` line), with the next id in the file's own id family (the owner is asked which family when the file mixes several), and change an older entry only by setting its `Status:` line to `superseded-by <ID>`.
 
 #### Scenario: Decision replaces an older one
 - **WHEN** the owner reverses decision D4
