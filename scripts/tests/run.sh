@@ -253,7 +253,10 @@ if sel checks; then
   ( cd "$H" && rm AGENTS.md && ln -s CLAUDE.md AGENTS.md )
   printf '### D-1 a\n### D-1 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
   expect "checks fail on duplicate decision ids" 1 "$H/scripts/checks/run"
-  printf '### D-1 a\n### D-2 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
+  printf '### D23 \xe2\x80\x94 a\n### D23 \xe2\x80\x94 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
+  expect "checks fail on a duplicate id in the dash format" 1 "$H/scripts/checks/run"
+  printf '### D23 \xe2\x80\x94 a\n### D24 \xe2\x80\x94 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
+  expect "checks pass on the next id of the same family" 0 "$H/scripts/checks/run"
   mkdir -p "$H/openspec"; echo x > "$H/openspec/a.md"; ( cd "$H" && git add openspec )
   expect "checks fail on a base-only path in a home" 1 "$H/scripts/checks/run"
   ( cd "$H" && git rm -rq --cached openspec && rm -rf openspec )
