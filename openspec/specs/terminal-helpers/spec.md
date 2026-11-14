@@ -253,11 +253,15 @@ When the owner says "set profile <orchestrator|worker> <name>" or "use profile <
 - **THEN** the shell's tab has no session id
 
 ### Requirement: HOME-302 Where a session id comes from
-`term.sh` SHALL take a tab's session id from this home's registry, else its session file, else its command line, and a tab with none of them SHALL get no resume line.
+`term.sh` SHALL take a tab's session id from this home's registry only while the entry's pid is the live process and the session file names no other id, else from its session file, else its command line; freeze keeps a tab whose registry entry no longer matches as `kept:changed`, and a tab with no id SHALL get no resume line.
 
 #### Scenario: No session file and no id
 - **WHEN** a tab runs `claude -r` and no session file exists for its process
 - **THEN** `survey --json` gives it no session id and no resume line
+
+#### Scenario: A new session in a reused tab
+- **WHEN** the session this home opened in a tab exited and a new `claude` session runs in the same tab
+- **THEN** freeze sends that tab no key and lists it as `kept:changed`
 
 ### Requirement: HOME-303 The calling session is never touched
 `term.sh` SHALL find the calling session by two signals, the first `claude` process above its own process and `CLAUDE_CODE_SESSION_ID` matched in the session files, leave a tab found by either untouched with its resume line recorded, and exit 3 with nothing touched when `freeze --all`, `--group` or `--window` runs inside a session whose tab neither signal finds.

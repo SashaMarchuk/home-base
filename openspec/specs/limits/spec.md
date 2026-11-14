@@ -32,11 +32,11 @@ When a mode is set, `scripts/limits` SHALL run the executable named by `limits.r
 - **THEN** it prints `ok -` and one warning line
 
 ### Requirement: HOME-029 Acting on the verdict
-The orchestrator SHALL work normally on `ok`, start nothing new on `soft`, and on `hard` freeze the tabs this home opened with `term.sh freeze <their ttys> --hard` and start nothing, re-running `freeze --continue <id>` for a tab kept while its turn ran once that turn ends, then reopen them after the reset time while its session runs.
+The orchestrator SHALL work normally on `ok`, start nothing new on `soft`, and on `hard` park every running task as soon as its turn has ended and start nothing, then resume parked tasks after the reset time while its session runs; it uses `freeze` for this only after the real-tab check of freeze and thaw has passed.
 
 #### Scenario: Hard stop
 - **WHEN** `scripts/limits` prints `hard <reset>`
-- **THEN** each idle tab this home opened is frozen with its resume line and open question in the freeze issue, and a tab in the middle of a turn is frozen once that turn ends
+- **THEN** each idle worker tab is parked with its resume command and open question written to its issue, and a tab in the middle of a turn is parked once that turn ends
 
 #### Scenario: Limit for one task
 - **WHEN** a worker brief carries a `Limits: <mode>` line
