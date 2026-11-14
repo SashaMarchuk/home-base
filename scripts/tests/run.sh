@@ -297,6 +297,8 @@ if sel guards; then
   expect "bash-guard blocks .cmd string: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh auth switch -u a\"}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -lc gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-lc\",\"gh auth switch -u a\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard blocks .cmd list: bash -e -c kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard allows .cmd list: bash -e -c kill 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill 4242\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -lc gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-lc\",\"gh issue list\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
   # Codex hooks: each command exactly as .codex/hooks.json writes it, run from a subfolder of the home.
@@ -318,6 +320,10 @@ if sel guards; then
   expect "Codex hook passes another tool untouched" 0 hook "$T/p4.json"
   expect "Codex hook never sends a patch to bash-guard" 0 hook "$T/p5.json"
   expect "Codex hook blocks apply_patch with a card" 2 hook "$T/p6.json"
+  jq -n --arg c "$(printf "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: wiki/h.md\n+card %s\n*** End Patch\nEOF" "$CARD")" --arg d "$H" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' > "$T/p7.json"
+  jq -n --arg c "$(printf "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: wiki/h.md\n+plain notes\n*** End Patch\nEOF")" --arg d "$H" '{tool_name:"exec_command",cwd:$d,tool_input:{cmd:$c}}' > "$T/p8.json"
+  expect "Codex hook blocks a shell heredoc apply_patch with a card" 2 hook "$T/p7.json"
+  expect "Codex hook allows a clean shell heredoc apply_patch" 0 hook "$T/p8.json"
   for ev in SessionStart SessionEnd; do
     c=$(jq -r --arg e "$ev" '.hooks[$e][0].hooks[0].command' "$HJ")
     f=$(cd "$H/wiki/sub" && sh -c "printf '%s\n' $c" | head -1)
