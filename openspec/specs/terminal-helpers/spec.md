@@ -151,3 +151,26 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 #### Scenario: Two sessions on one tty
 - **WHEN** two `claude` processes run on the tty given with `--adopt`
 - **THEN** close exits 3 and nothing is typed
+
+### Requirement: HOME-107 Relaying the owner's words into a dialog
+`term.sh send` SHALL type the owner's words given with `--relay` only into the free-text row of a dialog open on that tab and never pick a listed option, press Enter only once the words show on screen, press Esc once for `--cancel-dialog` and check the dialog closed, and refuse with exit 3 an `--after` check that proves nothing (empty, `true`, `:`, `exit 0`, `echo ...`, `test 1`).
+
+#### Scenario: Owner answers a waiting dialog
+- **WHEN** a session shows a dialog with a free-text row and `term.sh send <tty> --relay "use the release branch"` runs
+- **THEN** the free-text row is picked, the words are typed and shown on screen, and Enter is pressed once
+
+#### Scenario: Dialog without a free-text row
+- **WHEN** `--relay` targets a tab with no open dialog, or one with only listed options
+- **THEN** send exits 3 and nothing is typed
+
+#### Scenario: Words not shown
+- **WHEN** the typed words do not appear on screen
+- **THEN** send exits 3 and Enter is not pressed
+
+#### Scenario: Owner says to dismiss the dialog
+- **WHEN** `term.sh send <tty> --cancel-dialog` runs on a tab with an open dialog
+- **THEN** Esc is pressed once and the dialog is closed, not answered
+
+#### Scenario: Check that proves nothing
+- **WHEN** `send --after true` runs instead of a check that proves the login, e.g. a CLI identity call
+- **THEN** send exits 3 and nothing is typed

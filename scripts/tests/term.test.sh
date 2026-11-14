@@ -16,6 +16,8 @@ export TERM_SH_POLL=0.05 TERM_SH_SETTLE=0 TERM_SH_OPEN_WAIT=1 TERM_SH_EXIT_WAIT=
 export TERM_SH_HOME_LOG="$T/home-log"
 export PATH="$ROOT/scripts/tests/stubs:$PATH" GH_STUB_DIR="$T/ghstore"
 unset GH_CONFIG_DIR
+mkdir -p "$T/bin"; printf '#!/bin/bash\nexit 0\n' > "$T/bin/cli-whoami"; chmod +x "$T/bin/cli-whoami"
+export PATH="$T/bin:$PATH"   # cli-whoami: a stand-in for a CLI identity call that passes
 REG="$HOME_ROOT/.local/registry.json"
 mkdir -p "$HOME_ROOT/.local" "$T/work dir"
 WORK="$T/work dir"
@@ -163,20 +165,20 @@ check "r6 no SENT on a dropped write" not grep -q SENT "$T/out"
 
 # ---------------------------------------------------------------- rule 7: login poke
 reset; new_tab; dialog 1
-check "r7 poke after a passing check" ts send "$TTY" "logged in, continue" --after true --timeout 2
+check "r7 poke after a passing check" ts send "$TTY" "logged in, continue" --after cli-whoami --timeout 2
 check "r7 answer typed into the free-text row" [ "$(cat "$(tabdir "$TTY")/answered")" = "logged in, continue" ]
 check "r7 row picked by its number" has_key 'type:3'
 reset; new_tab; dialog 1
 check "r7 failing check -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after false --timeout 1)" = 5 ]
 check "r7 nothing typed before the check passes" [ -z "$(keys)" ]
 reset; new_tab; dialog 0
-check "r7 dialog without free-text row -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after true --timeout 1)" = 5 ]
+check "r7 dialog without free-text row -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after cli-whoami --timeout 1)" = 5 ]
 check "r7 no option picked" [ ! -f "$(tabdir "$TTY")/answered" ]
 reset; new_tab; dialog 1 "Allow this command to run?"
-check "r7 dialog that is not a login prompt -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after true --timeout 1)" = 5 ]
+check "r7 dialog that is not a login prompt -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after cli-whoami --timeout 1)" = 5 ]
 check "r7 nothing typed into a non-login dialog" [ -z "$(keys)" ]
 reset term.login_dialog_re=allow; new_tab; dialog 1 "Allow this command to run?"
-check "r7 login regex comes from config" ts send "$TTY" "go on" --after true --timeout 2
+check "r7 login regex comes from config" ts send "$TTY" "go on" --after cli-whoami --timeout 2
 reset; new_tab; dialog 1
 D=$(tabdir "$TTY")
 SWAP="printf 'Header\\nAllow this command to run?\\n  1. Yes\\n  3. Type something.\\nEnter to select\\n' > '$D/dialog'"
@@ -187,6 +189,53 @@ D=$(tabdir "$TTY")
 DROP="printf 'Header\\nIs the login done now?\\n  1. Yes\\n  2. Not yet\\nEnter to select\\n' > '$D/dialog'"
 check "r7 free-text row gone during the check -> timeout" [ "$(rc_of ts send "$TTY" "logged in" --after "$DROP" --timeout 1)" = 5 ]
 check "r7 no row picked when the free-text row is gone" [ -z "$(keys)" ]
+
+for c in "" true ":" " exit 0 " "echo done" echo "test 1"; do
+  reset; new_tab; dialog 1
+  check "r7 trivial check '$c' -> refused" [ "$(rc_of ts send "$TTY" "logged in" --after "$c" --timeout 1)" = 3 ]
+  check "r7 nothing typed after trivial check '$c'" [ -z "$(keys)" ]
+done
+check "r7 refusal names a real probe" grep -q "must prove the login" "$T/err"
+reset; new_tab; dialog 1
+check "r7 a real probe is accepted" ts send "$TTY" "logged in" --after "cli-whoami --check" --timeout 2
+
+# ---------------------------------------------------------------- rule 16: relay the owner's words
+reset; new_tab; dialog 1 "Which branch should I use?"
+check "r16 relay into the free-text row" ts send "$TTY" --relay "use the release branch, not main"
+check "r16 the owner's words answered" [ "$(cat "$(tabdir "$TTY")/answered")" = "use the release branch, not main" ]
+check "r16 free-text row picked by its number" [ "$(keys | head -1)" = "type:3" ]
+check "r16 no listed option typed" [ -z "$(keys | grep -E '^type:[12]$')" ]
+check "r16 Enter pressed once" [ "$(keys | grep -c 'key:cr')" = 1 ]
+reset; new_tab; dialog 0 "Which branch should I use?"
+check "r16 no free-text row -> refused" [ "$(rc_of ts send "$TTY" --relay "release")" = 3 ]
+check "r16 nothing typed without a free-text row" [ -z "$(keys)" ]
+check "r16 no option picked" [ ! -f "$(tabdir "$TTY")/answered" ]
+reset; new_tab
+check "r16 no dialog -> refused" [ "$(rc_of ts send "$TTY" --relay "release")" = 3 ]
+check "r16 nothing typed without a dialog" [ -z "$(keys)" ]
+reset; new_tab; dialog 1 "Which branch should I use?"; : > "$(tabdir "$TTY")/drop-typing"
+check "r16 words not echoed -> refused" [ "$(rc_of ts send "$TTY" --relay "release")" = 3 ]
+check "r16 no Enter when the words did not show" not has_key 'key:cr'
+check "r16 nothing answered when the words did not show" [ ! -f "$(tabdir "$TTY")/answered" ]
+reset; new_tab; dialog 1 "Use the release branch?"; : > "$(tabdir "$TTY")/drop-typing"
+check "r16 words already on screen are not taken as echoed" [ "$(rc_of ts send "$TTY" --relay "release")" = 3 ]
+check "r16 no Enter when only the question shows the words" not has_key 'key:cr'
+reset; new_tab; dialog 1
+check "r16 relay with another option -> usage error" [ "$(rc_of ts send "$TTY" --relay "x" --after cli-whoami)" = 2 ]
+check "r16 multi-line words -> usage error" [ "$(rc_of ts send "$TTY" --relay "$(printf 'a\nb')")" = 2 ]
+check "r16 nothing typed on a usage error" [ -z "$(keys)" ]
+
+# ---------------------------------------------------------------- rule 17: cancel a dialog
+reset; new_tab; dialog 1
+check "r17 cancel an open dialog" ts send "$TTY" --cancel-dialog
+check "r17 one Esc only" [ "$(keys)" = "key:esc" ]
+check "r17 dialog closed, not answered" [ ! -f "$(tabdir "$TTY")/dialog" -a ! -f "$(tabdir "$TTY")/answered" ]
+reset; new_tab
+check "r17 no dialog -> refused" [ "$(rc_of ts send "$TTY" --cancel-dialog)" = 3 ]
+check "r17 no Esc without a dialog" [ -z "$(keys)" ]
+reset; new_tab; dialog 1; : > "$(tabdir "$TTY")/sticky-dialog"
+check "r17 dialog still open after Esc -> error" [ "$(rc_of ts send "$TTY" --cancel-dialog)" = 5 ]
+check "r17 Esc pressed once only" [ "$(keys | grep -c 'key:esc')" = 1 ]
 
 # ---------------------------------------------------------------- rule 8: close only a finished session
 reset; new_tab --issue 12; issue 12 final

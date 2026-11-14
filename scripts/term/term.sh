@@ -6,6 +6,8 @@
 #   term.sh screen <target> [--lines N]
 #   term.sh state  <target>          -> gone | dialog | headsup | busy | bg | draft | idle | shell
 #   term.sh send   <target> <text> [--after "<check command>"] [--timeout S]
+#   term.sh send   <target> --relay "<the owner's own words>"
+#   term.sh send   <target> --cancel-dialog
 #   term.sh park   <target> [--issue N] [--adopt] [--timeout S]
 #   term.sh resume <session_id> [--timeout S]
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
@@ -31,7 +33,9 @@
 #    the text was a suggestion (cleared, then send); anything else is a real draft (kept, wait)
 #  6 after Enter the screen is re-read; a swallowed Enter is pressed once more, never twice
 #  7 a dialog is answered only by send --after: once the check passes, the screen is read again,
-#    and only a login dialog (term.login_dialog_re) that still has a free-text row is answered there
+#    and only a login dialog (term.login_dialog_re) that still has a free-text row is answered there.
+#    The check must prove the login, e.g. a CLI identity call: an empty check, true, :, exit 0,
+#    echo ... and test 1 are refused
 #  8 close only on a finished session: the issue has a final home-log comment and no owner label
 #    (checked on GitHub), no dialog, no running turn, no background work, an empty box; it types
 #    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed
@@ -43,6 +47,11 @@
 # 13 no function name starts with an underscore
 # 14 the launch command, profile and model come from .local/config only; the model is an alias
 # 15 --adopt takes only a tty with exactly one claude process on it and records the tab before acting
+# 16 send --relay types the owner's own words into the free-text row of the dialog open on that tab
+#    (picked by its number, as the login poke does), checks they show on screen, then presses Enter;
+#    it refuses when no dialog or no free-text row is open and never picks a listed option
+# 17 send --cancel-dialog presses Esc once on a dialog open on that tab (when the owner says to
+#    dismiss it) and checks that the dialog closed
 #
 # Config (.local/config overrides home.config):
 #   terminal_helpers=on            required for every verb
@@ -476,18 +485,40 @@ login_row() { # login_row <screen> -> free-text row of an open login dialog; rc 
   freetext_row "$1"
 }
 
-answer_freetext() { # answer_freetext <row> <text>: the login poke (rule 7)
-  local scr want row
+dialog_row() { # dialog_row <screen> -> free-text row of any open dialog; rc 1 otherwise
+  has_dialog "$1" || return 1
+  freetext_row "$1"
+}
+
+count_in() { # count_in <haystack> <needle> -> how often the needle occurs
+  TS_HAY=$1 TS_NEEDLE=$2 LC_ALL=C awk 'BEGIN { h = ENVIRON["TS_HAY"]; n = ENVIRON["TS_NEEDLE"]; c = 0
+    if (n != "") while ((i = index(h, n)) > 0) { c++; h = substr(h, i + length(n)) }
+    print c }'
+}
+
+answer_freetext() { # answer_freetext <row fn> <row> <text>: type into the free-text row (rules 7 and 16)
+  local scr row want before
   scr=$(screen_now)   # read again right before typing: the dialog may have changed or closed
-  row=$(login_row "$scr") || return 1
-  [ "$row" = "$1" ] || return 1
-  be_type "$T_TTY" "$T_TAB" "$1"; settle
+  row=$("$1" "$scr") || return 1
+  [ "$row" = "$2" ] || return 1
+  be_type "$T_TTY" "$T_TAB" "$row"; settle
   scr=$(screen_now)
   has_dialog "$scr" || die 3 "the dialog on $T_TTY closed before the answer was typed"
-  type_text "$2"
-  want=${2:0:20}
-  screen_now | grep -qF -- "$want" || die 3 "the answer did not appear in the free-text row on $T_TTY; Enter not pressed"
+  want=$(norm "$3")
+  before=$(count_in "$(norm "$scr")" "$want")
+  type_text "$3"
+  scr=$(screen_now)
+  has_dialog "$scr" || die 3 "the dialog on $T_TTY closed while the answer was typed; Enter not pressed"
+  [ "$(count_in "$(norm "$scr")" "$want")" -gt "$before" ] ||
+    die 3 "the answer did not appear in the free-text row on $T_TTY; Enter not pressed"
   be_key "$T_TTY" "$T_TAB" cr; settle
+}
+
+trivial_check() { # trivial_check <command>: rc 0 when the check proves nothing (rule 7)
+  local c
+  c=$(printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/^ *//; s/ *$//; s/  */ /g')
+  case "$c" in ''|true|:|'exit 0'|echo|'echo '*|'test 1') return 0 ;; esac
+  return 1
 }
 
 dismiss_headsup() { # one "0" press; if the notice stays, take the 0 back and report
@@ -688,19 +719,29 @@ cmd_state() {
 }
 
 cmd_send() {
-  local target text after="" timeout=600 end scr b row draft="" after_ok=0
-  [ $# -ge 2 ] || die 2 "usage: send <target> <text> [--after CMD] [--timeout S]"
-  target=$1; text=$2; shift 2
+  local target text after="" after_set=0 timeout=600 end scr b row draft="" after_ok=0
+  [ $# -ge 2 ] || die 2 "usage: send <target> <text> [--after CMD] [--timeout S] | send <target> --relay WORDS | send <target> --cancel-dialog"
+  target=$1; shift
+  case "$1" in
+    --relay)
+      [ $# -eq 2 ] || die 2 "usage: send <target> --relay \"<the owner's own words>\" (no other option)"
+      send_relay "$target" "$2"; return ;;
+    --cancel-dialog)
+      [ $# -eq 1 ] || die 2 "usage: send <target> --cancel-dialog (no other option)"
+      send_cancel "$target"; return ;;
+  esac
+  text=$1; shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      --after) after=${2:-}; shift 2 ;;
+      --after) after=${2:-}; after_set=1; shift 2 ;;
       --timeout) timeout=${2:-}; shift 2 ;;
       *) die 2 "send: unknown option '$1'" ;;
     esac
   done
-  [ -n "$text" ] || die 2 "empty text"
-  case "$text" in *"
-"*|*$'\r'*) die 2 "text must be one line (put long content in a file and send its path)" ;; esac
+  one_line "$text"
+  if [ "$after_set" = 1 ] && trivial_check "$after"; then
+    die 3 "--after '$after' proves nothing; the check must prove the login, e.g. a CLI identity call"
+  fi
   need_helpers; resolve "$target"
   [ -z "$after" ] && after_ok=1
   end=$((SECONDS + timeout))
@@ -710,7 +751,7 @@ cmd_send() {
     fi
     scr=$(screen_now)   # read after the check, never before it
     if has_dialog "$scr"; then
-      if [ -n "$after" ] && row=$(login_row "$scr") && answer_freetext "$row" "$text"; then
+      if [ -n "$after" ] && row=$(login_row "$scr") && answer_freetext login_row "$row" "$text"; then
         echo "ANSWERED $T_TTY (login dialog, free-text row $row, after the check passed)"
         return 0
       fi
@@ -731,6 +772,32 @@ cmd_send() {
     be_sleep "$POLL"
   done
   die 5 "timed out on $T_TTY; nothing was sent"
+}
+
+one_line() { # one_line <text>: refuse empty or multi-line text
+  [ -n "$1" ] || die 2 "empty text"
+  case "$1" in *"
+"*|*$'\r'*) die 2 "text must be one line (put long content in a file and send its path)" ;; esac
+}
+
+send_relay() { # send_relay <target> <words>: the owner's own words into an open dialog's free-text row (rule 16)
+  local scr row
+  one_line "$2"
+  need_helpers; resolve "$1"
+  scr=$(screen_now)
+  has_dialog "$scr" || die 3 "no dialog is open on $T_TTY; nothing relayed"
+  row=$(freetext_row "$scr") || die 3 "the dialog on $T_TTY has no free-text row; nothing relayed (a listed option is never picked)"
+  answer_freetext dialog_row "$row" "$2" || die 3 "the free-text row of the dialog on $T_TTY changed; nothing relayed"
+  echo "RELAYED $T_TTY (free-text row $row)"
+}
+
+send_cancel() { # send_cancel <target>: one Esc on an open dialog, then check it closed (rule 17)
+  need_helpers; resolve "$1"
+  has_dialog "$(screen_now)" || die 3 "no dialog is open on $T_TTY; nothing pressed"
+  be_key "$T_TTY" "$T_TAB" esc || die 4 "tab on $T_TTY is gone"
+  settle
+  has_dialog "$(screen_now)" && die 5 "the dialog on $T_TTY is still open after one Esc; not pressed again"
+  echo "CANCELLED $T_TTY"
 }
 
 issue_finished() { # issue_finished <repo> <n>: a final home-log comment exists and no owner label (rule 8)

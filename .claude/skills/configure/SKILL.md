@@ -7,6 +7,8 @@ description: Make this repo the user's own home from the base. Use when someone 
 
 One code path: `scripts/configure --answers <file> [--labels]`. Interactive mode only collects the answers. `templates/answers.example` lists every key with an example.
 
+**Every turn ends in exactly one of two ways: the numbered questions (and nothing after them), or the result of `scripts/configure` with the steps still left.** Never end a turn with a status line, and never post questions in an earlier message of the turn. Do all reading (including `templates/answers.example`, if needed) before the questions. Ask only what the person has not already answered; when the first reply settles everything, run the script without a second round.
+
 ## Order of work
 1. The repo root: `git rev-parse --show-toplevel` (`<root>` below); run the scripts and write `.local/answers` only there, never in a subfolder.
 2. The session checks below, then the base address: `git remote get-url base || git remote get-url origin`.

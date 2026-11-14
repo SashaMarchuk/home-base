@@ -9,6 +9,7 @@
 #   status  status line under the box  swallow  how many next Enters are lost
 #   linger  the process survives /exit pid  the process of the session
 #   drop-typing  typed text is lost (a silently dropped write)
+#   sticky-dialog  Esc leaves the dialog open
 # Logs: keys (every keystroke), sent (submitted lines), answered (dialog answers).
 # Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd; kills go to $TERM_FAKE_DIR/kills.
 
@@ -75,7 +76,8 @@ be_key() {
       if [ -f "$d/freetext" ]; then line=$(fake_get "$1" answer); fake_put "$1" answer "${line%?}"
       else line=$(fake_get "$1" box); fake_put "$1" box "${line%?}"; fi ;;
     esc)
-      if [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"; echo cancelled >> "$d/dialog-log"
+      if [ -f "$d/dialog" ] && [ -f "$d/sticky-dialog" ]; then :
+      elif [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"; echo cancelled >> "$d/dialog-log"
       else rm -f "$d/busy"; fi ;;
     cr)
       if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then

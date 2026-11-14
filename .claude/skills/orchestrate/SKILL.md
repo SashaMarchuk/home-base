@@ -26,6 +26,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 
 ## 3. Questions
 - Answered questions: an issue with the owner label (`labels.needs_owner`) whose newest comment has no `<!-- home-log` marker. Relay the answer to the owning session (`scripts/term/term.sh send <tty|session id> "look at issue #n"`, nothing else) or run the task; then remove the label (`scripts/home-log checkpoint <n> --clear-question` from the owning run, or `gh api -X DELETE repos/<repo>/issues/<n>/labels/<label>`).
+- Relay the owner's answer into a waiting dialog with `term.sh send <tty> --relay "<his words>"` (his words only, never an option you picked); dismiss it only when he says so: `term.sh send <tty> --cancel-dialog`.
 - Open questions: list them short and plain, one line each: what, why it blocks, recommended option.
 - Ask the owner through the surface's ask tool, context first, recommended option first, at most four per round. Never ask what `DECISIONS.md`, the issue or an earlier answer already settles.
 
