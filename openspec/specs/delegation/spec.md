@@ -49,11 +49,15 @@ The sweep, when run without `--same-repo`, SHALL report `SWEEP delegated-child-c
 - **THEN** the sweep reports it and the orchestrator finishes the parent with "Done in <child link>: <one line>"
 
 ### Requirement: HOME-082 The parent never works the child's issue
-The sending orchestrator SHALL never claim, checkpoint, finish or label an issue in the target home, and SHALL only read it.
+The sending orchestrator SHALL never claim, checkpoint, finish or label an issue in the target home, and SHALL only read it; a freeze run's own `Freeze <id>` issue in a related home is not a child's task issue, and the freeze and thaw it belongs to create, claim, checkpoint and finish it there.
 
 #### Scenario: A child issue is open
 - **WHEN** the child issue is still open
 - **THEN** the parent writes nothing to it and waits for the sweep to report it closed
+
+#### Scenario: A freeze in a related home
+- **WHEN** a freeze includes a tab whose group's home is a related home
+- **THEN** the freeze opens and claims a `Freeze <id>` issue in that home, and later checkpoints and finishes it
 
 ### Requirement: HOME-146 Handed-off work is not also done here
 The orchestrator SHALL never also do, through its own subagents, a task it handed to a child home or a worker.
