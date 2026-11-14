@@ -76,11 +76,15 @@ The `task` skill SHALL search open issues, `DECISIONS.md` and the wiki before cr
 - **THEN** its body is replaced and it moves from `status:inbox` to `status:ready`
 
 ### Requirement: HOME-015 Read-only status
-The `status` skill SHALL read only, covering this home and every child home, and report open issues grouped as needs you, only you can do, running, parked, can close, and the counts of ready and inbox, skipping issues labelled `dreams`.
+The `status` skill SHALL read only, covering this home and every child home, and report open issues grouped as needs you, only you can do, running, parked, can close, and the counts of ready and inbox, skipping issues labelled `dreams`, and list an open pull request labelled `dreams` under needs you.
 
 #### Scenario: Owner asks for status
 - **WHEN** the owner asks "status"
 - **THEN** the answer is short plain text with empty groups left out, ending with the one thing the owner should do first
+
+#### Scenario: An open Dreams pull request
+- **WHEN** a pull request labelled `dreams` is open
+- **THEN** it is listed under needs you, while the standing `dreams` issue stays skipped
 
 ### Requirement: HOME-128 The orchestrator reads its skill and honours a requested session
 A session in a home SHALL read the orchestrate skill before acting on a request, open a separate session when the owner asks for one, and never close a session that still holds an open question of the owner without the owner's word.
