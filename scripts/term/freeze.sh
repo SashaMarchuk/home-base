@@ -2,7 +2,8 @@
 # freeze.sh: freeze and thaw for scripts/term/term.sh. Sourced by term.sh only.
 #
 #   term.sh freeze (--all | --group G [--group G2 ...] | --window <group|window id|front> | <tty|session id>...)
-#                  --hard [--except <tty|session id>]... [--dry-run] [--local-only]
+#                  [--soft | --hard | --soft-then-hard] [--except <tty|session id>]... [--dry-run] [--local-only]
+#   (the mode defaults to term.freeze.default_mode, itself soft-then-hard)
 #   term.sh freeze --continue <id>
 #
 # Order (the snapshot comes first):
@@ -18,7 +19,15 @@
 #      recorded (never an option; a dialog that stays open keeps the tab); a suggestion is cleared by
 #      the ghost probe; a real draft keeps the tab (term.freeze.drafts=skip); a running turn is waited
 #      on for term.freeze.hard_grace seconds and then kept running (term.freeze.busy=wait).
-#   D. one home-log checkpoint --park per freeze issue with every outcome, then the lock is released.
+#      Soft (--soft, and first in --soft-then-hard) types one prompt through the same checks as send (no
+#      dialog, no running turn, an empty box, both signals idle; a running turn is never interrupted) asking
+#      the session to pause and write .local/freeze/<id>/<session id>.md ending with "nonce: <N>", a random
+#      value made per tab. Done means: that file exists, its last line is exactly that nonce line, and the
+#      session file says idle (the echo of the prompt on screen proves nothing). Then the tab gets the hard
+#      /exit path. At term.freeze.soft_timeout (600 s) --soft keeps the tab (kept:soft-timeout) and types
+#      nothing more; --soft-then-hard gives that tab the hard path.
+#   D. one home-log checkpoint --park per freeze issue with every outcome and the soft checkpoints of mapped
+#      tabs (an unmapped tab's checkpoint stays local), then the lock is released.
 # Never touched: the calling session (left open, its resume line recorded), tabs of other tools,
 # a tab with more than one claude process, and a session with no resume line (resume: manual).
 # Every file is written under this home's .local/. Nothing is signalled; a lingering PID is reported.
@@ -221,12 +230,54 @@ freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints th
   echo exited
 }
 
+soft_prompt() { # soft_prompt <checkpoint path> <nonce>
+  printf 'Freeze %s: pause now. Do not ask the owner anything and do not start new work. Finish or stop at a safe point (never mid-push, mid-migration or mid-send). Write %s with the headings: What this session is / State / Open questions for the owner (verbatim) / Timers and loops to re-arm / Next step, and as its last line exactly: nonce: %s. If you hold a home issue, also run its home-log checkpoint --park --question. Then stop.' "$FID" "$1" "$2"
+}
+
+soft_done() { # soft_done <checkpoint path> <nonce>: the session wrote its file, ending with the nonce, and is idle
+  [ -f "$1" ] || return 1
+  [ "$(tail -n 1 "$1" | tr -d '\r')" = "nonce: $2" ] || return 1
+  [ "$(session_of_pid "$T_PID" | cut -d"$US" -f2)" = idle ]
+}
+
+freeze_tab_soft() { # freeze_tab_soft <entry json> <checkpoint path> <nonce>: in a subshell; prints the outcome
+  local e=$1 cp=$2 nonce=$3 end scr st fs b sent=0 dismissed=0 probed=""
+  trap reg_unlock EXIT
+  T_TTY=$(printf '%s' "$e" | jq -r .tty); T_TAB=$(printf '%s' "$e" | jq -r .tab)
+  T_PID=$(printf '%s' "$e" | jq -r .pid); T_SID=$(printf '%s' "$e" | jq -r .session_id)
+  T_MATCH=$(printf '%s' "$e" | jq -r 'if (.session_id as $s | .command | contains($s)) then .session_id else .command end')
+  [ "$(be_tabs | awk -v t="$T_TTY" '$2 == t && !f { print $1; f = 1 }')" = "$T_TAB" ] || { echo "kept:changed"; return 3; }
+  { pid_alive_as "$T_PID" "$T_MATCH" && [ "$(be_pid_tty "$T_PID")" = "$T_TTY" ]; } || { echo "kept:changed"; return 3; }
+  end=$((SECONDS + $(secs_cfg term.freeze.soft_timeout 600)))
+  while [ $SECONDS -lt $end ]; do   # type the prompt only into an idle, empty box
+    scr=$(be_screen "$T_TTY" "$T_TAB") || { echo "kept:gone"; return 4; }
+    st=$(state_of "$scr")
+    fs=$(session_of_pid "$T_PID" | cut -d"$US" -f2)
+    if [ "$st" = headsup ] && [ "$fs" = idle ] && [ "$dismissed" = 0 ]; then
+      dismissed=1; dismiss_headsup || { echo "kept:headsup"; return 3; }; continue
+    fi
+    if [ "$st" = draft ] && [ "$fs" = idle ]; then
+      b=$(box_text "$scr")
+      if [ "$b" != "$probed" ]; then probed=$b; ghost_probe "$b" && continue; fi
+    fi
+    if [ "$st" = idle ] && [ "$fs" = idle ]; then submit "$(soft_prompt "$cp" "$nonce")"; sent=1; break; fi
+    be_sleep "$POLL"
+  done
+  [ "$sent" = 1 ] || { echo "kept:soft-timeout"; return 3; }
+  while :; do   # checked at least once after the prompt was sent
+    soft_done "$cp" "$nonce" && { echo checkpointed; return 0; }
+    [ $SECONDS -lt $end ] || break
+    be_sleep "$POLL"
+  done
+  echo "kept:soft-timeout"; return 3
+}
+
 # ------------------------------------------------------------------ the verb
 
 cmd_freeze() {
   local mode="" sel="" vals="[]" excepts="[]" dry=0 localonly=0 cont="" all chosen n t repo issue out rc
   local e tty sid rows scr st q opts
-  [ $# -ge 1 ] || die 2 "usage: freeze (--all | --group G | --window W | <tty|session id>...) --hard [--except T]... [--dry-run] [--local-only] | freeze --continue <id>"
+  [ $# -ge 1 ] || die 2 "usage: freeze (--all | --group G | --window W | <tty|session id>...) [--soft|--hard|--soft-then-hard] [--except T]... [--dry-run] [--local-only] | freeze --continue <id>"
   while [ $# -gt 0 ]; do
     case "$1" in
       --all) [ -z "$sel" ] || [ "$sel" = all ] || die 2 "use one selector: --all, --group, --window or targets"; sel=all; shift ;;
@@ -234,8 +285,8 @@ cmd_freeze() {
         t=${1#--}; [ -z "$sel" ] || [ "$sel" = "$t" ] || die 2 "use one selector: --all, --group, --window or targets"
         [ $# -ge 2 ] && [ -n "$2" ] || die 2 "$1 needs a value"
         sel=$t; vals=$(printf '%s' "$vals" | jq -c --arg v "$2" '. + [$v]'); shift 2 ;;
-      --hard) mode=hard; shift ;;
-      --soft|--soft-then-hard) die 2 "freeze $1 is not built yet; use --hard" ;;
+      --hard|--soft|--soft-then-hard) [ -z "$mode" ] || [ "$mode" = "${1#--}" ] || die 2 "use one mode: --soft, --hard or --soft-then-hard"
+        mode=${1#--}; shift ;;
       --except) [ $# -ge 2 ] || die 2 "--except needs a tty or session id"; excepts=$(printf '%s' "$excepts" | jq -c --arg v "$(target_tty "$2")" '. + [$v]'); shift 2 ;;
       --dry-run) dry=1; shift ;;
       --local-only) localonly=1; shift ;;
@@ -249,7 +300,8 @@ cmd_freeze() {
   need_helpers
   if [ -n "$cont" ]; then freeze_continue "$cont"; return $?; fi
   [ -n "$sel" ] || die 2 "freeze needs a selector: --all, --group G, --window W or targets"
-  [ "$mode" = hard ] || die 2 "freeze needs --hard (the soft modes are not built yet)"
+  [ -n "$mode" ] || mode=$(cfg term.freeze.default_mode soft-then-hard)
+  case "$mode" in soft|hard|soft-then-hard) ;; *) die 3 "term.freeze.default_mode must be soft, hard or soft-then-hard, not '$mode'" ;; esac
   if [ "$sel" = group ]; then
     for t in $(printf '%s' "$vals" | jq -r '.[]'); do group_known "$t" || die 2 "unknown group '$t'"; done
   fi
@@ -289,7 +341,7 @@ cmd_freeze() {
     printf '%s' "$chosen" | jq -c '.[]' | while IFS= read -r e; do
       tty=$(printf '%s' "$e" | jq -r .tty)
       st=-; [ "$(printf '%s' "$e" | jq -r .plan)" = act ] && st=$(state_of "$(be_screen "$tty" "$(printf '%s' "$e" | jq -r .tab)" 2>/dev/null)")
-      printf '%s\n' "$e" | jq -r --arg st "$st" '"\(.tty) \(.group // "-") \($st) -> \(if .plan == "act" then "hard close" else .plan end)"'
+      printf '%s\n' "$e" | jq -r --arg st "$st" --arg m "$mode" '"\(.tty) \(.group // "-") \($st) -> \(if .plan == "act" then "\($m) close" else .plan end)"'
     done
     return 0
   fi
@@ -356,17 +408,35 @@ EOF
 }
 
 freeze_act() { # phase C and D over the snapshot's entries still to act on
-  local e tty outcome rc linger=0 sid repo issue of rec
+  local e tty outcome rc linger=0 sid repo issue of rec mode cp nonce
+  mode=$(jq -r .mode "$SNAP")
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     tty=$(printf '%s' "$e" | jq -r .tty)
-    outcome=$( freeze_tab_hard "$e" ); rc=$?
-    outcome=$(printf '%s\n' "$outcome" | tail -1)
+    sid=$(printf '%s' "$e" | jq -r .session_id)
+    outcome=""; rc=0
+    if [ "$mode" != hard ]; then
+      mkdir -p "$FREEZE_DIR/$FID"
+      cp="$FREEZE_DIR/$FID/$sid.md"; nonce=$(be_uuid | tr -d '-')
+      outcome=$( freeze_tab_soft "$e" "$cp" "$nonce" ); rc=$?
+      outcome=$(printf '%s\n' "$outcome" | tail -1)
+      if [ "$outcome" = checkpointed ]; then
+        snap_update --arg t "$tty" --arg c "$cp" '.entries |= map(if .tty == $t then .checkpoint = $c else . end)'
+        outcome=""
+      elif [ "$mode" = soft ] || [ "$outcome" = kept:changed ] || [ "$outcome" = kept:gone ]; then
+        :   # soft only: the tab keeps running and nothing more is typed
+      else
+        outcome=""   # soft-then-hard: this tab gets the hard path
+      fi
+    fi
+    if [ -z "$outcome" ]; then
+      outcome=$( freeze_tab_hard "$e" ); rc=$?
+      outcome=$(printf '%s\n' "$outcome" | tail -1)
+    fi
     [ -n "$outcome" ] || outcome="failed:exit-$rc"
     [ "$rc" = 5 ] && linger=1
     snap_outcome "$tty" "$outcome"
     if [ "$outcome" = exited ]; then
-      sid=$(printf '%s' "$e" | jq -r .session_id)
       reg_update --arg t "$tty" --arg c "$(now_utc)" --arg f "$FID" \
         'map(if .tty == $t and .closed == null then . + {closed: $c, frozen: $f} else . end)' || note "registry not updated for $tty"
     fi
@@ -379,9 +449,15 @@ EOF
     [ -n "$rec" ] || continue
     repo=$(printf '%s' "$rec" | jq -r .repo); issue=$(printf '%s' "$rec" | jq -r .issue)
     of="${FREEZE_DIR:?}/${FID:?}.outcomes"
-    jq -r --arg r "$repo" '"Outcomes of Freeze \(.id):", (.entries[] | select(.home == $r and .recorded) | "- \(.session_id): \(.outcome)")' "$SNAP" > "$of"
-    "$HOME_LOG" checkpoint "$issue" --repo "$repo" --run-id "freeze-$FID" --park --text-file "$of" >/dev/null 2>>"$FREEZE_DIR/$FID.log" ||
-      note "the outcomes could not be written to $repo#$issue"
+    freeze_outcomes "$repo" 1 > "$of"
+    "$HOME_LOG" checkpoint "$issue" --repo "$repo" --run-id "freeze-$FID" --park --text-file "$of" >/dev/null 2>>"$FREEZE_DIR/$FID.log"
+    rc=$?
+    if [ "$rc" = 4 ]; then   # sensitive text in a checkpoint: write the outcomes only; the checkpoints stay local
+      freeze_outcomes "$repo" 0 > "$of"
+      "$HOME_LOG" checkpoint "$issue" --repo "$repo" --run-id "freeze-$FID" --park --text-file "$of" >/dev/null 2>>"$FREEZE_DIR/$FID.log"
+      rc=$?
+    fi
+    [ "$rc" = 0 ] || note "the outcomes could not be written to $repo#$issue"
     rm -f "$of"
   done <<EOF
 $(jq -c '.records[]' "$SNAP")
@@ -394,15 +470,30 @@ EOF
   return 0
 }
 
+freeze_outcomes() { # freeze_outcomes <repo> <with checkpoints 0|1>: the phase D text for that home's issue
+  local e cp
+  jq -r --arg r "$1" '"Outcomes of Freeze \(.id):", (.entries[] | select(.home == $r and .recorded) | "- \(.session_id): \(.outcome)")' "$SNAP"
+  [ "$2" = 1 ] || return 0
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    cp=$(printf '%s' "$e" | jq -r .checkpoint)
+    [ -f "$cp" ] || continue
+    printf '\nCheckpoint of %s:\n' "$(printf '%s' "$e" | jq -r .session_id)"
+    sed '$d' "$cp"   # the nonce line is not copied
+  done <<EOF
+$(jq -c --arg r "$1" '.entries[] | select(.home == $r and .recorded and (.local | not) and .checkpoint != null)' "$SNAP")
+EOF
+}
+
 freeze_continue() { # freeze_continue <id>: act again on the entries not yet closed (the tab must still be the same)
   FID=$1
   case "$FID" in *[!0-9A-Z]*|'') die 2 "not a freeze id: '$1'" ;; esac
   SNAP="$FREEZE_DIR/$FID.json"
   [ -f "$SNAP" ] || die 4 "no snapshot $SNAP"
   freeze_lock
-  # retried: a running turn, signals that disagreed, a draft; never a dialog already cancelled once or a lingering PID
+  # retried: a running turn, signals that disagreed, a draft, a soft timeout; never a dialog already cancelled once or a lingering PID
   snap_update '.entries |= map(if .outcome == "kept:busy" or .outcome == "kept:signals-disagree" or .outcome == "kept:draft"
-                               then .outcome = "captured" else . end)' ||
+                               or .outcome == "kept:soft-timeout" then .outcome = "captured" else . end)' ||
     die 3 "cannot update the snapshot"
   freeze_act
 }

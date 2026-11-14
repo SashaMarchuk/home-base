@@ -437,5 +437,62 @@ check "thaw: an unmapped tab is not reopened from the issue" grep -q "^KEPT $S3:
 reset "${FKEYS[@]}"
 check "thaw: no snapshot -> exit 4" [ "$(rc_of ts thaw latest)" = 4 ]
 
+# ---------------------------------------------------------------- freeze --soft and --soft-then-hard
+answers() { # answers <tty> [nonce|wrong] [status]: the session writes its checkpoint when the soft prompt arrives
+  cat > "$(tabdir "$1")/on-submit" <<EOF
+#!/bin/bash
+case "\$1" in "Freeze "*": pause now."*) ;; *) exit 0 ;; esac
+p=\$(printf '%s' "\$1" | sed -n 's/.* Write \(.*\) with the headings: .*/\1/p')
+n=\$(printf '%s' "\$1" | sed -n 's/.*last line exactly: nonce: \([^.]*\)\..*/\1/p')
+[ "${2:-}" = wrong ] && n=other
+printf '# What this session is\nwork on the g1 project\n# Open questions for the owner (verbatim)\nCheckpoint question $1?\nnonce: %s\n' "\$n" > "\$p"
+f="$TERM_FAKE_DIR/profiles/work/sessions/$(cat "$(tabdir "$1")/pid").json"
+jq '.status = "${3:-idle}"' "\$f" > "\$f.x" && mv "\$f.x" "\$f"
+EOF
+}
+SKEYS=("${FKEYS[@]}" term.freeze.soft_timeout=1)
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; answers ttyw1
+check "soft: --soft exits 0" [ "$(rc_of ts freeze --all --soft)" = 0 ]
+check "soft: the prompt was the first thing typed" [ "$(sent ttyw1 | head -1 | cut -c1-40)" = "$(printf 'Freeze %s: pause now. Do not ask t' "$(jq -r .id "$(snapf)")" | cut -c1-40)" ]
+check "soft: /exit after the checkpoint with the right nonce" [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
+check "soft: closed" [ "$(outcome ttyw1)" = exited ]
+check "soft: the checkpoint is under this home's .local" [ -f "$HOME_ROOT/.local/freeze/$(jq -r .id "$(snapf)")/$S1.md" ]
+check "soft: the checkpoint is copied into the freeze issue without the nonce" issue_text test/home | grep -qF "Checkpoint question ttyw1?"
+check "soft: no nonce line in the issue" not grep -q '^nonce: ' <(issue_text test/home)
+transcript work "$S1"
+ts thaw latest >/dev/null 2>&1
+check "soft: thaw asks it to read its checkpoint first" launch_of "$S1" | grep -qF "Read $HOME_ROOT/.local/freeze/"
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"
+ts freeze --all --soft >/dev/null 2>&1
+check "soft: only the prompt's echo, no file -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ]
+check "soft: kept:soft-timeout, the session runs" [ "$(outcome ttyw1)" = kept:soft-timeout ] && alive 801
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; answers ttyw1 wrong
+ts freeze --all --soft >/dev/null 2>&1
+check "soft: a file with a wrong nonce -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ] && [ "$(outcome ttyw1)" = kept:soft-timeout ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; answers ttyw1 nonce busy
+ts freeze --all --soft >/dev/null 2>&1
+check "soft: the right nonce but a session not idle -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze --all --soft >/dev/null 2>&1
+check "soft: never typed into a running turn" nokeys ttyw1
+check "soft: kept:soft-timeout" [ "$(outcome ttyw1)" = kept:soft-timeout ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" waiting; fdialog ttyw1 "Pick?"
+ts freeze --all --soft >/dev/null 2>&1
+check "soft: a dialog is never answered or cancelled by soft" nokeys ttyw1
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"
+ts freeze --all >/dev/null 2>&1
+check "default mode: soft first" [ "$(sent ttyw1 | head -1 | cut -c1-7)" = "Freeze " ]
+check "default mode: then hard for a tab that did not answer" [ "$(outcome ttyw1)" = exited ] && [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze --all --soft-then-hard >/dev/null 2>&1
+check "soft-then-hard: a running turn stays running after both" [ "$(outcome ttyw1)" = kept:busy ] && nokeys ttyw1
+reset "${SKEYS[@]}"
+live ttyw2 802 "$W2" w8 "$S2"; answers ttyw2
+live ttyw3 803 "$T" w9 "$S3"; answers ttyw3
+ts freeze --all --soft >/dev/null 2>&1
+check "soft boundary: the peer tab's checkpoint goes to the peer issue" issue_text test/peer | grep -qF "Checkpoint question ttyw2?"
+check "soft boundary: an unmapped tab's checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw3?"
+check "soft boundary: the peer checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw2?"
+
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
