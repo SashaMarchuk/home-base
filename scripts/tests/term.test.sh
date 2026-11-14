@@ -486,6 +486,12 @@ untouched() { # untouched <registry length>: nothing typed, nothing recorded, no
   [ -z "$(keys)" ] && [ "$(reg_len)" = "$1" ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
 }
 HSID="0a1b2c3d-1111-4222-8333-444455556666"
+claim() { # claim <n> <run id>: the run has an active home-log comment on issue n
+  mkdir -p "$GH_STUB_DIR/test__home/issues"
+  jq -n --argjson n "$1" --arg body "<!-- home-log run=$2 state=active -->" \
+    '{number: $n, title: "t", body: "", state: "open", state_reason: null, labels: [], created_at: "x", updated_at: "x",
+      closed_at: null, author: "owner", comments: [{id: 1, body: $body}]}' > "$GH_STUB_DIR/test__home/issues/$1.json"
+}
 
 reset; hand_tab ttyh1 701 "claude"
 check "r15 close --adopt without an issue" ts close ttyh1 --adopt
@@ -496,12 +502,13 @@ check "r15 never killed" [ ! -f "$TERM_FAKE_DIR/kills" ]
 reset; hand_tab ttyh1 701 "/usr/local/bin/claude --model opus"; issue 12 final
 check "r15 close --adopt with a finished issue" ts close ttyh1 --adopt --issue 12
 check "r15 issue recorded" [ "$(jq -r '.[0].issue' "$REG")" = 12 ]
-reset; hand_tab ttyh1 702 "claude --resume $HSID"
+reset; hand_tab ttyh1 702 "claude --resume $HSID"; claim 21 "$HSID"
 check "r15 park --adopt" ts park ttyh1 --adopt --issue 21
 check "r15 park wrote the resume command" grep -q "^checkpoint 21 --run-id $HSID --park --text Parked by term.sh. Resume: cd .* && 'claude' --resume $HSID" "$T/home-log.calls"
 check "r15 parked entry adopted" [ "$(jq -r '.[0] | (.adopted == true and .parked == true and .session_id == "'"$HSID"'")' "$REG")" = true ]
 check "r15 parked session exited" not alive 702
-reset launch.profile_flag=-a; hand_tab ttyh1 703 "claude -a personal --model opus --resume $HSID --verbose"
+check "r15 parked entry bound to the issue" [ "$(jq -r '.[0].issue' "$REG")" = 21 ]
+reset launch.profile_flag=-a; hand_tab ttyh1 703 "claude -a personal --model opus --resume $HSID --verbose"; claim 21 "$HSID"
 check "r15 park --adopt keeps launch flags" ts park ttyh1 --adopt --issue 21
 check "r15 resume keeps profile and model" grep -q "Resume: cd .* && 'claude' -a 'personal' --model 'opus' --resume $HSID\$" "$T/home-log.calls"
 
@@ -548,6 +555,23 @@ check "r15 home-log not called" [ ! -f "$T/home-log.calls" ]
 reset; hand_tab ttyh1 702 "claude --resume $HSID"
 check "r15 park without an issue -> usage error" [ "$(rc_of ts park ttyh1 --adopt)" = 2 ]
 check "r15 park no-issue untouched" untouched 0
+reset; hand_tab ttyh1 702 "claude --resume $HSID"; issue 21 active
+check "r15 park when the run has no comment on the issue -> refused" [ "$(rc_of ts park ttyh1 --adopt --issue 21)" = 3 ]
+check "r15 refusal names home-log start" grep -qF "run 'scripts/home-log start 21 --run-id $HSID' first" "$T/err"
+check "r15 no-comment untouched" untouched 0
+check "r15 no-comment home-log not called" [ ! -f "$T/home-log.calls" ]
+reset; hand_tab ttyh1 702 "claude --resume $HSID"; claim 21 "$HSID"; claim 22 "$HSID"; : > "$T/home-log.fail"
+check "r15 park --adopt with a failing home-log -> refused" [ "$(rc_of ts park ttyh1 --adopt --issue 21)" = 3 ]
+check "r15 failed park leaves the tab bound to no issue" [ "$(jq -r '.[0] | (.adopted == true and .issue == null and .closed == null)' "$REG")" = true ]
+check "r15 failed park session alive" alive 702
+rm -f "$T/home-log.fail"
+check "r15 park after a failed park with another issue" ts park ttyh1 --adopt --issue 22
+check "r15 second park bound to that issue" [ "$(jq -r '.[0] | (.issue == 22 and .parked == true)' "$REG")" = true ]
+reset; hand_tab ttyh1 701 "claude"; issue 12 final; put box "owner is typing"
+check "r15 close --adopt refused on a draft" [ "$(rc_of ts close ttyh1 --adopt --issue 12)" = 3 ]
+check "r15 refused close leaves the tab bound to no issue" [ "$(jq -r '.[0] | (.adopted == true and .issue == null)' "$REG")" = true ]
+reset; new_tab --issue 12; issue 12 final; issue 13 final
+check "r15 an opened tab keeps its strict issue binding" [ "$(rc_of ts close "$TTY" --issue 13)" = 3 ]
 
 echo "term.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

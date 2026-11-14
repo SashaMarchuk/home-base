@@ -24,8 +24,11 @@
 # claude process must run on it (its exact PID, command line checked) and its screen must read.
 # Every other check stays. Close with --adopt checks the issue when one is given and needs none
 # otherwise; park with --adopt needs a session id on the process's command line (--session-id or
-# --resume). The tab is recorded in the registry with "adopted": true before the first keystroke
-# (a notice dismissal, a ghost probe or the exit command).
+# --resume) and a home-log comment of that session's run on the issue (run
+# 'scripts/home-log start <n> --run-id <session id>' first). The tab is recorded in the registry
+# with "adopted": true and no issue before the first keystroke (a notice dismissal, a ghost probe
+# or the exit command); the issue is added only after the park checkpoint or the close's
+# finished-issue check succeeded, so a failed call leaves the tab bound to no issue.
 #
 # Rules this file enforces (see openspec/specs/terminal-helpers in the base):
 #  1 tabs are addressed by tty and verified against the recorded tab id and pid
@@ -51,7 +54,8 @@
 # 12 a PID is signalled only by exact number, after its command line was checked
 # 13 no function name starts with an underscore
 # 14 the launch command, profile and model come from .local/config only; the model is an alias
-# 15 --adopt takes only a tty with exactly one claude process on it and records the tab before acting
+# 15 --adopt takes only a tty with exactly one claude process on it and records the tab before acting;
+#    the recorded issue is set only after the park or close check on that issue succeeded
 # 16 send --relay types the owner's own words into the free-text row of the dialog open on that tab
 #    (picked by its number, as the login poke does), checks they show on screen, then presses Enter;
 #    it refuses when no dialog or no free-text row is open and never picks a listed option
@@ -438,18 +442,30 @@ adopt_flags() { # adopt_flags <command line> -> "<command> [<profile flag> P] [-
   printf '%s\n' "$line"
 }
 
-adopt_record() { # adopt_record <issue>: add the adopted tab to the registry; nothing is typed before this
+adopt_record() { # adopt_record: add the adopted tab to the registry with no issue; nothing is typed before this
   local entry
   [ "$ADOPT_NEW" = 1 ] || return 0
   entry=$(jq -nc --arg sid "$T_SID" --arg tty "$T_TTY" --arg tab "$T_TAB" --arg pid "$T_PID" \
-    --arg cwd "$(be_pid_cwd "$T_PID")" --arg issue "$1" --arg resume "$ADOPT_RESUME" --arg opened "$(now_utc)" \
+    --arg cwd "$(be_pid_cwd "$T_PID")" --arg resume "$ADOPT_RESUME" --arg opened "$(now_utc)" \
     --arg match "$T_MATCH" \
-    '{session_id: $sid, tty: $tty, pid: ($pid | tonumber), cwd: $cwd,
-      issue: (if $issue == "" then null else ($issue | tonumber) end),
+    '{session_id: $sid, tty: $tty, pid: ($pid | tonumber), cwd: $cwd, issue: null,
       resume: (if $resume == "" then null else $resume end), opened: $opened, closed: null,
       role: "owner", tab: $tab, match: $match, adopted: true}') || die 3 "could not build the registry entry; nothing was typed"
   reg_update --argjson e "$entry" '. + [$e]' || die 3 "registry write failed; nothing was typed"
   ADOPT_NEW=0
+}
+
+bind_issue() { # bind_issue <issue>: record the issue on an adopted entry once its check on that issue passed
+  [ "$T_ADOPTED" = 1 ] && [ -n "$1" ] && [ -z "$T_ISSUE" ] || return 0
+  reg_set "$T_SID" '{issue: ($n | tonumber)}' --arg n "$1" || note "registry not updated with issue #$1"
+  T_ISSUE=$1
+}
+
+run_has_comment() { # run_has_comment <repo> <n> <run id>: 0 when the run has a home-log comment on the issue; 2 when unreadable
+  local raw
+  raw=$(gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null) || return 2
+  printf '%s' "$raw" | jq -s -e --arg r "$3" \
+    'any((add // [])[]; .body | startswith("<!-- home-log run=" + $r + " "))' >/dev/null
 }
 
 screen_now() { be_screen "$T_TTY" "$T_TAB" || die 4 "tab on $T_TTY is gone"; }
@@ -877,7 +893,7 @@ cmd_close() {
   if [ "$T_ALIVE" = 1 ]; then
     scr=$(screen_now)
     if has_headsup "$scr"; then
-      adopt_record "$issue"
+      adopt_record
       dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not closing"
       scr=$(screen_now)
     fi
@@ -887,11 +903,12 @@ cmd_close() {
     [ -n "$n" ] && [ "$n" -gt 0 ] && die 3 "$n background job(s) on $T_TTY; not closing"
     if [ "$(exit_word)" = /exit ]; then
       b=$(box_text "$scr") || die 3 "no input box on $T_TTY; not closing"
-      if [ -n "$b" ]; then adopt_record "$issue"; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not closing"; fi
+      if [ -n "$b" ]; then adopt_record; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not closing"; fi
     fi
-    adopt_record "$issue"
+    adopt_record
     exit_session "$(exit_word)" "$timeout"
   fi
+  bind_issue "$issue"   # set only now: the finished-issue check passed and the session exited
   exit_shell
   reg_set "$T_SID" '{closed: $c}' --arg c "$(now_utc)" || note "registry not updated"
   echo "CLOSED $T_SID $T_TTY"
@@ -916,9 +933,17 @@ cmd_park() {
   [ "$T_ALIVE" = 1 ] || die 4 "session $T_SID is not running"
   issue=$(pick_issue "$issue") || exit $?
   [ -n "$issue" ] || die 2 "park needs the issue number"
+  if [ "$adopt" = 1 ]; then
+    run_has_comment "$HOME_REPO" "$issue" "$T_SID"
+    case $? in
+      0) ;;
+      2) die 3 "cannot read the comments of issue #$issue; nothing was recorded" ;;
+      *) die 3 "run 'scripts/home-log start $issue --run-id $T_SID' first; nothing was recorded" ;;
+    esac
+  fi
   scr=$(screen_now)
   if has_headsup "$scr"; then
-    adopt_record "$issue"
+    adopt_record
     dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not parking"
     scr=$(screen_now)
   fi
@@ -928,13 +953,14 @@ cmd_park() {
   else
     is_busy "$scr" && die 3 "session is busy; park it when idle"
     b=$(box_text "$scr") || die 3 "no input box on $T_TTY; not parking"
-    if [ -n "$b" ]; then adopt_record "$issue"; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not parking"; fi
+    if [ -n "$b" ]; then adopt_record; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not parking"; fi
   fi
-  adopt_record "$issue"
+  adopt_record
   text="Parked by term.sh. Resume: $(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume')"
   qa=(); [ -n "$q" ] && qa=(--question "$q")
   "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park ${qa[@]+"${qa[@]}"} --text "$text" >/dev/null ||
     die 3 "home-log failed; the session is left running"
+  bind_issue "$issue"
   if [ "$dialog" = 1 ]; then
     be_key "$T_TTY" "$T_TAB" esc; settle   # Esc cancels the dialog; it never answers it
     wait_quiet "$timeout" || die 5 "the session on $T_TTY did not settle after the dialog was cancelled"

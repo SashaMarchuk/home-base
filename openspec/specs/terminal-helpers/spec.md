@@ -201,6 +201,24 @@ When `term.sh` adopts a tab whose command line names a session id, the resume co
 - **WHEN** `launch.profile_flag` is `-a` and `term.sh park <tty> --adopt --issue 21` runs on a tab started as `claude -a personal --model opus --resume <id>`
 - **THEN** the resume command written to issue 21 is `cd <cwd> && 'claude' -a 'personal' --model 'opus' --resume <id>`
 
+### Requirement: HOME-153 An adopted tab is bound to an issue only after its check passed
+`term.sh park --adopt` and `term.sh close --adopt` SHALL record the adopted tab with no issue and set its issue only after the park checkpoint or the close's finished-issue check on that issue succeeded, while a tab bound to an issue still refuses a different `--issue`.
+
+#### Scenario: A park that failed is tried with another issue
+- **WHEN** `term.sh park <tty> --adopt --issue 21` fails at the `home-log` checkpoint and `term.sh park <tty> --adopt --issue 22` runs next on a session whose run has a comment on issue 22
+- **THEN** the first call leaves the tab recorded with no issue and the second parks it under issue 22
+
+#### Scenario: A tab already bound
+- **WHEN** a tab recorded under issue 12 is closed with `--issue 13`
+- **THEN** close exits 3 and nothing is typed
+
+### Requirement: HOME-154 Parking an adopted tab needs its run on the issue
+Before `term.sh park --adopt` records anything, it SHALL check that the session's run has a `home-log` comment on the issue, and otherwise exit 3 with one line telling to run `scripts/home-log start <n> --run-id <session id>` first.
+
+#### Scenario: The owner's session never claimed the issue
+- **WHEN** `term.sh park <tty> --adopt --issue 21` runs and issue 21 has no comment of that session's run
+- **THEN** park exits 3 naming `scripts/home-log start 21 --run-id <session id>`, nothing is recorded and nothing is typed
+
 ### Requirement: HOME-132 Only term.sh writes the registry
 A session SHALL never edit `.local/registry.json` by hand; only `term.sh` writes it.
 

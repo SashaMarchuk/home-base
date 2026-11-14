@@ -52,7 +52,7 @@ Rules:
 - Start with: <home path>/scripts/home-log start <n> --repo <repo>
 - End with:   <home path>/scripts/home-log finish <n> --repo <repo> --text "<summary: what was done, links, owner answers that changed the outcome>"
 - Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>".
-- Nothing external without the owner's yes; prepare a draft. After his yes on the exact text, send it yourself as approved, then read it back.
+- Nothing external without the owner's yes; prepare a draft and show it for approval on a review page (the draft as an editable text, yes / no / note per row; see section 8 of <home path>/.claude/skills/orchestrate/SKILL.md), not as a plain question. After his yes on the exact text, send it yourself as approved, then read it back. Text the owner writes himself in direct answer to a question asking whether to send a specific text is his yes on exactly that text: send it as written, read it back, do not ask again.
 - Limits: <mode, only when set for this task>
 Owner's words for this task (verbatim):
 <quote>

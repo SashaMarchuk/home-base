@@ -122,12 +122,26 @@ After the owner's yes on the exact text of a message or post, the session SHALL 
 - **WHEN** the owner says yes to the exact text of a reply
 - **THEN** the session sends that text unchanged and reads the sent message back
 
+### Requirement: HOME-151 The owner's own text in answer to a send question is his yes
+When the owner, in direct answer to a question asking whether to send a specific text, writes the text himself, the session SHALL treat that as his yes on exactly that text: send it as written, read it back and not ask again.
+
+#### Scenario: The owner rewrites the draft in his answer
+- **WHEN** the session asks whether to send a draft and the owner answers with a replacement text he wrote
+- **THEN** the session sends the replacement text as written, reads it back and asks no second send question
+
 ### Requirement: HOME-142 A draft with choices goes on one review page
 When a draft comes together with other choices for the owner, the session SHALL show them on one review page with the draft as an editable text and yes / no / note per row, plus one pointer question.
 
 #### Scenario: A draft and two options
 - **WHEN** a reply draft and two choices wait for the owner
 - **THEN** one review page holds the editable draft and a yes / no / note row for each, and one question points to it
+
+### Requirement: HOME-152 A worker shows a draft on a review page
+Every worker brief SHALL tell the worker to show a draft for the owner's approval on a review page, with the draft as an editable text and yes / no / note per row, not as a plain question.
+
+#### Scenario: A worker prepares a reply
+- **WHEN** a worker has a reply draft that needs the owner's approval
+- **THEN** it shows the draft on a review page with an editable text and a yes / no / note row
 
 ### Requirement: HOME-143 No confirmation of the owner's own order
 The orchestrator SHALL report an order, plan or launch the owner gave instead of asking the owner to confirm it.

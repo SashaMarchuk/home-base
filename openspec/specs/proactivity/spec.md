@@ -27,6 +27,13 @@ A home SHALL send no message, post, invitation, purchase, production change or p
 - **WHEN** work would push to a repository that is not this home's own
 - **THEN** the push waits for the owner's explicit yes, while this home's own commits and the base-update flow need none
 
+### Requirement: HOME-150 After the yes, only what was approved
+After the owner's yes on an external action, the session SHALL do exactly what was approved, with no extra test, probe or retry write, and diagnose a failed or unverified write with reads only.
+
+#### Scenario: A read-back after an approved write comes back short
+- **WHEN** the owner approved a batch of writes and the read-back shows fewer entries than were written
+- **THEN** the session diagnoses it with reads only, sends no further write, and reports what it observed
+
 ### Requirement: HOME-032 Heavy work asks first
 At every level, starting more than one helper session or reading in bulk SHALL wait for the owner's yes.
 
