@@ -256,7 +256,7 @@ if sel checks; then
   printf '### D23 \xe2\x80\x94 a\n### D23 \xe2\x80\x94 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
   expect "checks fail on a duplicate id in the dash format" 1 "$H/scripts/checks/run"
   printf '### D23 \xe2\x80\x94 a\n### D24 \xe2\x80\x94 b\n' > "$H/DECISIONS.md"; ( cd "$H" && git add DECISIONS.md )
-  expect "checks pass on the next id of the same family" 0 "$H/scripts/checks/run"
+  expect "checks pass on distinct ids in the dash format" 0 "$H/scripts/checks/run"
   mkdir -p "$H/openspec"; echo x > "$H/openspec/a.md"; ( cd "$H" && git add openspec )
   expect "checks fail on a base-only path in a home" 1 "$H/scripts/checks/run"
   ( cd "$H" && git rm -rq --cached openspec && rm -rf openspec )

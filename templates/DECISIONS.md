@@ -12,6 +12,7 @@ Source: where the words were said (issue link, session id, document)
 Status: active | superseded-by <newer ID>
 Kind: owner | delegated
 Decider: (Kind: delegated only) who decided, under the delegating quote above
+Supersedes: (optional) the older ID this entry replaces
 ```
 
 <!-- entries below -->
