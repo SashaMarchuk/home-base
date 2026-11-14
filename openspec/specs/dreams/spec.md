@@ -17,7 +17,11 @@ Each Dreams run SHALL record itself on one open issue labelled `dreams`, which i
 - **THEN** it writes one final comment with `read-until: <UTC ISO>`, `result: <PR link | no findings>` and `facts: <shown>/<saved>` and the issue stays open
 
 ### Requirement: HOME-044 Watermark and input
-A Dreams run SHALL read only input newer than the newest `read-until` line, or newer than `dreams.first_window_days` (default 14) days on the first run, taking local transcripts under `transcripts.paths` except sessions whose working directory starts with a `transcripts.exclude` prefix, else the comments of issues closed since the watermark.
+A Dreams run SHALL read only input newer than the newest `read-until` line, or newer than `dreams.first_window_days` (default 14) days on the first run, taking local transcripts under `transcripts.paths` except sessions whose working directory starts with a `transcripts.exclude` prefix, and always the owner's comments on issues closed since the watermark.
+
+#### Scenario: Answers given in issue comments
+- **WHEN** local transcripts exist and the owner answered on an issue closed since the watermark
+- **THEN** the run reads that comment as well
 
 #### Scenario: Nothing new
 - **WHEN** no input is newer than the watermark
