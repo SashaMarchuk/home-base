@@ -22,7 +22,9 @@
 # Exit: 0 ok (check for a "pending:" line), 2 missing or invalid answers (nothing
 # written), 3 repo not ready or a write or git step failed (the file or step is
 # named), 4 files written but --labels failed (the last line says whether the repo
-# was not found or this login may not manage labels), 5 files written but git
+# was not found or this login may not manage labels, and ends with the one line,
+# starting "cd <root> &&", that does the rest from the person's own terminal: any
+# pending git steps with the upload, then the labels), 5 files written but git
 # refused a step after the probe allowed it (the last line gives the full rerun line).
 # Running it twice with the same answers gives the same files.
 set -u
@@ -139,6 +141,7 @@ for k in lang.files lang.owner; do
   v=$(ans "$k"); [ -z "$v" ] || printf '%s' "$v" | grep -qE '^[a-z]{2}(-[A-Za-z0-9]+)?$' || BAD+=("$k=$v (a two-letter language code such as en or es)")
 done
 case "$(ans tracker.board)" in *[!a-z0-9-]*) BAD+=("tracker.board=$(ans tracker.board) (none or a lower-case board name)") ;; esac
+case "$(ans launch.command)" in *[!A-Za-z0-9._-]*) BAD+=("launch.command=$(ans launch.command) (one command word, such as claude or codex)") ;; esac
 case "$(ans labels.needs_owner)" in *[!A-Za-z0-9:_-]*) BAD+=("labels.needs_owner=$(ans labels.needs_owner) (letters, digits, : _ -)") ;; esac
 
 # accounts rows: three fields, labels only
@@ -381,13 +384,14 @@ if [ "$IS_GIT" = 1 ]; then
 else
   echo "configure: warning: $ROOT is not a git repo root; hooks path, base-only paths and remotes not set" >&2
 fi
-PENDING=""
+PSTEPS=""
 if [ ${#PEND_RM[@]} -gt 0 ] || [ ${#PEND[@]} -gt 0 ]; then
   rest=""; for c in ${PEND[@]+"${PEND[@]}"}; do rest="${rest:+$rest && }$c"; done
-  PENDING="cd $(q "$ROOT") && ${PEND_RM[0]:-}"
-  [ ${#PEND_RM[@]} -gt 0 ] && [ -n "$rest" ] && PENDING="$PENDING ; "
-  PENDING="$PENDING$rest"
+  PSTEPS="${PEND_RM[0]:-}"
+  [ ${#PEND_RM[@]} -gt 0 ] && [ -n "$rest" ] && PSTEPS="$PSTEPS ; "
+  PSTEPS="$PSTEPS$rest"
 fi
+PENDING=""; [ -n "$PSTEPS" ] && PENDING="cd $(q "$ROOT") && $PSTEPS"
 
 # ---------- completeness check: every key this run used ----------
 echo "configure: keys used"
@@ -412,10 +416,13 @@ if [ "$LABELS" = 1 ]; then
   LOUT=$("$ROOT/scripts/labels" --repo "$(ans repo)" 2>&1); lrc=$?
   printf '%s\n' "$LOUT"
   if [ "$lrc" != 0 ]; then
+    # the one line that does the rest: with pending git steps, those and the upload; then the labels
+    UP=""; [ -n "$PSTEPS" ] && UP="$PSTEPS && git add -A && git commit -m \"Configure home\" && git push -u origin HEAD && "
+    rem() { echo "cd $(q "$ROOT") && $UP$1scripts/labels"; }
     case "$LOUT" in
-      *"cannot reach"*"create it on GitHub"*) why="the repo $(ans repo) was not found on GitHub: create it (private), commit, push, then run scripts/labels" ;;
-      *"cannot manage labels"*) why="this GitHub login has no permission to manage labels in $(ans repo). On a computer: \`gh auth refresh -s repo\`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels" ;;
-      *) why="GitHub refused the label step (see the line above); run scripts/labels again once it is fixed" ;;
+      *"cannot reach"*"create it on GitHub"*) why="the repo $(ans repo) was not found on GitHub. Create it (private), then run this line from your own terminal: $(rem '')" ;;
+      *"cannot manage labels"*) why="this GitHub login has no permission to manage labels in $(ans repo). In a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access, then run scripts/labels. On a computer, run this line from your own terminal: $(rem 'gh auth refresh -s repo && ')" ;;
+      *) why="GitHub refused the label step (see the line above). Once it is fixed, run this line from your own terminal: $(rem '')" ;;
     esac
     die 4 "the files are written, but the labels are NOT created: $why"
   fi

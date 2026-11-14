@@ -201,12 +201,15 @@ check "missing repo: exit 4" [ "$rc" = 4 ]
 check "missing repo: labels one-liner" grep -qx 'labels: cannot reach example-org/orchard-home: create it on GitHub (private) and push, then run scripts/labels' <<<"$out"
 check "missing repo: configure says not found" sh -c 'printf "%s
 " "$1" | tail -1 | grep -q "labels are NOT created: the repo example-org/orchard-home was not found"' _ "$out"
+check "missing repo: the remaining line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -qxF "configure: the files are written, but the labels are NOT created: the repo example-org/orchard-home was not found on GitHub. Create it (private), then run this line from your own terminal: cd $2 && scripts/labels"' _ "$out" "$(cd "$R4" && pwd -P)"
 out=$(GH_STUB_FAIL_MATCH='^label create' GH_STUB_FAIL_MESSAGE='HTTP 403: Resource not accessible by integration' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "no permission: exit 4" [ "$rc" = 4 ]
 check "no permission: no raw error, one labels line" [ "$(grep -c 'HTTP 403' <<<"$out")$(grep -c '^labels:' <<<"$out")" = 01 ]
 check "no permission: labels one-liner" grep -qx 'labels: none created: this GitHub login cannot manage labels in example-org/orchard-home. On a computer: `gh auth refresh -s repo`; in a web session: on github.com/settings/installations open Claude, Configure, and add this repository with read and write access. Then run scripts/labels.' <<<"$out"
 check "no permission: configure says permission" sh -c 'printf "%s
-" "$1" | tail -1 | grep -q "no permission to manage labels.*in a web session: on github.com/settings/installations open Claude"' _ "$out"
+" "$1" | tail -1 | grep -q "no permission to manage labels.*In a web session: on github.com/settings/installations open Claude"' _ "$out"
+R4P=$(cd "$R4" && pwd -P)
+check "no permission: the remaining line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -qF "run this line from your own terminal: cd $2 && gh auth refresh -s repo && scripts/labels"' _ "$out" "$R4P"
 out=$("$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "labels ok: exit 0" [ "$rc" = 0 ]
 check "labels ok reported" grep -q '^labels: ok (example-org/orchard-home)' <<<"$out"
@@ -262,6 +265,9 @@ check "git refused: pending disables base push" grep -qF 'git remote set-url --p
 check "git refused: pending adds origin" grep -qF 'git remote add origin https://github.com/example-org/orchard-home.git' <<<"$pend"
 check "git refused: pending sets hooks path" grep -qF 'git config core.hooksPath .githooks' <<<"$pend"
 check "git refused: labels still run" grep -q '^labels: ok' <<<"$out"
+out=$(PATH="$W/lockedgit:$PATH" GH_STUB_FAIL_MATCH='^api repos/' GH_STUB_FAIL_MESSAGE='gh: Not Found (HTTP 404)' "$R5/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
+check "git refused, repo missing: exit 4" [ "$rc" = 4 ]
+check "git refused, repo missing: one line holds the pending steps, upload and labels" sh -c 'printf "%s\n" "$1" | tail -1 | grep -qF "run this line from your own terminal: $2 && git add -A && git commit -m \"Configure home\" && git push -u origin HEAD && scripts/labels"' _ "$out" "$pend"
 check "git refused: hooksPath not set" [ -z "$(git -C "$R5" config --local core.hooksPath)" ]
 check "git refused: origin still the base" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/home-base.git ]
 # the pending line itself finishes the git part (on a copy, so the normal run below starts from the same state)
@@ -286,7 +292,15 @@ check "rerun: hooksPath set" [ "$(git -C "$R5" config --local core.hooksPath)" =
 check "rerun: base push disabled" [ "$(git -C "$R5" remote get-url --push base)" = DISABLED ]
 check "rerun: origin is the home repo" [ "$(git -C "$R5" remote get-url origin)" = https://github.com/example-org/orchard-home.git ]
 
-# 11. language names instead of codes are refused
+# 11. language names instead of codes are refused; launch.command is one word and lands in .local/config
+{ cat "$W/answers.no"; echo launch.command=codex; } > "$W/answers.codex"
+"$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1; rc=$?
+check "launch.command answer: exit 0" [ "$rc" = 0 ]
+check "launch.command answer written" grep -qx 'launch.command=codex' "$R2/.local/config"
+sed 's/^launch.command=.*/launch.command=codex --yolo/' "$W/answers.codex" > "$W/answers.cmdbad"
+out=$("$R2/scripts/configure" --answers "$W/answers.cmdbad" 2>&1); rc=$?
+check "launch.command with a space refused (exit 2)" [ "$rc" = 2 ]
+check "launch.command named" grep -q 'invalid answer: launch.command=codex --yolo' <<<"$out"
 sed 's/^lang.files=en/lang.files=English/' "$A" > "$W/answers.lang"
 out=$("$R4/scripts/configure" --answers "$W/answers.lang" 2>&1); rc=$?
 check "language name refused (exit 2)" [ "$rc" = 2 ]

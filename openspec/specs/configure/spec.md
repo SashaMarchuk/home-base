@@ -93,11 +93,11 @@ When `--labels` is given and the labels cannot be created, `scripts/configure` S
 
 #### Scenario: The repository does not exist yet
 - **WHEN** `scripts/configure --answers <file> --labels` runs for a repository that does not exist on GitHub
-- **THEN** every file is written, the script exits 4 and its last line says the repository was not found: create it (private), commit, push, then run `scripts/labels`
+- **THEN** every file is written, the script exits 4 and its last line says the repository was not found: create it (private), then run one line starting with `cd <root> &&` that runs `scripts/labels`
 
 #### Scenario: No permission to create labels
 - **WHEN** the repository exists but creating a label returns HTTP 403
-- **THEN** the script exits 4 and its last line says this login has no permission to manage labels, with the fix on a computer (`gh auth refresh -s repo`) and in a web session (on github.com/settings/installations open Claude, Configure, and add the repository with read and write access), then `scripts/labels`
+- **THEN** the script exits 4 and its last line says this login has no permission to manage labels, with the fix in a web session (on github.com/settings/installations open Claude, Configure, and add the repository with read and write access, then `scripts/labels`) and, for a computer, one line starting with `cd <root> &&` that runs `gh auth refresh -s repo` and then `scripts/labels`
 
 ### Requirement: HOME-075 Base-only paths leave the home
 In a git repo with a `base.manifest`, `scripts/configure` SHALL delete from the folder every `base-only` path that is still tracked, before any git step, name each one it removed, and drop them from the index in the git steps.
@@ -133,7 +133,7 @@ The `configure` skill MUST ask, in plain words without key names, only for the o
 
 #### Scenario: Newcomer
 - **WHEN** a person who knows none of the settings runs the skill
-- **THEN** they are asked those seven things in two calls, and the closing message gives as bullets only where improvements can be pulled from, the languages and the terminal tabs, puts every other default into one plain sentence, and says any can be changed by telling the assistant
+- **THEN** they are asked those seven things in two calls, and the closing message gives as bullets only where improvements can be pulled from, the languages and whether the assistant opens a new terminal tab when a task needs its own window, puts every other default into one plain sentence, and says any can be changed by telling the assistant
 
 #### Scenario: Cloud session
 - **WHEN** the session runs in the cloud or the person has no terminal
@@ -141,7 +141,7 @@ The `configure` skill MUST ask, in plain words without key names, only for the o
 
 #### Scenario: Not macOS
 - **WHEN** `uname -s` does not print `Darwin`
-- **THEN** terminal helpers are off, the terminal application is never mentioned and the closing list says only "Opening terminal tabs for you: off"
+- **THEN** terminal helpers are off, the terminal application and Cmd+Space are never mentioned, the closing says "The assistant does not open terminal tabs for you" and tells the person to open a terminal, paste the line and press Enter
 
 ### Requirement: HOME-083 The answers file keeps the effective terminal helpers value
 When the device check turns an answered `terminal_helpers=on` into `off`, `scripts/configure` SHALL rewrite the `terminal_helpers` line of the answers file to `off` and say so.
@@ -164,7 +164,7 @@ The `configure` skill SHALL find the repo root with `git rev-parse --show-toplev
 - **WHEN** the session starts in a subfolder of the home
 - **THEN** no file is created in the subfolder and the closing steps name the absolute repo root
 
-### Requirement: HOME-086 Boundary and rules are the person's own words
+### Requirement: HOME-086 Boundary and rules are the person's own answer
 The `configure` skill SHALL ask for what must never enter the home and for the owner's rules as free text with no options or example answers, and record every rule the answer mentions without judging any redundant.
 
 #### Scenario: Rule the person thinks is covered
@@ -183,11 +183,11 @@ The `configure` skill SHALL close with only the steps still left, in plain words
 - **THEN** it says what is not done, with no cause, and gives one action: create the repository if it is missing, add it with read and write access on github.com/settings/installations under Claude, then come back to this session and say "finish the setup", with no command
 
 ### Requirement: HOME-088 Exit 4 names only the printed cause
-After `scripts/configure` exits 4, the `configure` skill SHALL state only the cause the last line printed, in one sentence without other causes, and give its fix only once, in the closing step that adds the status tags.
+After `scripts/configure` exits 4, the `configure` skill SHALL state only the cause the last line printed, in one sentence without other causes, and on a computer give the line that last line ends with as the status tags step, which after a `pending:` line is also the single upload step.
 
 #### Scenario: No permission
 - **WHEN** the last line says this login has no permission to manage labels
-- **THEN** the person hears that cause once, the fix for their surface appears once in the status tags step, and nothing is said about other possible causes
+- **THEN** the person hears that cause once, the status tags step holds the printed line, and nothing is said about other possible causes
 
 ### Requirement: HOME-089 Finishing the setup in a later session
 When asked to "finish the setup", the `configure` skill SHALL run only the steps still pending (upload, status tags) in a configured home, and in a repository without the base files run nothing and point the person to the session where the setup started or to the base with their pasted answers.
@@ -223,7 +223,7 @@ When one ask call carries several questions, the `configure` skill SHALL send th
 
 #### Scenario: Second round
 - **WHEN** the skill asks for the repository name, the file language and the team board together
-- **THEN** it sends three numbered questions, the first two each naming its recommendation, and no options list
+- **THEN** it sends three numbered questions, each naming its recommendation, and no options list
 
 ### Requirement: HOME-093 Session checks one command each
 The `configure` skill SHALL run `echo "${CLAUDE_CODE_REMOTE:-}"` alone as its first command, run `uname -s` alone only when that printed nothing, and set terminal helpers on only when `uname -s` printed `Darwin` and `$TERM_PROGRAM` is `iTerm.app`, unless the person names another terminal app they use, which gives off.
@@ -274,12 +274,16 @@ When `scripts/configure` prints a `pending:` line, the `configure` skill SHALL, 
 - **WHEN** the script prints a `pending:` line in a Codex session
 - **THEN** the closing has one upload step holding the pending line followed by `git add -A && git commit -m "Configure home" && git push -u origin HEAD`, and says this session may not change the repository's git settings, so this one line, run in a terminal in the repo root, finishes it and uploads the files
 
-### Requirement: HOME-100 Codex in a cloud session
-Asked about Codex in a cloud or web session, the `configure` skill SHALL say the home works with Codex as-is when the same repository is opened with Codex, because Codex reads the same rules file and the same skills, and that there is nothing to install.
+### Requirement: HOME-100 Codex works with the same home
+Asked about Codex, the `configure` skill SHALL say that nothing has to be added to the home, that the same repository opened with Codex reads the same rules file and skills, and that Codex itself must be installed where the person uses it.
 
 #### Scenario: Codex question in the browser
 - **WHEN** the person asks about Codex in a web session
-- **THEN** the answer gives the reason and asks for no installation
+- **THEN** the answer says nothing has to be added to the home, gives the reason, says Codex itself must be installed where they use it, and never implies it is present
+
+#### Scenario: Codex missing on the computer
+- **WHEN** the person asks about Codex on a computer where `command -v codex` finds nothing
+- **THEN** the answer adds that Codex is not installed on this computer yet
 
 ### Requirement: HOME-101 Language answers are codes
 `scripts/configure` SHALL refuse a `lang.files` or `lang.owner` value that is not a two-letter language code, optionally with a region, naming the key and the expected form, and exit 2 with nothing written.
@@ -296,8 +300,118 @@ When a team board is named, the `configure` skill SHALL say in the closing "Team
 - **THEN** the closing states that board and that the assistant asks before changing anything there
 
 ### Requirement: HOME-103 The last step says how to start
-The `configure` skill SHALL end the closing list on a computer with `cd <root> && claude` (or `codex`), the one-time trust question for the folder and typing "status", each command line starting with `cd <root> &&`.
+The `configure` skill SHALL end every closing, whatever the outcome, with how to start working: on a computer `cd <root> && <tool>` naming only the tool this session runs in (`claude` or `codex`), the one-time trust question for the folder and typing "status"; in a cloud or web session opening a new session on the home's repository the way this one was opened and typing "status".
 
 #### Scenario: Newcomer on a computer
-- **WHEN** the closing list is given in a session on a computer
-- **THEN** its last step names the command with the absolute repo root, the trust question and "status"
+- **WHEN** the closing list is given in a Claude Code session on a computer
+- **THEN** its last step is `cd <root> && claude` with the absolute repo root, the trust question and "status", and Codex is not mentioned
+
+#### Scenario: Codex session
+- **WHEN** the closing list is given in a Codex session on a computer
+- **THEN** its last step is `cd <root> && codex`, and Claude is not mentioned
+
+#### Scenario: Web session
+- **WHEN** the closing is given in a web session, including one whose upload failed
+- **THEN** it ends with opening a new session on the home's repository and typing "status"
+
+### Requirement: HOME-108 Free-text answers in the file language
+The `configure` skill SHALL write the purpose, the boundary and the owner's rules in the file language as a faithful translation of the person's meaning, adding and dropping nothing, keeping only names in the person's own words.
+
+#### Scenario: Answers in another language
+- **WHEN** the person answers in Spanish and the file language is English
+- **THEN** `home.domain`, `home.boundary` and `home.rules` hold faithful English translations, and names inside them stay as typed
+
+### Requirement: HOME-109 One line per rule
+The `configure` skill SHALL write one `home.rules` line for each separate rule, even when the person gives several rules in one sentence.
+
+#### Scenario: Two rules in one sentence
+- **WHEN** the person answers "never contact a client without asking me first, and drafts only"
+- **THEN** the answers hold two `home.rules` lines and the home section lists two rules
+
+### Requirement: HOME-110 Launch command from the surface
+The `configure` skill SHALL set `launch.command` without asking, to `codex` in a Codex session and to `claude` otherwise, and `scripts/configure` writes that one-word answer to `.local/config` and refuses a value with more than one word.
+
+#### Scenario: Setup in Codex
+- **WHEN** the setup runs in a Codex session
+- **THEN** `.local/config` holds `launch.command=codex`
+
+### Requirement: HOME-111 Only the answers file is written by the skill
+The `configure` skill SHALL write no file other than `<root>/.local/answers` and give the summary and the remaining steps in full in its message, never linking or naming a file or the skill and never quoting its instructions.
+
+#### Scenario: Many steps left
+- **WHEN** several steps are left after the run
+- **THEN** they all appear in the message and no notes file is created
+
+### Requirement: HOME-112 Nothing around the questions
+In a question turn the `configure` skill SHALL show the questions exactly once as the only text of the turn, with no greeting, status or announcement before them and nothing after them, and on a surface without an ask tool post no message before, between or after its commands.
+
+#### Scenario: Codex question turn
+- **WHEN** round one is asked in a Codex session
+- **THEN** the turn holds one message, the numbered questions, and no earlier draft or announcement
+
+### Requirement: HOME-113 GitHub cannot be reached
+When the GitHub login check cannot connect, the `configure` skill SHALL give "I could not reach GitHub from this session, so the repository is not created and the status tags are not added yet" once, as the only cause, and list creating the repository, the upload, the status tags and the start step.
+
+#### Scenario: No connection
+- **WHEN** `gh api user` fails with a connection error and the person asked for the repository to be created
+- **THEN** the closing gives that sentence once and lists the step to create the repository before the upload, status tags and start steps
+
+### Requirement: HOME-114 Exit 4 ends with the one remaining line
+When the label step fails, `scripts/configure` SHALL end its last line with one command line for the person's own terminal that starts with `cd <root> &&`, holds the pending git steps with the save and upload when any are pending, and ends with `scripts/labels`.
+
+#### Scenario: Git settings refused and repository missing
+- **WHEN** the session may not change git settings and the repository is not found
+- **THEN** the script exits 4 and its last line ends with the pending git steps joined with `git add -A && git commit -m "Configure home" && git push -u origin HEAD && scripts/labels`
+
+### Requirement: HOME-115 The repository question asks whether it exists
+The `configure` skill SHALL ask both what the repository is called and whether it already exists, recommending `<login>/home` as existing when the GitHub lookup finds it, and treat no statement as not created.
+
+#### Scenario: Repository already created
+- **WHEN** `<login>/home` exists on the person's account
+- **THEN** the question recommends it and says it already exists on their account
+
+### Requirement: HOME-116 No board is the recommended answer
+The `configure` skill SHALL ask the team board question with the recommended answer "No board (recommended for one person)".
+
+#### Scenario: Person working alone
+- **WHEN** round two is asked
+- **THEN** the board question names "No board (recommended for one person)" as its recommendation
+
+### Requirement: HOME-117 The cloud answers block in plain words
+In a cloud or web session the `configure` skill SHALL give the answers block as plain labelled lines in the person's language, never as `key=value` lines.
+
+#### Scenario: Upload failed in a web session
+- **WHEN** the closing gives the answers to paste into a new session
+- **THEN** they appear as lines such as Owner, Purpose, Never store, My rules, Repository, File language and Team board, with no key names
+
+### Requirement: HOME-118 The skill saves and uploads on a computer
+After `scripts/configure` exits 0 or 4 without a `pending:` line, the `configure` skill SHALL commit and push the files itself, on a computer or in the cloud, and hand the person only a step that failed.
+
+#### Scenario: Upload succeeds
+- **WHEN** the run exits 0 with no `pending:` line and the push succeeds
+- **THEN** the closing lists no save or upload step
+
+#### Scenario: Repository missing
+- **WHEN** the run exits 4 because the repository was not found and the push fails
+- **THEN** the closing lists creating the repository, `cd <root> && git push -u origin HEAD` and the status tags line, with no second commit
+
+### Requirement: HOME-119 How to run a line matches the computer
+Before the steps on a computer, the `configure` skill SHALL say once how to run a line: on macOS with Terminal (or iTerm when that is the terminal in use) opened by Cmd+Space, and elsewhere "open a terminal, paste the line, press Enter" with no Cmd+Space.
+
+#### Scenario: Linux
+- **WHEN** `uname -s` does not print `Darwin`
+- **THEN** the closing says "To run a line: open a terminal, paste the line, press Enter." and never mentions Cmd+Space
+
+### Requirement: HOME-120 A fallback for a refused status tags step
+When the status tags step the person runs does not already hold `gh auth refresh`, the `configure` skill SHALL add "if it says this login cannot manage the tags, run `gh auth refresh -s repo` and repeat the line".
+
+#### Scenario: GitHub could not be reached
+- **WHEN** the status tags could not be tried because GitHub was unreachable
+- **THEN** the status tags step carries that fallback
+
+### Requirement: HOME-121 The cloud action keeps the repository creation
+In a cloud or web session whose upload failed, the `configure` skill SHALL keep "create the private repository `<repo>` on GitHub if it is not there yet" in the one action unless an upload or status tag write to it succeeded or the person said it exists.
+
+#### Scenario: Repository found by a lookup only
+- **WHEN** `gh api repos/<repo>` succeeds but the upload fails and the person never said the repository exists
+- **THEN** the one action still begins with creating the private repository if it is not there yet

@@ -11,11 +11,12 @@
 repo=example-org/garden-home
 # REQUIRED. Who owns this home (comma list of display names, no addresses).
 owner.names=Robin Example
-# REQUIRED. What this home covers, one line.
+# REQUIRED. What this home covers, one line. This, the boundary and the rules are
+# written in lang.files (a faithful translation); only names stay as the owner typed them.
 home.domain=Community garden co-op: planting plans, volunteer rota, supplier orders
 # REQUIRED. What must never enter this home, one line.
 home.boundary=Anything from the owner's day job; members' personal contact details
-# Repeatable. The owner's own rules for surfaces where user-level instructions do not load.
+# Repeatable, one line per separate rule. The owner's own rules for surfaces where user-level instructions do not load.
 home.rules=Ask questions in plain words, recommended option first.
 home.rules=Never contact a supplier without the owner's yes; prepare a draft instead.
 
@@ -83,7 +84,9 @@ limits.reader=none
 launch.profile.orchestrator=
 launch.profile.worker=
 launch.model=
-# The command a new tab runs (one word) and the flag that passes a profile to it (empty: no profile is passed).
+# The command a new tab runs (one word: claude, or codex when the setup ran in Codex; the
+# configure skill sets it from the surface) and the flag that passes a profile to it (empty:
+# no profile is passed).
 launch.command=claude
 launch.profile_flag=
 guard.private_values=
