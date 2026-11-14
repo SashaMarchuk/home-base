@@ -129,11 +129,11 @@ When `origin` is the URL in `base.url`, `scripts/configure` SHALL rename it to `
 - **THEN** the script exits 3 with `cannot write home.config` and never prints `wrote home.config`
 
 ### Requirement: HOME-079 The skill asks only what it cannot know
-The `configure` skill MUST ask, in plain words without key names, only for the owner, what the home is for, what must never enter it, the owner's own rules, the repo name, the file language and a team board, in exactly two ask calls (owner, purpose, never-allowed and own rules first; repo name, file language and board second), and set every other key to its default without asking.
+The `configure` skill MUST ask, in plain words without key names, only for the owner, what the home is for, what must never enter it, the owner's own rules, the repo name, the file language and a team board, in at most two ask calls (owner, purpose, never-allowed and own rules first; repo name, file language and board second, skipping what the first reply already settles), and set every other key to its default without asking.
 
 #### Scenario: Newcomer
 - **WHEN** a person who knows none of the settings runs the skill
-- **THEN** they are asked those seven things in two calls, and the closing message gives as bullets only where improvements can be pulled from, the languages and whether the assistant opens a new terminal tab when a task needs its own window, puts every other default into one plain sentence, and says any can be changed by telling the assistant
+- **THEN** they are asked those seven things in at most two calls, and the closing message gives as bullets only where improvements can be pulled from, the languages and whether the assistant opens a new terminal tab when a task needs its own window, puts every other default into one plain sentence, and says any can be changed by telling the assistant
 
 #### Scenario: Cloud session
 - **WHEN** the session runs in the cloud or the person has no terminal
@@ -364,10 +364,10 @@ When the label step fails, `scripts/configure` SHALL end its last line with one 
 - **THEN** the script exits 4 and its last line ends with the pending git steps joined with `git add -A && git commit -m "Configure home" && git push -u origin HEAD && scripts/labels`
 
 ### Requirement: HOME-115 The repository question asks whether it exists
-The `configure` skill SHALL ask both what the repository is called and whether it already exists, recommending `<login>/home` as existing when the GitHub lookup finds it, and treat no statement as not created.
+The `configure` skill SHALL ask both what the repository is called and whether it already exists, recommending `<login>/<word>-home` with `<word>` one word from the home's purpose, saying it already exists when the GitHub lookup finds it, and treat no statement as not created.
 
 #### Scenario: Repository already created
-- **WHEN** `<login>/home` exists on the person's account
+- **WHEN** `<login>/<word>-home` exists on the person's account
 - **THEN** the question recommends it and says it already exists on their account
 
 ### Requirement: HOME-116 No board is the recommended answer

@@ -106,6 +106,10 @@ The session-end hook SHALL, for each claim of the ending session whose comment i
 - **WHEN** a session that claimed issue 3 ends before `home-log finish`
 - **THEN** issue 3 shows a `stub` comment with the resume command and carries `needs-summary`
 
+#### Scenario: Codex session
+- **WHEN** the ending session's surface is codex (`CODEX_THREAD_ID` is set)
+- **THEN** the stub's resume command is `codex resume <id>`
+
 #### Scenario: Session without a claim
 - **WHEN** a session that holds no claim ends
 - **THEN** nothing is written

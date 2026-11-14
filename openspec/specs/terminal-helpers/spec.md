@@ -104,6 +104,10 @@ Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anyt
 - **WHEN** the orchestrator runs `term.sh survey --cwd <dir>`
 - **THEN** it sees whether a live session already runs in that folder
 
+#### Scenario: A tab of another tool
+- **WHEN** a tab runs a session of a tool other than Claude Code
+- **THEN** survey reports it as `shell`, since the helpers support Claude Code sessions only
+
 ### Requirement: HOME-064 Without helpers
 With terminal helpers off, the orchestrator SHALL give each worker brief to the owner as a ready-to-paste prompt or run the task in its own session, and open nothing.
 
@@ -140,8 +144,8 @@ With terminal helpers off, the orchestrator SHALL give each worker brief to the 
 ### Requirement: HOME-106 Closing or parking the owner's own tab
 `term.sh close` and `term.sh park` SHALL act on a tab missing from this home's registry only with `--adopt` and an explicit tty on which exactly one `claude` process runs and whose screen can be read, keep every other check of close and park (for close the issue check only when an issue is given), record the tab in the registry with `adopted: true` before the first keystroke, and refuse with exit 2 when `--adopt` targets a session id or a tab this home opened.
 
-#### Scenario: Owner asks to close his tab
-- **WHEN** the owner asks to close a tab he opened by hand and `term.sh close <tty> --adopt` runs on it while its box is empty
+#### Scenario: Owner asks to close a tab opened by hand
+- **WHEN** the owner asks to close a tab the owner opened by hand and `term.sh close <tty> --adopt` runs on it while its box is empty
 - **THEN** the tab is recorded with `adopted: true`, its session exits and no process is signalled
 
 #### Scenario: Owner's tab without the flag

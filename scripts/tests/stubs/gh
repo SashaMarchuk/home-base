@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Fake `gh` for tests and replays. No network.
+"""Fake `gh` for tests. No network.
 
 Implements the REST routes the home scripts use through `gh api`, plus
-`gh label create`, `gh api user`, and the porcelain issue verbs
-`gh issue create|list|view|comment|close|reopen|edit` (repo from -R/--repo or
-$GH_REPO), all over the same issue files. State lives in $GH_STUB_DIR (required):
+`gh label create` and `gh api user`. Skills and scripts may call `gh issue ...`,
+so the stub supports the issue verbs `gh issue create|list|view|comment|close|
+reopen|edit` too (repo from -R/--repo or $GH_REPO), all over the same issue files. State lives in $GH_STUB_DIR (required):
   <dir>/<owner>__<repo>/issues/<n>.json   one issue with its comments
   <dir>/calls.log                          one JSON line per call
+  $STUB_CALLS_JSONL                        optional call log for tests (same lines)
 Login: $GH_STUB_LOGIN (default "owner"). Errors exit 1 with a message on stderr,
 like the real CLI. A call matching the regex $GH_STUB_FAIL_MATCH fails with
 $GH_STUB_FAIL_MESSAGE (default an HTTP 502).

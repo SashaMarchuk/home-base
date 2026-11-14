@@ -2,18 +2,23 @@
 # SessionEnd hook. One case only: this session holds a claim (.local/runs/<n>)
 # whose comment is still active and has no final text. It rewrites that comment
 # as a stub (session id, resume command) and adds needs-summary. Never blocks.
+# Supports Claude Code sessions (its SessionEnd hook: session_id on stdin or
+# CLAUDE_CODE_SESSION_ID). When CODEX_THREAD_ID is set (the surface is codex),
+# the resume command is "codex resume <id>".
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
 IN=$(cat 2>/dev/null)
 SID=$(printf '%s' "$IN" | jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$SID" ] || SID=${CLAUDE_CODE_SESSION_ID:-}
+[ -n "$SID" ] || SID=${CODEX_THREAD_ID:-}
 [ -n "$SID" ] || exit 0
 CWD=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$CWD" ] || CWD=$PWD
+RESUME_CMD="claude --resume"; [ -n "${CODEX_THREAD_ID:-}" ] && RESUME_CMD="codex resume"
 for f in "$HOME_ROOT"/.local/runs/*; do
   [ -f "$f" ] || continue
   [ "$(sed -n 's/^run=//p' "$f")" = "$SID" ] || continue
   repo=$(sed -n 's/^repo=//p' "$f"); n=${f##*/}; n=${n##*_}
-  "$HERE/home-log" stub "$n" --repo "$repo" --run-id "$SID" --resume "cd ${CWD/#$HOME/~} && claude --resume $SID" >/dev/null 2>&1 || true
+  "$HERE/home-log" stub "$n" --repo "$repo" --run-id "$SID" --resume "cd ${CWD/#$HOME/~} && $RESUME_CMD $SID" >/dev/null 2>&1 || true
 done
 exit 0

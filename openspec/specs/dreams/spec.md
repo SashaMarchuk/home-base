@@ -37,6 +37,10 @@ Dreams SHALL never put a personal fact into a pull request, issue or commit, sta
 - **WHEN** a Dreams run is unattended or in the cloud
 - **THEN** personal facts are skipped
 
+#### Scenario: More than four candidates
+- **WHEN** an attended local run finds six candidate facts
+- **THEN** they are shown on one private page with one yes/no row per fact, and each answer is saved as it is given
+
 ### Requirement: HOME-047 Daily reminder
 With `dreams.mode=daily`, the session-start hook SHALL print `dreams: due` when the standing Dreams issue is missing or was last updated more than 24 hours ago.
 

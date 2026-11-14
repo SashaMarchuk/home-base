@@ -13,6 +13,9 @@
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #
+# Supports Claude Code sessions only: a tab counts as a session when a claude process runs
+# on it; any other tool's tab reads as a shell.
+#
 # <target> is a tty (ttys003 or /dev/ttys003) or a session id from .local/registry.json.
 # A tab title is never accepted: titles drift.
 #
@@ -943,7 +946,7 @@ cmd_resume() {
     case "$1" in
       --message) [ $# -ge 2 ] && [ -n "$2" ] || die 2 "resume: --message needs a text"; msg=$2; nopt=$((nopt + 1)); shift 2 ;;
       --silent) silent=1; nopt=$((nopt + 1)); shift ;;
-      --timeout) shift 2 ;;   # accepted for older callers; resume does not wait
+      --timeout) shift 2 ;;   # resume does not wait
       *) die 2 "resume: unknown option '$1'" ;;
     esac
   done

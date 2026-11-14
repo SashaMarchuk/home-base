@@ -121,6 +121,10 @@ if sel home-log; then
   gh api repos/test/hl/issues/5/comments --jq '.[0].body' | head -1 | grep -q 'state=stub' && ok || bad "session-end must write a stub"
   gh api repos/test/hl/issues/5 --jq '[.labels[].name]|index("needs-summary")' | grep -qv null && ok || bad "session-end must add needs-summary"
   echo '{"session_id":"other"}' | "$H/scripts/hooks/session-end"; ok
+  "$HL" new --title "Dies in codex" --body "d" --ready >/dev/null
+  "$HL" start 6 --run-id codex-x >/dev/null
+  echo '{}' | env -u CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID=codex-x "$H/scripts/hooks/session-end"
+  gh api repos/test/hl/issues/6/comments --jq '.[0].body' | grep -q 'codex resume codex-x' && ok || bad "session-end in codex must write a codex resume command"
 fi
 
 # ---------------------------------------------------------------- sweep

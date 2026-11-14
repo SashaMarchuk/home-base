@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests for scripts/term/term.sh against the fake backend (no real tab is touched).
-# Every hardened rule (openspec/specs/terminal-helpers in the base) has a fixture that must pass and one that must fail.
+# Every rule (openspec/specs/terminal-helpers in the base) has a fixture that must pass and one that must fail.
 # Exit 0 when all pass.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)

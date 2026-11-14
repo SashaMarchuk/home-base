@@ -63,11 +63,11 @@ A session SHALL ask the owner only through the ask tool, or with the owner away 
 - **THEN** the session takes it, says so, and asks nothing
 
 ### Requirement: HOME-081 Every request gets an issue and a short report
-A session SHALL open an issue for every owner request that needs more than a one-line answer before working on it, and SHALL end with a report of at most five plain lines: done, waiting for the owner, next.
+A session SHALL open an issue in the home that owns it for every owner request before working on it, even when the session does the work itself and the answer is one line, and SHALL end with a report of at most five plain lines: done, waiting for the owner, next.
 
-#### Scenario: A short planning request
-- **WHEN** the owner asks for a plan or an explanation that takes real work
-- **THEN** an issue is opened in the home that owns it and the session reports on it in at most five lines
+#### Scenario: A one-line answer
+- **WHEN** the owner asks a question whose answer is one line
+- **THEN** an issue is opened in the home that owns it before the answer, and the session reports on it in at most five lines
 
 ### Requirement: HOME-104 One decision per question, in the owner's language
 Each question to the owner SHALL carry one decision, and every message to the owner, the final one included, SHALL be in the owner's language from `lang.owner`.
@@ -81,7 +81,7 @@ Before asking the owner to do a step, a session SHALL try every tool it has for 
 
 #### Scenario: A launch fails
 - **WHEN** opening a worker for a task fails
-- **THEN** the session does the read-only part of the task itself or in a subagent, and asks the owner only for what needs him
+- **THEN** the session does the read-only part of the task itself or in a subagent, and asks the owner only for what needs the owner
 
 ### Requirement: HOME-125 Run the check before a hand-off
 Before handing a step to the owner, a session SHALL run the check that proves what is left, such as an identity call or a status command, and hand over only what that check shows is left.
@@ -91,12 +91,12 @@ Before handing a step to the owner, a session SHALL run the check that proves wh
 - **THEN** the session runs the identity call first and asks for the login only when the call fails
 
 ### Requirement: HOME-126 Relay only on the owner's request
-A session SHALL relay the owner's words into another session only when the owner asked for that relay, and only his exact words.
+A session SHALL relay the owner's words into another session only when the owner asked for that relay, and only the owner's exact words.
 
-#### Scenario: The owner asked for a package
-- **WHEN** the owner asks only for a package and a recorded answer of his fits a waiting dialog
+#### Scenario: The owner asked for a draft only
+- **WHEN** the owner asks for a draft only and a recorded answer of the owner's fits a waiting dialog
 - **THEN** nothing is relayed into that dialog
 
 #### Scenario: The owner asked for a relay
-- **WHEN** the owner asks to pass his answer to a session
-- **THEN** his exact words are typed, with nothing added
+- **WHEN** the owner asks to pass the owner's answer to a session
+- **THEN** the owner's exact words are typed, with nothing added

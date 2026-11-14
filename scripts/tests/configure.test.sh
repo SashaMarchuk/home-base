@@ -3,7 +3,7 @@
 #   scripts/tests/configure.test.sh        exit 0 when every assertion passes
 # Copies scripts/, templates/ and base.manifest into a git-initialised temp dir,
 # adds a fixture CLAUDE.md, base-only paths and an origin that is the base, and
-# runs configure there with an invented persona. Never touches the real repo.
+# runs configure there with example values. Never touches the real repo.
 # gh is the stub in scripts/tests/stubs (no network).
 set -u
 SRC=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -44,10 +44,10 @@ git -C "$R" remote add origin https://github.com/example-org/home-base.git
 mkdir -p "$R/.local"
 printf 'lang.owner=fr\nterminal_helpers=on\n' > "$R/.local/config"   # an override that must be kept
 
-# invented persona
+# example values
 A="$W/answers"
 cat > "$A" <<'EOF'
-# invented persona
+# example values
 repo=example-org/orchard-home
 owner.names=Jordan Sample
 home.domain=An orchard cooperative: harvest plans and volunteer rota
@@ -104,6 +104,7 @@ done
 check "home.config repo" grep -qx 'repo=example-org/orchard-home' "$R/home.config"
 check "home.config board_write" grep -qx 'tracker.board_write=read-only' "$R/home.config"
 check "home.config default kept" grep -qx 'sweep.stale_hours=6' "$R/home.config"
+check "home.config sweep lookback default" grep -qx 'sweep.lookback_days=14' "$R/home.config"
 check "home.config guard.extra" grep -qx 'guard.extra=docker compose down' "$R/home.config"
 check "home.config homes" grep -qx 'homes.cellar.role=child' "$R/home.config"
 check "home.config has no machine key" sh -c "! grep -qE '^(gh\.config_dir|terminal_helpers|transcripts\.|limits\.reader|launch\.|guard\.private_values)=' '$R/home.config'"

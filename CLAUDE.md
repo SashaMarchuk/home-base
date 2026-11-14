@@ -18,7 +18,7 @@
 7. Money: prepare everything; the owner clicks pay.
 8. Production is read-only unless the task says otherwise.
 9. Kill exact PIDs only, never by pattern.
-10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only his exact words), never erase an unsent draft.
+10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only the owner's exact words), never erase an unsent draft.
 11. No personal values, secrets, call copies or raw data in git. Links only.
 12. Use the GitHub account this home's config names. Never switch the CLI account.
 13. Model aliases only, never pinned versions.

@@ -1,5 +1,5 @@
-# answers.example: every key scripts/configure reads, filled in for an invented
-# persona. Copy it, change the values, then run:
+# answers.example: every key scripts/configure reads, filled in with example
+# values. Copy it, change the values, then run:
 #   scripts/configure --answers <file> [--labels]
 # Format: flat "key=value" lines. A line starting with '#' is a comment. Inline
 # '#' is kept as part of the value. Repeatable keys: one line per value.
@@ -58,6 +58,8 @@ dreams.first_window_days=14
 # none | <MCP server name>
 facts.sink=none
 sweep.stale_hours=6
+# Days back the sweep looks at closed issues and merged pull requests.
+sweep.lookback_days=14
 # Repeatable. Extra command patterns the bash guard blocks here.
 guard.extra=docker compose down
 
@@ -89,5 +91,10 @@ launch.model=
 # no profile is passed).
 launch.command=claude
 launch.profile_flag=
+# Terminal helper keys: configure does not read them; set them in .local/config by hand when needed.
+#   term.max_workers=4                   open worker tabs allowed at once
+#   term.min_free_pct=20                 refuse to open a tab below this free-memory percentage (0 = no check)
+#   term.login_dialog_re=<regex>         extended regex (case-insensitive) a dialog must match to be
+#                                        answered after a passed login check
 guard.private_values=
 guard.boundary_terms=

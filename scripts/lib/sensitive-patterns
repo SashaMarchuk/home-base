@@ -17,7 +17,8 @@
 #                              spaces - _ . removed); store the token normalised
 #                  r:<regex>   perl regex, case-sensitive (use (?i) to ignore case), raw text
 #                  Terms are matched on the raw line, URLs included.
-# --allow FILE   : lines "<path>\t<exact string>\t<reason>"; the exact string is
+# --allow FILE   : an exact-string allow-list for publish checks. Lines
+#                  "<path>\t<exact string>\t<reason>"; the exact string is
 #                  removed from lines of that path before the terms run.
 use strict;
 use warnings;

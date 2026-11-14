@@ -2,7 +2,7 @@
 # configure: makes this repo the owner's own home from flat answers.
 #   scripts/configure --answers <file> [--labels]
 # The configure skill asks the questions, writes the answers to .local/answers and
-# calls this script; an unattended build writes the file itself. Same code path.
+# calls this script; an unattended run writes the file itself. Same code path.
 # templates/answers.example documents every key.
 #
 # Writes (and only these): home.config (committed keys), .local/config (machine
@@ -82,7 +82,8 @@ proactivity.every_minutes=60
 dreams.mode=manual
 dreams.first_window_days=14
 facts.sink=none
-sweep.stale_hours=6"
+sweep.stale_hours=6
+sweep.lookback_days=14"
 MACHINE_DEFAULTS="gh.config_dir=
 terminal_helpers=off
 transcripts.paths=~/.claude/projects,~/.codex/sessions
@@ -131,7 +132,7 @@ enum proactivity.mode assigned off watch
 enum dreams.mode manual daily
 enum accounts.multi yes no
 enum terminal_helpers on off
-for k in limits.threshold proactivity.every_minutes dreams.first_window_days sweep.stale_hours; do num "$k"; done
+for k in limits.threshold proactivity.every_minutes dreams.first_window_days sweep.stale_hours sweep.lookback_days; do num "$k"; done
 v=$(ans repo); [ -z "$v" ] || printf '%s' "$v" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || BAD+=("repo=$v (owner/name)")
 url_key() { # a remote URL reduced to host/owner/name, for comparing
   printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -e 's#^git@\([^:]*\):#https://\1/#' -e 's#^[a-z+]*://##' -e 's#^[^@/]*@##' -e 's#/*$##' -e 's#\.git$##'; }

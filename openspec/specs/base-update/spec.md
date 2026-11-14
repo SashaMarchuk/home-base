@@ -37,6 +37,13 @@ The `base-update` skill SHALL commit and push a clean merge without a question, 
 - **WHEN** the only conflict is in `scripts/`
 - **THEN** the base's version is taken and the home's diff is kept in a `base-sync` issue
 
+### Requirement: HOME-127 The dropped diff is written before the issue
+Before it opens the `base-sync` issue, the `base-update` skill SHALL write `scratch/base-sync.md` holding the dropped paths, the base commit and the home's diff in a fenced block, and use that file as the issue body.
+
+#### Scenario: Conflict only in flows-down paths
+- **WHEN** the base's side is taken for conflicting flows-down paths
+- **THEN** `scratch/base-sync.md` with the diff exists before `home-log new --body-file scratch/base-sync.md` runs
+
 ### Requirement: HOME-052 After the merge
 After a base-update commit the skill SHALL run `scripts/checks/run` and, when `templates/settings.json` changed, report it so the changed hook lines are applied to `.claude/settings.json` keeping `enabledPlugins`.
 

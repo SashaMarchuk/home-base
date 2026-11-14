@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fake facts-sink MCP server (stdio, JSON-RPC 2.0) for tests and replays.
+"""Sample facts sink (stdio MCP server, JSON-RPC 2.0): a sample of the facts sink
+interface (the server facts.sink names) used in tests. Tool names stay generic.
 
 Tools: fact_propose(category, key, value, source) -> a normalised proposal with an id;
        fact_save(proposal_id, confirmed) -> stores only when confirmed is true.

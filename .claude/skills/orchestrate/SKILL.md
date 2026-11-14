@@ -28,7 +28,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 
 ## 3. Questions
 - Answered questions: an issue with the owner label (`labels.needs_owner`) whose newest comment has no `<!-- home-log` marker. Relay the answer to the owning session (`scripts/term/term.sh send <tty|session id> "look at issue #n"`, nothing else) or run the task; then remove the label (`scripts/home-log checkpoint <n> --clear-question` from the owning run, or `gh api -X DELETE repos/<repo>/issues/<n>/labels/<label>`).
-- Relay into a waiting dialog only when the owner asked for that relay: `term.sh send <tty> --relay "<his exact words>"` (never an option you picked, nothing added); dismiss it only when he says so: `term.sh send <tty> --cancel-dialog`.
+- Relay into a waiting dialog only when the owner asked for that relay: `term.sh send <tty> --relay "<the owner's exact words>"` (never an option you picked, nothing added); dismiss it only when the owner says so: `term.sh send <tty> --cancel-dialog`.
 - Open questions: list them short and plain, one line each: what, why it blocks, recommended option.
 - Ask the owner through the surface's ask tool, context first, recommended option first, at most four per round. Never ask what `DECISIONS.md`, the issue or an earlier answer already settles.
 
@@ -62,7 +62,7 @@ Owner's words for this task (verbatim):
 ## 6. Park, resume, close
 - Park: `scripts/term/term.sh park <tty|session id> --issue <n>` (refuses on an unsent draft; then leave it). Never type into a busy tab or answer another session's dialog.
 - Resume: `scripts/term/term.sh resume <session id>`, message by class: by default it re-asks the run's open question for the owner, else says continue; `--message "<text>"` for another class (a timer, an answer to act on), `--silent` for none.
-- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. For close or park, the owner's own tab: add `--adopt` only when he named it or asked.
+- Close: only a finished session (final comment written, no open question, empty box): `scripts/term/term.sh close <tty|session id> --issue <n>`. Never force-close; kill exact PIDs only. For close or park, the owner's own tab: add `--adopt` only when the owner named it or asked.
 
 ## 7. Delegate to another home (`homes.*` in `home.config`)
 0. The work must have an issue in THIS home first: if the request came straight from the owner, open one (`scripts/home-log new --ready --title … --body …`) and claim it (`scripts/home-log start <n>`). The child issue is never the only record.
@@ -78,7 +78,7 @@ Owner's words for this task (verbatim):
 - At every level: act only while this session runs; never send a message on your own (drafts, confirmed through the ask tool); **heavy work asks first**: more than one subagent, or bulk reading, needs the owner's yes.
 
 ## 9. Close every turn
-- Owner asleep or away (night rules, unattended run): never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.
+- Owner away or an unattended run: never ask; `scripts/home-log checkpoint <n> --park --question "<q>"` only.
 - Record a hand-off (checkpoint, release, "handed to a worker") only after `term.sh open` printed the session id, tty and pid.
 - Write a result to the record only after you verified it (read back the effect); never report a count you did not observe.
 - Before handing a step to the owner, run the check that proves what is left (an identity call, a status command) and hand over only that.
