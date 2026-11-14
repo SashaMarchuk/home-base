@@ -92,7 +92,7 @@ Owner's words for this task (verbatim):
 - No review page on this surface (Codex): the approvals go in one message as a numbered list, one row per item with the draft text in full, answered per number with yes, no or a note; or one question per row.
 
 ## 9. Voice and other tools: two modes
-- **Interview mode.** The owner talks by voice somewhere else. Prepare an interview package (the questions, a short context page and a prompt) in the task's issue; the interview runs elsewhere and writes nothing to the home while it runs. Afterwards collect the transcript, read it, and match each answer to its question on the issue.
+- **Interview mode.** The owner talks by voice somewhere else. Prepare an interview package (the questions, a short context page and a prompt); the interview runs elsewhere and nothing is written to the home while it runs. Afterwards collect the transcript and read it.
 - **Codex as an equal executor.** The target: Codex runs the owner's tasks the way Claude Code does, with the same rules (`AGENTS.md` is `CLAUDE.md`), skills, plugins and hooks (`.codex/`); only the model differs. Still missing: the owner's one-time steps on each computer (trust the home folder in Codex, trust its hooks with `/hooks`), the owner's own rules, skills and plugins set up for Codex, and Codex tabs in the terminal helpers (until then a Codex orchestrator runs with `terminal_helpers=off`).
 
 ## 10. Close every turn
