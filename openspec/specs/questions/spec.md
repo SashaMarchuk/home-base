@@ -258,6 +258,10 @@ A standing rule the owner states inside another request SHALL be recorded with t
 - **WHEN** the owner withdraws a standing approval
 - **THEN** a new entry with the owner's words supersedes it, only the old entry's `Status:` line changes, its `Standing approvals` line is removed, and no commit is reverted
 
+#### Scenario: The owner says no to an action done under a standing approval
+- **WHEN** the owner says no to, edits or undoes an action done under a standing entry
+- **THEN** the session stops using that entry for this task only, records the owner's words as a plain entry, and the standing entry stays active until the owner withdraws it
+
 ### Requirement: HOME-165 A yes to the pointer question approves the page as shown
 The first option of a pointer question SHALL be a plain yes to everything as shown on the review page, in the owner's language; after the owner's yes the session reads the page, where a row the owner answered or text the owner edited wins, acts on it, reads it back and does not ask again.
 
