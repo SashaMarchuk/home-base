@@ -364,5 +364,34 @@ check "answers rerun with a list: exit 0" [ "$rc" = 0 ]
 check "answers rerun keeps the Standing approvals list" grep -qx -- '- D9: close named sessions, this home; unless a draft.' "$R2/CLAUDE.md"
 check "answers rerun keeps the list once" [ "$(grep -c '^### Standing approvals' "$R2/CLAUDE.md")" = 1 ]
 
+# 13. .codex/config.toml mirrors the plugins; lines outside the marked block are kept; drift is reported
+toml_ok() { python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$1"; }
+CT="$R/.codex/config.toml"
+check "codex config written" [ -f "$CT" ]
+check "codex config is valid TOML" toml_ok "$CT"
+check "codex config enables plugin-a" grep -qx '\[plugins."plugin-a@example-market"\]' "$CT"
+check "codex config enables plugin-b" grep -qx '\[plugins."plugin-b@example-market"\]' "$CT"
+check "codex config: no MCP server or hook table" sh -c "! grep -qE '^\[(mcp_servers|hooks)' '$CT'"
+check "codex config: no drift line on a fresh home" sh -c "! (cd '$R' && scripts/checks/run 2>&1) | grep -q 'drift'"
+R8="$W/home8"; mkdir -p "$R8/.claude" "$R8/.codex"; cp -R "$SRC/scripts" "$SRC/templates" "$R8/"; cp "$R/CLAUDE.md" "$R8/CLAUDE.md"
+git -C "$R8" init -q
+jq -n '{extraKnownMarketplaces: {"example-market": {source: {source: "github", repo: "example-org/market"}}}}' > "$R8/.claude/settings.json"
+printf '[features]\nexample_flag = true\n\n[plugins."plugin-b@example-market"]\nenabled = false\n' > "$R8/.codex/config.toml"
+"$R8/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1
+sed 's/^plugins=.*/plugins=plugin-a@example-market, plugin-b@example-market/' "$W/answers.codex" > "$W/answers.plug"
+"$R8/scripts/configure" --answers "$W/answers.plug" >/dev/null 2>&1; rc=$?
+CT8="$R8/.codex/config.toml"
+check "codex config with own lines: exit 0" [ "$rc" = 0 ]
+check "codex config with own lines: valid TOML" toml_ok "$CT8"
+check "codex config keeps the owner's lines" grep -qx 'example_flag = true' "$CT8"
+check "codex config: the owner's table is not written twice" [ "$(grep -cx '\[plugins."plugin-b@example-market"\]' "$CT8")" = 1 ]
+check "codex config: marketplace source from settings.json" grep -qx 'source = "https://github.com/example-org/market.git"' "$CT8"
+c8=$(shasum "$CT8"); "$R8/scripts/configure" --answers "$W/answers.plug" >/dev/null 2>&1
+check "codex config: second run changes nothing" [ "$(shasum "$CT8")" = "$c8" ]
+{ printf '[plugins."plugin-c@example-market"]\nenabled = true\n\n'; cat "$CT"; } > "$CT.new" && mv "$CT.new" "$CT"
+dout=$(cd "$R" && scripts/checks/run 2>&1); rc=$?
+check "drift: a plugin enabled for Codex only is reported" grep -q 'drift: plugin enabled for Codex only (.codex/config.toml): plugin-c@example-market' <<<"$dout"
+check "drift: reported only, checks still pass" [ "$rc" = 0 ]
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

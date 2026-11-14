@@ -4,7 +4,8 @@
 #   scripts/checks/run            all tracked files (CI, manual)
 #   scripts/checks/run --staged   staged content only (git pre-commit)
 # Checks: secrets (gitleaks, regex fallback), personal-value patterns, file size,
-# CLAUDE.md size and buffer, symlinks, DECISIONS.md ids, base-only paths in a home.
+# CLAUDE.md size and buffer, symlinks, DECISIONS.md ids, base-only paths in a home;
+# plugin drift between .claude/settings.json and .codex/config.toml is reported only.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/../lib/config"
@@ -109,6 +110,16 @@ if cfg_has_home && [ -f base.manifest ]; then
       fail "base-only path present in a home: $path"
     fi
   done < <(grep -E '^base-only[[:space:]]' base.manifest)
+fi
+
+# 9. Plugin drift between Claude Code and Codex (only when the home has .codex/config.toml).
+#    Reported, never failed: a plugin may exist for one tool only.
+if [ -f .codex/config.toml ] && [ -f .claude/settings.json ]; then
+  jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' .claude/settings.json 2>/dev/null | sort -u > "$TMP/pl.claude"
+  awk '/^\[/ { p = ""; if (match($0, /^\[plugins\."[^"]+"\]/)) p = substr($0, 11, RLENGTH - 12); next }
+       p != "" && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true/ { print p }' .codex/config.toml | sort -u > "$TMP/pl.codex"
+  comm -23 "$TMP/pl.claude" "$TMP/pl.codex" | sed 's/^/checks: drift: plugin enabled for Claude Code only (.claude\/settings.json): /' >&2
+  comm -13 "$TMP/pl.claude" "$TMP/pl.codex" | sed 's/^/checks: drift: plugin enabled for Codex only (.codex\/config.toml): /' >&2
 fi
 
 [ "$FAIL" = 0 ] && { [ "$MODE" = all ] && echo "checks: ok"; exit 0; }

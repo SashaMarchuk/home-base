@@ -8,7 +8,9 @@
 # Writes (and only these): home.config (committed keys), .local/config (machine
 # keys; other lines there are kept), the home section of CLAUDE.md (below the
 # BUFFER lines; the base block is never touched), .claude/settings.json
-# (enabledPlugins from the answers), .gitignore (missing template lines added),
+# (enabledPlugins from the answers), .codex/config.toml (the same plugins for
+# Codex in a marked block; other lines there are kept), .gitignore (missing
+# template lines added),
 # the terminal_helpers line of the answers file (when the device check turns it off),
 # wiki/index.md and DECISIONS.md (only when absent), wiki/howto/accounts.md
 # (when accounts.multi=yes) and deletes the base-only paths of base.manifest that
@@ -57,7 +59,7 @@ while [ $# -gt 0 ]; do
     --labels) LABELS=1; shift ;;
     --set) [ $# -ge 2 ] || die 2 "--set needs <key>=<value>"; SETS+=("$2"); shift 2 ;;
     --get) [ $# -ge 2 ] || die 2 "--get needs a key"; GETS+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
     *) die 2 "unknown option '$1' ($USAGE)" ;;
   esac
 done
@@ -299,7 +301,7 @@ if [ ${#MISSING[@]} -gt 0 ] || [ ${#BAD[@]} -gt 0 ]; then
 fi
 
 # repo must already hold the base files
-for f in home.config settings.json gitignore CLAUDE.home-section.md wiki/index.md wiki/howto/accounts.md DECISIONS.md; do
+for f in home.config settings.json codex-config.toml gitignore CLAUDE.home-section.md wiki/index.md wiki/howto/accounts.md DECISIONS.md; do
   [ -f "$T/$f" ] || die 3 "template missing: templates/$f"
 done
 BUF4='<!-- BUFFER 4/4: the home section starts on the next line. -->'
@@ -412,6 +414,30 @@ ST=$(jq --arg p "$(ans plugins)" '
   | if ($l | length) > 0 then .enabledPlugins = ($l | map({(.): true}) | add) else del(.enabledPlugins) end' "$SBASE") \
   || die 3 "cannot read $SBASE as JSON"
 put .claude/settings.json "$ST"
+
+# .codex/config.toml: the same plugins for Codex, in a marked block at the end of the
+# file (TOML gives bare keys after a table to that table); every other line is kept.
+# A marketplace gets a source only when .claude/settings.json names one
+# (extraKnownMarketplaces); a table the kept lines already hold is not written again.
+CB='# BEGIN configure: plugins (rewritten by scripts/configure; edit the plugins answer instead)'; CE='# END configure'
+CBASE="$T/codex-config.toml"; [ -f "$ROOT/.codex/config.toml" ] && CBASE="$ROOT/.codex/config.toml"
+CKEPT=$(awk -v b="$CB" -v e="$CE" '$0 == b { s = 1; next } $0 == e { s = 0; next } !s' "$CBASE" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+CTABLES=$(printf '%s\n' "$ST" | jq -r '
+  def q: tojson;
+  (.enabledPlugins // {} | to_entries | map(select(.value == true) | .key)) as $p
+  | (.extraKnownMarketplaces // {}) as $mk
+  | ([$p[] | select(contains("@")) | sub("^[^@]*@"; "")] | unique) as $ms
+  | ($ms[] | . as $m | $mk[$m].source // null | select(. != null)
+      | if .source == "github" then ["[marketplaces.\($m | q)]", "source_type = \"git\"", "source = \("https://github.com/\(.repo).git" | q)"]
+        elif .source == "git" then ["[marketplaces.\($m | q)]", "source_type = \"git\"", "source = \(.url | q)"]
+        elif .source == "directory" then ["[marketplaces.\($m | q)]", "source_type = \"local\"", "source = \(.path | q)"]
+        else empty end | join("\n")),
+    ($p[] | "[plugins.\(q)]\nenabled = true")' | V_KEPT=$CKEPT awk '
+  BEGIN { n = split(ENVIRON["V_KEPT"], k, "\n"); for (i = 1; i <= n; i++) have[k[i]] = 1 }
+  /^\[/ { skip = ($0 in have) } !skip { if (/^\[/ && out) print ""; print; out = 1 }') \
+  || die 3 "cannot build .codex/config.toml from .claude/settings.json"
+CBLOCK=$CB; [ -n "$CTABLES" ] && CBLOCK="$CBLOCK"$'\n'"$CTABLES"; CBLOCK="$CBLOCK"$'\n'"$CE"
+put .codex/config.toml "${CKEPT:+$CKEPT$'\n\n'}$CBLOCK"
 
 # .gitignore: the template lines, added when missing
 GI=""; [ -f "$ROOT/.gitignore" ] && GI=$(cat "$ROOT/.gitignore")
