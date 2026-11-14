@@ -206,5 +206,190 @@ check "groups: group keys in home.config are ignored" [ "$(win_of "$t")" = w3 ]
 check "groups: an unknown group from home.config -> exit 2" [ "$(rc_of ts open "$W1" --group g1)" = 2 ]
 cp "$T/hc.bak" "$HOME_ROOT/home.config"
 
+# ---------------------------------------------------------------- freeze --hard
+FKEYS=("${GKEYS[@]}" "term.group.g2.home=peer" term.freeze.hard_grace=1 launch.profile_flag=-p)
+live() { # live <tty> <pid> <cwd> <window> <session id> [status]: a Claude Code tab with its session file
+  hand_tab "$1" "$2" "claude --model opus" "$3" "$4"; sess_file work "$2" "$5" "${6:-idle}" "$3" "name-$1"
+}
+fdialog() { # fdialog <tty> <question> [sticky]
+  printf 'Header\n%s\n  1. Yes\n  2. No\nEnter to select · Esc to cancel\n' "$2" > "$(tabdir "$1")/dialog"
+  [ -n "${3:-}" ] && : > "$(tabdir "$1")/sticky-dialog"
+  # the session reports idle once its dialog is gone (as Claude Code updates its session file)
+  cat > "$(tabdir "$1")/on-key" <<EOF
+#!/bin/bash
+[ -f "$(tabdir "$1")/dialog" ] && exit 0
+f="$TERM_FAKE_DIR/profiles/work/sessions/$(cat "$(tabdir "$1")/pid").json"
+jq '.status = "idle"' "\$f" > "\$f.x" && mv "\$f.x" "\$f"
+EOF
+  return 0
+}
+issue_text() { # issue_text <owner/repo>: every issue body and comment in the gh stub for that repo
+  local d="$GH_STUB_DIR/${1%%/*}__${1#*/}/issues"
+  [ -d "$d" ] || return 0
+  cat "$d"/*.json | jq -r '.title, .body, (.comments[]?.body)'
+}
+no_leak() { ! issue_text "$1" | grep -qF -- "$2"; }   # no_leak <repo> <text>: the text is nowhere in that repo's issues
+snapf() { ls "$HOME_ROOT/.local/freeze/"*.json 2>/dev/null | head -1; }
+outcome() { jq -r --arg t "$1" '.entries[] | select(.tty == $t) | .outcome' "$(snapf)"; }
+nokeys() { local t; for t in "$@"; do [ -z "$(keys "$t")" ] || return 1; done; }
+QP="Deploy the peer plan now?"; QU="Unmapped question text here?"
+setup_main() {
+  reset "${FKEYS[@]}"
+  live ttyw1 801 "$W1" w7 "$S1"
+  live ttyw2 802 "$W2" w8 "$S2" waiting; fdialog ttyw2 "$QP"
+  live ttyw3 803 "$T" w9 "$S3" waiting; fdialog ttyw3 "$QU"
+  hand_tab ttyw4 804 "/opt/bin/codex" "$W1" w7
+  hand_tab ttyw5 805 "-zsh" "$W1" w7 shell
+}
+setup_main
+check "freeze: --all --hard exits 0" [ "$(rc_of ts freeze --all --hard)" = 0 ]
+check "freeze: the idle g1 tab exited" [ "$(outcome ttyw1)" = exited ]
+check "freeze: the dialog tabs exited after one Esc each" [ "$(outcome ttyw2) $(outcome ttyw3)" = "exited exited" ]
+check "freeze: one Esc on each dialog" [ "$(keys ttyw2 | grep -c key:esc) $(keys ttyw3 | grep -c key:esc)" = "1 1" ]
+check "freeze: no dialog answered" [ ! -f "$(tabdir ttyw2)/answered" ] && [ ! -f "$(tabdir ttyw3)/answered" ]
+check "freeze: /exit typed into the closed tabs" [ "$(sent ttyw1 | head -1)" = /exit ]
+check "freeze: their processes are gone" not alive 801
+check "freeze: codex and shell tabs listed, not touched" [ "$(outcome ttyw4) $(outcome ttyw5)" = "kept:not-claude kept:not-claude" ]
+check "freeze: no key in the codex or shell tab" nokeys ttyw4 ttyw5
+check "freeze: nothing signalled" [ ! -f "$TERM_FAKE_DIR/kills" ]
+check "freeze: the snapshot keeps the dialog question and options" \
+  [ "$(jq -r --arg t ttyw3 '.entries[] | select(.tty == $t) | .question + " | " + (.options | join(","))' "$(snapf)")" = "Header $QU | 1. Yes,2. No" ]
+check "freeze: one freeze issue in this home" [ "$(ls "$GH_STUB_DIR/test__home/issues" | wc -l | tr -d ' ')" = 1 ]
+check "freeze: one freeze issue in the peer home" [ "$(ls "$GH_STUB_DIR/test__peer/issues" | wc -l | tr -d ' ')" = 1 ]
+check "freeze: this home's issue lists the g1 session with its resume line" issue_text test/home | grep -qF "-p 'work' --model 'opus' --resume $S1"
+check "freeze: the freeze issues are parked" [ "$(cat "$GH_STUB_DIR"/test__*/issues/*.json | jq -r '.labels | index("status:parked") != null' | sort -u)" = true ]
+check "freeze: the peer question is in the peer home's issue" issue_text test/peer | grep -qF "$QP"
+check "boundary: the peer question never enters this home's issue" no_leak test/home "$QP"
+check "boundary: an unmapped tab's question never enters this home's issue" no_leak test/home "$QU"
+check "boundary: an unmapped tab's folder never enters this home's issue" not grep -qF "name-ttyw3" <(issue_text test/home)
+check "boundary: the unmapped tab is a pointer line" issue_text test/home | grep -qF "$S3: unmapped tab"
+cp -R "$GH_STUB_DIR/test__home" "$GH_STUB_DIR/test__leak"
+f=$(ls "$GH_STUB_DIR/test__leak/issues/"*.json | head -1)
+jq --arg q "$QU" '.comments += [{id: 99, body: ("open question: " + $q)}]' "$f" > "$f.x" && mv "$f.x" "$f"
+check "boundary: the check fails when an unmapped question is in this home's issue" not no_leak test/leak "$QU"
+check "freeze: adopted tabs recorded, closed and frozen" [ "$(jq -r '[.[] | select(.adopted and .closed != null and .frozen != null)] | length' "$REG")" = 3 ]
+check "freeze: the lock is released" [ ! -d "$HOME_ROOT/.local/freeze.lock" ]
+check "freeze: every file under this home's .local" [ -z "$(find "$T" -newer "$HOME_ROOT/home.config" -type f -path '*freeze*' ! -path "$HOME_ROOT/.local/*")" ]
+
+# snapshot and record before the first key
+setup_main
+printf '#!/bin/bash\n[ -n "$(ls %s/*.json 2>/dev/null)" ] && [ -n "$(ls %s 2>/dev/null)" ] && echo before >> %s\n' \
+  "$HOME_ROOT/.local/freeze" "$GH_STUB_DIR/test__home/issues" "$T/order" > "$(tabdir ttyw1)/on-submit"
+ts freeze --all --hard >/dev/null 2>&1
+check "snapshot first: snapshot and issue exist when /exit is typed" [ "$(head -1 "$T/order" 2>/dev/null)" = before ]
+rm -f "$T/order"
+setup_main
+check "snapshot first: a failing record -> exit 0 with nothing closed" [ "$(GH_STUB_FAIL_MATCH='title=Freeze' rc_of ts freeze --all --hard)" = 0 ]
+check "snapshot first: no key in any tab when the record failed" nokeys ttyw1 ttyw2 ttyw3 ttyw4 ttyw5
+check "snapshot first: the tabs are kept with kept:no-record" [ "$(outcome ttyw1) $(outcome ttyw2)" = "kept:no-record kept:no-record" ]
+
+# the calling session
+setup_main
+mkdir -p "$TERM_FAKE_DIR/proc/850"; printf 'bash term.sh' > "$TERM_FAKE_DIR/proc/850/cmd"; printf 'ttyw1' > "$TERM_FAKE_DIR/proc/850/tty"
+printf '801' > "$TERM_FAKE_DIR/proc/850/ppid"; printf '850' > "$TERM_FAKE_DIR/self-pid"
+ts freeze --all --hard >/dev/null 2>&1
+check "caller: left open, no key" nokeys ttyw1
+check "caller: recorded as kept:caller" [ "$(outcome ttyw1)" = kept:caller ]
+check "caller: its row and resume line are in the issue" issue_text test/home | grep -qF "caller (left open)"
+check "caller: the others were closed" [ "$(outcome ttyw2)" = exited ]
+setup_main
+check "caller: inside a session whose tab is not found -> --all exits 3" [ "$(CLAUDE_CODE_SESSION_ID=$S4 rc_of ts freeze --all --hard)" = 3 ]
+check "caller: nothing touched" nokeys ttyw1 ttyw2 ttyw3
+check "caller: no snapshot written" [ -z "$(snapf)" ]
+check "caller: explicit targets still allowed" [ "$(CLAUDE_CODE_SESSION_ID=$S4 rc_of ts freeze ttyw1 --hard)" = 0 ]
+
+# non-claude tabs and sessions that cannot be reopened
+setup_main
+check "non-claude: a selector naming only a codex tab -> exit 3" [ "$(rc_of ts freeze ttyw4 --hard)" = 3 ]
+check "non-claude: nothing typed" nokeys ttyw4
+reset "${FKEYS[@]}"; hand_tab ttym1 811 "claude -r" "$W1" w7
+check "resume manual: a session with no id -> exit 3" [ "$(rc_of ts freeze --all --hard)" = 3 ]
+check "resume manual: never typed into" nokeys ttym1
+reset "${FKEYS[@]}"; hand_tab ttym1 811 "claude -r" "$W1" w7; live ttyw1 801 "$W1" w7 "$S1"
+ts freeze --all --hard >/dev/null 2>&1
+check "resume manual: kept as kept:no-resume beside a closed tab" [ "$(outcome ttym1) $(outcome ttyw1)" = "kept:no-resume exited" ]
+
+# drafts, a running turn, a dialog that stays, signals that disagree
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; printf 'half written thought' > "$(tabdir ttyw1)/box"
+ts freeze --all --hard >/dev/null 2>&1
+check "draft: kept as kept:draft" [ "$(outcome ttyw1)" = kept:draft ]
+check "draft: only the probe and its backspace" [ "$(keys ttyw1 | tr '\n' ' ')" = "type:x key:bs " ]
+check "draft: text kept" [ "$(cat "$(tabdir ttyw1)/box")" = "half written thought" ]
+reset "${FKEYS[@]}" term.freeze.drafts=save; live ttyw1 801 "$W1" w7 "$S1"; printf 'half written thought' > "$(tabdir ttyw1)/box"
+ts freeze --all --hard >/dev/null 2>&1
+check "draft: a hand-written drafts=save still keeps the tab" [ "$(outcome ttyw1) $(cat "$(tabdir ttyw1)/box")" = "kept:draft half written thought" ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; put_ghost() { printf 'run the tests' > "$(tabdir ttyw1)/ghost"; }; put_ghost
+ts freeze --all --hard >/dev/null 2>&1
+check "suggestion: cleared and closed" [ "$(outcome ttyw1)" = exited ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze --all --hard >/dev/null 2>&1
+check "busy: kept running as kept:busy" [ "$(outcome ttyw1)" = kept:busy ]
+check "busy: never interrupted (no Esc, no key)" nokeys ttyw1
+reset "${FKEYS[@]}" term.freeze.busy=interrupt; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze --all --hard >/dev/null 2>&1
+check "busy: a hand-written busy=interrupt still never interrupts" nokeys ttyw1
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" waiting; fdialog ttyw1 "Pick one?" sticky
+ts freeze --all --hard >/dev/null 2>&1
+check "dialog: a dialog that stays open keeps the tab" [ "$(outcome ttyw1)" = kept:dialog ]
+check "dialog: one Esc only, no option" [ "$(keys ttyw1 | tr '\n' ' ')" = "key:esc " ] && [ ! -f "$(tabdir ttyw1)/answered" ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy
+ts freeze --all --hard >/dev/null 2>&1
+check "two signals: an idle screen with a busy session file is not typed into" [ "$(outcome ttyw1)" = kept:signals-disagree ]
+check "two signals: no key" nokeys ttyw1
+
+# selectors
+setup_main
+ts freeze --group g1 --hard >/dev/null 2>&1
+check "selector: --group g1 picks only the g1 tabs" [ "$(jq -r '[.entries[].tty] | join(" ")' "$(snapf)")" = ttyw1 ]
+setup_main
+ts freeze --window w8 --hard >/dev/null 2>&1
+check "selector: --window w8 picks only that window" [ "$(jq -r '[.entries[].tty] | join(" ")' "$(snapf)")" = ttyw2 ]
+setup_main
+ts freeze ttyw1 "$S3" --hard >/dev/null 2>&1
+check "selector: a tty and a session id pick exactly those" [ "$(jq -r '[.entries[].tty] | sort | join(" ")' "$(snapf)")" = "ttyw1 ttyw3" ]
+setup_main
+ts freeze --all --hard --except ttyw2 >/dev/null 2>&1
+check "selector: --except keeps that tab" [ "$(outcome ttyw2)" = kept:except ] && nokeys ttyw2
+setup_main
+check "selector: an unknown group -> exit 2" [ "$(rc_of ts freeze --group nope --hard)" = 2 ]
+check "selector: an unknown window -> exit 2" [ "$(rc_of ts freeze --window w99 --hard)" = 2 ]
+check "selector: an unknown tty -> exit 4" [ "$(rc_of ts freeze ttynone --hard)" = 4 ]
+check "selector: a title -> exit 2" [ "$(rc_of ts freeze my-tab --hard)" = 2 ]
+check "selector: nothing touched by the refusals" nokeys ttyw1 ttyw2 ttyw3
+check "selector: no snapshot from the refusals" [ -z "$(snapf)" ]
+out=$(ts freeze --all --hard --dry-run)
+check "dry run: prints the plan" grep -q '^ttyw2 g2 dialog -> hard close$' <<<"$out"
+check "dry run: touches nothing" nokeys ttyw1 ttyw2 ttyw3
+check "dry run: writes nothing" [ -z "$(snapf)" ] && [ ! -d "$GH_STUB_DIR/test__home" ]
+
+# lock and linger
+setup_main
+mkdir -p "$HOME_ROOT/.local/freeze.lock"
+check "lock: a second freeze -> exit 3" [ "$(rc_of ts freeze --all --hard)" = 3 ]
+check "lock: nothing typed" nokeys ttyw1 ttyw2
+check "lock: not stolen" [ -d "$HOME_ROOT/.local/freeze.lock" ]
+rmdir "$HOME_ROOT/.local/freeze.lock"
+check "lock: a freeze after the first one ended runs" [ "$(rc_of ts freeze ttyw1 --hard)" = 0 ]
+check "lock: and the next one too" [ "$(rc_of ts freeze ttyw3 --hard)" = 0 ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; : > "$(tabdir ttyw1)/linger"
+check "linger: a PID that survives /exit -> exit 5" [ "$(rc_of ts freeze --all --hard)" = 5 ]
+check "linger: kept:linger, nothing signalled" [ "$(outcome ttyw1)" = kept:linger ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
+
+# continue, and a tab bound to an issue
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+ts freeze --all --hard >/dev/null 2>&1
+id=$(jq -r .id "$(snapf)")
+rm -f "$(tabdir ttyw1)/busy"; sess_file work 801 "$S1" idle "$W1"
+check "continue: picks up a tab that was busy" [ "$(rc_of ts freeze --continue "$id")" = 0 ]
+check "continue: it is closed now" [ "$(outcome ttyw1)" = exited ]
+check "continue: one record only" [ "$(ls "$GH_STUB_DIR/test__home/issues" | wc -l | tr -d ' ')" = 1 ]
+reset "${FKEYS[@]}"
+mkdir -p "$GH_STUB_DIR/test__home/issues"
+o=$(ts open "$W1" --issue 31); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+sess_file work "$opid" "$osid" idle "$W1"; claim 31 "$osid"
+ts freeze "$otty" --hard >/dev/null 2>&1
+check "issue-bound: the tab's own issue gets the park checkpoint" grep -qF "Frozen by term.sh" <(issue_text test/home)
+check "issue-bound: and it closed" [ "$(outcome "$otty")" = exited ]
+
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

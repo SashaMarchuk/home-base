@@ -13,6 +13,7 @@
 #   term.sh resume <session_id> [--message TEXT | --silent]
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
+#   term.sh freeze ... --hard         -> see scripts/term/freeze.sh
 #   term.sh survey --json            -> one JSON object per live tab: tty, window, tab, pid, kind (claude,
 #                                       codex or shell), session_id and where it came from, profile, status,
 #                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
@@ -262,7 +263,7 @@ wait_pid_gone() { # wait_pid_gone <pid> <match> <seconds>
 reg_unlock() {
   if [ "$LOCK_HELD" = 1 ]; then rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null; LOCK_HELD=0; fi
 }
-trap reg_unlock EXIT
+trap 'reg_unlock; freeze_unlock' EXIT
 
 reg_lock() { # never steals: a lock left by a crashed run is reported, not removed
   local end=$((SECONDS + LOCK_TIMEOUT))
@@ -1083,6 +1084,7 @@ EOF
 }
 
 . "$TERM_SH_DIR/sessions.sh"
+. "$TERM_SH_DIR/freeze.sh"
 
 # Sourcing with TERM_SH_LIB=1 loads the functions only (used by the tests).
 if [ "${TERM_SH_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -1098,5 +1100,6 @@ case "$VERB" in
   resume) cmd_resume "$@" ;;
   close) cmd_close "$@" ;;
   survey) cmd_survey "$@" ;;
-  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|survey ... (see the header of this script)" ;;
+  freeze) cmd_freeze "$@" ;;
+  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|survey|freeze ... (see the header of this script and freeze.sh)" ;;
 esac

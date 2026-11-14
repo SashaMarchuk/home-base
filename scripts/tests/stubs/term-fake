@@ -12,6 +12,7 @@
 #   sticky-dialog  Esc leaves the dialog open
 #   window  the window id of the tab (default w1)
 #   on-submit  a script run with the submitted line as $1 (stands in for the session acting on it)
+#   on-key     a script run with the key name (cr, esc, bs) as $1 after the key took effect
 # Logs: keys (every keystroke), sent (submitted lines), answered (dialog answers).
 # Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd and ppid; kills go to $TERM_FAKE_DIR/kills.
 # $TERM_FAKE_DIR/self-pid is the pid term.sh sees as its own (start of the walk to the calling
@@ -76,6 +77,14 @@ be_key() {
   fake_live "$1" "$2" || return 4
   d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
   printf 'key:%s\n' "$3" >> "$d/keys"
+  fake_key "$@"; local rc=$?
+  [ -f "$d/on-key" ] && /bin/bash "$d/on-key" "$3" >/dev/null 2>&1
+  return $rc
+}
+
+fake_key() { # the effect of one key on the tab
+  local d mode line s pid
+  d=$(fake_tab "$1"); mode=$(fake_get "$1" mode)
   case "$3" in
     bs)
       if [ -f "$d/freetext" ]; then line=$(fake_get "$1" answer); fake_put "$1" answer "${line%?}"
