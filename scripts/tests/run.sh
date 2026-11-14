@@ -265,12 +265,18 @@ if sel guards; then
   P_MOVE=$(printf '*** Begin Patch\n*** Update File: %s/.local/x.md\n*** Move to: %s/wiki/moved.md\n@@\n+card %s\n*** End Patch' "$H" "$H" "$CARD")
   P_TWO=$(printf '*** Begin Patch\n*** Add File: %s/.local/n.md\n+card %s\n*** Add File: %s/wiki/b.md\n+card %s\n*** End Patch' "$H" "$CARD" "$H" "$CARD")
   P_LOCAL=$(printf '*** Begin Patch\n*** Add File: %s/.local/n.md\n+card %s\n*** End Patch' "$H" "$CARD")
-  for c in ADD UPD MOVE TWO; do
+  printf 'card %s\n' "$CARD" > "$H/.local/secret.md"; printf 'plain notes\n' > "$H/.local/clean.md"
+  P_MV0=$(printf '*** Begin Patch\n*** Update File: %s/.local/secret.md\n*** Move to: %s/wiki/s.md\n*** End Patch' "$H" "$H")
+  P_MVC=$(printf '*** Begin Patch\n*** Update File: .local/secret.md\n*** Move to: wiki/s.md\n@@\n card\n*** End Patch')
+  P_MVOK=$(printf '*** Begin Patch\n*** Update File: %s/.local/clean.md\n*** Move to: %s/wiki/c.md\n*** End Patch' "$H" "$H")
+  P_IND=$(printf '*** Begin Patch\n  *** Add File:   %s/wiki/i.md  \n+card %s\n*** End Patch' "$H" "$CARD")
+  P_INDOK=$(printf '*** Begin Patch\n  *** Add File:   %s/wiki/i.md  \n+plain notes\n*** End Patch' "$H")
+  for c in ADD UPD MOVE TWO MV0 MVC IND; do
     eval "pt=\$P_$c"
     ap "$H" "$pt" > "$T/ap.json"
     expect "sensitive-guard blocks apply_patch ($c)" 2 sh -c '"$1" < "$2"' _ "$SG" "$T/ap.json"
   done
-  for c in CLEAN DEL LOCAL; do
+  for c in CLEAN DEL LOCAL MVOK INDOK; do
     eval "pt=\$P_$c"
     ap "$H" "$pt" > "$T/ap.json"
     expect "sensitive-guard allows apply_patch ($c)" 0 sh -c '"$1" < "$2"' _ "$SG" "$T/ap.json"

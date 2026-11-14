@@ -38,15 +38,20 @@ BASE_DIR=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$BASE_D
 TOOL=$(printf '%s' "$IN" | jq -r '.tool_name // empty' 2>/dev/null)
 if [ "$TOOL" = apply_patch ]; then
   PATCH=$(printf '%s' "$IN" | jq -r '.tool_input.command // .tool_input.input // .tool_input.patch // empty | if type == "array" then join("\n") else . end' 2>/dev/null)
-  # One record per file of the patch: <path> NUL <added text> NUL. A moved file is checked at its new path.
-  while IFS= read -r -d '' p && IFS= read -r -d '' t; do
+  # One record per file of the patch: <path> NUL <added text> NUL <moved-from path or empty> NUL.
+  # A moved file is checked at its new path, with the current contents of the file it moves from.
+  while IFS= read -r -d '' p && IFS= read -r -d '' t && IFS= read -r -d '' src; do
+    if [ -n "$src" ]; then
+      case "$src" in /*) ;; *) src="$BASE_DIR/$src" ;; esac
+      [ -f "$src" ] && t="$t"$'\n'"$(cat "$src")"
+    fi
     check "$p" "$t"
   done < <(printf '%s\n' "$PATCH" | perl -ne '
-    sub flush { print "$p\0$t\0" if defined $p; undef $p; $t = "" }
+    sub flush { print "$p\0$t\0$s\0" if defined $p; undef $p; $t = ""; $s = "" }
     chomp;
-    if (/^\*\*\* (?:Add|Update) File: (.*)$/) { flush(); $p = $1; next }
-    if (/^\*\*\* Move to: (.*)$/) { $p = $1 if defined $p; next }
-    if (/^\*\*\* /) { flush(); next }
+    if (/^\s*\*\*\* (?:Add|Update) File:\s*(.*?)\s*$/) { flush(); $p = $1; next }
+    if (/^\s*\*\*\* Move to:\s*(.*?)\s*$/) { if (defined $p) { $s = $p; $p = $1 } next }
+    if (/^\s*\*\*\* /) { flush(); next }
     $t .= substr($_, 1) . "\n" if /^\+/ && defined $p;
     END { flush() }')
   exit 0
