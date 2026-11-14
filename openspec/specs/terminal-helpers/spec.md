@@ -6,10 +6,14 @@ Optional terminal helpers let the orchestrator open, read, type into, park, resu
 ## Requirements
 
 ### Requirement: HOME-055 Off unless switched on
-Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anything unless `terminal_helpers=on` is set.
+Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anything unless `terminal_helpers=on` is set, and also when it runs in a Codex session (`CODEX_THREAD_ID` set) or with `launch.command=codex`, because the helpers drive Claude Code tabs only.
 
 #### Scenario: Helpers off
 - **WHEN** `term.sh open` runs with `terminal_helpers=off`
+- **THEN** it exits 3 and no tab is opened
+
+#### Scenario: Codex orchestrator
+- **WHEN** `term.sh open` runs with `terminal_helpers=on` from a Codex session or with `launch.command=codex`
 - **THEN** it exits 3 and no tab is opened
 
 ### Requirement: HOME-056 Tabs addressed by tty or session id

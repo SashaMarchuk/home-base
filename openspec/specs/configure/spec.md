@@ -35,7 +35,7 @@ The `configure` skill SHALL collect answers and defaults interactively into `.lo
 - **THEN** the script exits 3 and says to take it from the base first
 
 ### Requirement: HOME-037 Only the listed files are written
-`scripts/configure` SHALL write only `home.config`, `.local/config`, the home section of `CLAUDE.md` below the buffer, `.claude/settings.json` with `enabledPlugins` from the answers, missing `.gitignore` lines, the answers file's `terminal_helpers` line, `wiki/index.md` and `DECISIONS.md` when absent, `wiki/howto/accounts.md` when several accounts are declared, the repo-local `core.hooksPath`, the removal of tracked `base-only` paths and the `origin` and `base` remotes.
+`scripts/configure` SHALL write only `home.config`, `.local/config`, the home section of `CLAUDE.md` below the buffer, `.claude/settings.json` with `enabledPlugins` from the answers, `.codex/config.toml`, missing `.gitignore` lines, the answers file's `terminal_helpers` line, `wiki/index.md` and `DECISIONS.md` when absent, `wiki/howto/accounts.md` when several accounts are declared, the repo-local `core.hooksPath`, the removal of tracked `base-only` paths and the `origin` and `base` remotes.
 
 #### Scenario: Base block untouched
 - **WHEN** configure rewrites `CLAUDE.md`
@@ -49,6 +49,10 @@ The `configure` skill SHALL collect answers and defaults interactively into `.lo
 - **WHEN** `.local/config` holds a key configure does not manage
 - **THEN** that line is kept
 
+#### Scenario: Codex settings keep the owner's lines
+- **WHEN** `.codex/config.toml` already holds lines outside the configure block
+- **THEN** those lines are kept, a table they already define is not written again, and the block holds one `[plugins."<plugin>"] enabled = true` table per enabled plugin, with a marketplace source only when `.claude/settings.json` names one
+
 ### Requirement: HOME-038 Idempotent setup
 Running `scripts/configure` twice with the same answers SHALL produce the same files and rewrite a file only when its content changes.
 
@@ -57,11 +61,15 @@ Running `scripts/configure` twice with the same answers SHALL produce the same f
 - **THEN** no file is reported as written
 
 ### Requirement: HOME-039 Terminal helpers only on a capable device
-`scripts/configure` SHALL keep `terminal_helpers=off` when it was answered `on` but the device check (macOS, its scripting bridge and the supported terminal application) fails, and say so in the keys-used report.
+`scripts/configure` SHALL keep `terminal_helpers=off` when it was answered `on` but the answers launch Codex (`launch.command=codex`; the helpers drive Claude Code tabs only) or the device check (macOS, its scripting bridge and the supported terminal application) fails, and say which in the keys-used report.
 
 #### Scenario: Not macOS
 - **WHEN** `terminal_helpers=on` is answered on a Linux machine
 - **THEN** `.local/config` holds `terminal_helpers=off` and the report notes the failed device check
+
+#### Scenario: Codex orchestrator
+- **WHEN** `terminal_helpers=on` and `launch.command=codex` are answered on a capable device
+- **THEN** `.local/config` holds `terminal_helpers=off` and the report says the helpers drive Claude Code tabs only
 
 ### Requirement: HOME-040 Account rows are labels only
 With `accounts.multi=yes`, `scripts/configure` SHALL accept only account rows of three fields, `label | what it serves | where the mapping lives`, and reject any row holding an address.
@@ -144,7 +152,7 @@ The `configure` skill MUST ask, in plain words without key names, only for the o
 - **THEN** terminal helpers are off, the terminal application and Cmd+Space are never mentioned, the closing says "The assistant does not open terminal tabs for you" and tells the person to open a terminal, paste the line and press Enter
 
 ### Requirement: HOME-083 The answers file keeps the effective terminal helpers value
-When the device check turns an answered `terminal_helpers=on` into `off`, `scripts/configure` SHALL rewrite the `terminal_helpers` line of the answers file to `off` and say so.
+When the Codex rule or the device check turns an answered `terminal_helpers=on` into `off`, `scripts/configure` SHALL rewrite the `terminal_helpers` line of the answers file to `off` and say so.
 
 #### Scenario: Device check fails
 - **WHEN** the answers hold `terminal_helpers=on` and the device check fails

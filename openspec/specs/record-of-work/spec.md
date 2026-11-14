@@ -17,11 +17,15 @@ Every task of a home is a GitHub issue, and `scripts/home-log` is the only write
 - **THEN** no verb of `scripts/home-log` reads it as a claim, checkpoint or final comment
 
 ### Requirement: HOME-002 Run identity
-`scripts/home-log` SHALL take the run id from `--run-id`; without it, `start` takes the Claude Code session id, else the Codex thread id, else the run stored in `.local/runs/` for the issue, else a new random id, while every other verb takes the stored run before the session or thread id; any run id holding characters other than letters, digits, dot, underscore and hyphen is refused with exit 2.
+`scripts/home-log` SHALL take the run id from `--run-id`; without it, `start` takes the Codex thread id (it wins over Claude Code variables a Codex run inherits), else the Claude Code session id, else the run stored in `.local/runs/` for the issue, else a new random id, while every other verb takes the stored run before the session or thread id; any run id holding characters other than letters, digits, dot, underscore and hyphen is refused with exit 2.
 
 #### Scenario: Session id is the run id
 - **WHEN** `home-log start 12` runs inside a Claude Code session with no `--run-id`
 - **THEN** the comment's run id is that session's id
+
+#### Scenario: Codex run started from a Claude Code session
+- **WHEN** `home-log start 12` runs with `CODEX_THREAD_ID` and the Claude Code variables all set
+- **THEN** the run id is the Codex thread id and the surface is codex
 
 #### Scenario: Later verbs use the stored run
 - **WHEN** `.local/runs/12` records the run that won the claim and `home-log checkpoint 12` runs in a session with another session id
@@ -111,8 +115,12 @@ The session-end hook SHALL, for each claim of the ending session whose comment i
 - **THEN** issue 3 shows a `stub` comment with the resume command and carries `needs-summary`
 
 #### Scenario: Codex session
-- **WHEN** the ending session's surface is codex (`CODEX_THREAD_ID` is set)
+- **WHEN** the ending session's surface is codex (`CODEX_THREAD_ID` is set, or the hook runs as `session-end --surface codex`)
 - **THEN** the stub's resume command is `codex resume <id>`
+
+#### Scenario: Codex hook returns at once
+- **WHEN** the Codex hook runs `session-end --surface codex` and GitHub is slow
+- **THEN** the hook returns at once and a detached child still writes the stub
 
 #### Scenario: Session without a claim
 - **WHEN** a session that holds no claim ends

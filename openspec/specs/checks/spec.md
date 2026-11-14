@@ -42,6 +42,17 @@ The checks SHALL fail on any file larger than 500 KB, a `CLAUDE.md` larger than 
 - **WHEN** a home tracks a file under `openspec/`
 - **THEN** the checks fail with `base-only path present in a home`
 
+### Requirement: HOME-174 Plugin drift between Claude Code and Codex is reported
+When a home has `.codex/config.toml` and `.claude/settings.json`, the checks SHALL print one `checks: drift:` line for each plugin enabled for one tool only, and SHALL NOT fail on it.
+
+#### Scenario: Plugin enabled for Codex only
+- **WHEN** `.codex/config.toml` enables a plugin that `.claude/settings.json` does not
+- **THEN** the checks print a drift line naming it and still pass
+
+#### Scenario: No Codex settings
+- **WHEN** a home has no `.codex/config.toml`
+- **THEN** no drift line is printed
+
 ### Requirement: HOME-068 Bash guard
 The pre-tool hook for shell commands SHALL block with exit 2 and a reason any command that kills by pattern or more than one process (only one optional signal and single positive process ids above 1 pass), switches the CLI account, force-pushes the default branch, deletes a repository, changes its visibility, pushes to the base remote, or matches a regex in `guard.extra`.
 
