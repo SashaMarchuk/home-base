@@ -443,7 +443,7 @@ cp "$T/home.config.bak" "$HOME_ROOT/home.config"
 
 # ---------------------------------------------------------------- registry: atomic and concurrent
 reset term.max_workers=100
-N=12; i=0; export TERM_SH_LOCK_TIMEOUT=30
+N=12; i=0; export TERM_SH_LOCK_TIMEOUT=30 TERM_SH_OPEN_WAIT=30
 while [ $i -lt $N ]; do ts open "$WORK" --issue $((i + 1)) >"$T/par.$i" 2>&1 & i=$((i + 1)); done
 wait
 check "registry valid JSON after $N parallel writers" jq -e 'type == "array"' "$REG" >/dev/null
