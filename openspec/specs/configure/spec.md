@@ -415,3 +415,21 @@ In a cloud or web session whose upload failed, the `configure` skill SHALL keep 
 #### Scenario: Repository found by a lookup only
 - **WHEN** `gh api repos/<repo>` succeeds but the upload fails and the person never said the repository exists
 - **THEN** the one action still begins with creating the private repository if it is not there yet
+
+### Requirement: HOME-137 One step changes a machine key
+`scripts/configure --set <key>=<value>` SHALL change only `.local/config` and only the machine keys `launch.*`, `terminal_helpers`, `limits.reader`, `gh.config_dir` and `transcripts.*`, check each value as an answer is checked, remove the key on an empty value, keep every other line, print `<key>=<effective value>`, and refuse with exit 2 and nothing written any other key or an invalid value; `--get <key>` prints the same line without writing.
+
+#### Scenario: Worker profile set, then unset
+- **WHEN** `scripts/configure --set launch.profile.worker=personal` runs twice, then `scripts/configure --set launch.profile.worker=` runs
+- **THEN** after the first two runs `.local/config` holds one line `launch.profile.worker=personal` and prints it, and after the third that line is gone and `launch.profile.worker=` is printed
+
+#### Scenario: Committed key refused
+- **WHEN** `scripts/configure --set repo=example-org/other` runs
+- **THEN** it exits 2 naming `repo` as a committed key, and neither `home.config` nor `.local/config` changes
+
+### Requirement: HOME-138 An answers run keeps unanswered machine keys
+`scripts/configure --answers <file>` SHALL keep the `.local/config` value of a machine key that the answers file does not name.
+
+#### Scenario: Profile set before a rerun
+- **WHEN** `.local/config` holds `launch.profile.worker=personal` and `scripts/configure --answers` runs with a file that has no `launch.profile.worker` line
+- **THEN** `.local/config` still holds `launch.profile.worker=personal`

@@ -26,25 +26,50 @@
 # starting "cd <root> &&", that does the rest from the person's own terminal: any
 # pending git steps with the upload, then the labels), 5 files written but git
 # refused a step after the probe allowed it (the last line gives the full rerun line).
-# Running it twice with the same answers gives the same files.
+# Running it twice with the same answers gives the same files. A machine key that
+# is absent from the answers file keeps its value from .local/config.
+#
+#   scripts/configure --set <key>=<value> [--set <key>=<value> ...]
+#   scripts/configure --get <key> [--get <key> ...]
+# --set changes machine keys in .local/config only (every other line there is kept;
+# committed files are never touched). Allowed keys: launch.profile.orchestrator,
+# launch.profile.worker, launch.profile_flag, launch.command, launch.model,
+# terminal_helpers, limits.reader, gh.config_dir, transcripts.paths,
+# transcripts.exclude. Values are checked as answers are (one word where one word
+# is required, launch.model an alias such as opus); an empty value unsets the key.
+# Every --set is checked before anything is written. Prints "<key>=<effective value>"
+# per key; running it again changes nothing. --get prints the same line without
+# writing. The launch.* keys are read from .local/config only, the others from
+# .local/config, then home.config, then the default.
+# Exit: 0 ok, 2 an invalid, refused or unknown key or value (nothing written),
+# 3 .local/config could not be written.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 HOME_ROOT=$ROOT; export HOME_ROOT
 T="$ROOT/templates"
 
 die() { local c=$1; shift; echo "configure: $*" >&2; exit "$c"; }
-ANS=""; LABELS=0
+ANS=""; LABELS=0; SETS=(); GETS=()
+USAGE="usage: configure --answers <file> [--labels] | --set <key>=<value> ... | --get <key> ..."
 while [ $# -gt 0 ]; do
   case "$1" in
     --answers) [ $# -ge 2 ] || die 2 "--answers needs a file"; ANS=$2; shift 2 ;;
     --labels) LABELS=1; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
-    *) die 2 "unknown option '$1' (usage: configure --answers <file> [--labels])" ;;
+    --set) [ $# -ge 2 ] || die 2 "--set needs <key>=<value>"; SETS+=("$2"); shift 2 ;;
+    --get) [ $# -ge 2 ] || die 2 "--get needs a key"; GETS+=("$2"); shift 2 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    *) die 2 "unknown option '$1' ($USAGE)" ;;
   esac
 done
-[ -n "$ANS" ] || die 2 "usage: configure --answers <file> [--labels]"
-[ -f "$ANS" ] || die 2 "answers file not found: $ANS"
-command -v jq >/dev/null 2>&1 || die 3 "jq is required"
+MACHINE_MODE=0
+if [ ${#SETS[@]} -gt 0 ] || [ ${#GETS[@]} -gt 0 ]; then
+  MACHINE_MODE=1
+  { [ -z "$ANS" ] && [ "$LABELS" = 0 ]; } || die 2 "--set and --get do not go with --answers or --labels"
+else
+  [ -n "$ANS" ] || die 2 "$USAGE"
+  [ -f "$ANS" ] || die 2 "answers file not found: $ANS"
+  command -v jq >/dev/null 2>&1 || die 3 "jq is required"
+fi
 
 # ---------- reading answers (no '~' expansion: values are written as given) ----------
 ans_all() { # every value of a key, in order
@@ -96,6 +121,102 @@ launch.profile_flag=
 guard.private_values=
 guard.boundary_terms="
 HOME_FIELDS="owner.names home.domain home.boundary plugins accounts.multi"
+
+device_ok() { # terminal helpers need macOS, osascript and iTerm2
+  [ "$(uname -s)" = Darwin ] || return 1
+  command -v osascript >/dev/null 2>&1 || return 1
+  [ "$(osascript -e 'return "ok"' 2>/dev/null)" = ok ] || return 1
+  osascript -e 'id of application "iTerm"' >/dev/null 2>&1   # resolves the app without launching it
+}
+
+# ---------- --set / --get: machine keys in .local/config only ----------
+SETTABLE="launch.profile.orchestrator launch.profile.worker launch.profile_flag launch.command launch.model terminal_helpers limits.reader gh.config_dir transcripts.paths transcripts.exclude"
+if [ "$MACHINE_MODE" = 1 ]; then
+  LCF="$ROOT/.local/config"
+  file_val() { # file_val <file> <key>: the last value of the key (as written), exit 1 when absent
+    [ -f "$1" ] || return 1
+    awk -v k="$2" '/^[[:space:]]*#/ { next }
+      { i = index($0, "="); if (i == 0) next
+        key = substr($0, 1, i - 1); v = substr($0, i + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); if (key != k) next
+        sub(/[[:space:]]+#.*$/, "", v); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); f = 1; out = v }
+      END { if (f) { print out; exit 0 } exit 1 }' "$1"
+  }
+  effective() { # effective <key>: what the scripts read (launch.* from .local/config only)
+    local v
+    if v=$(file_val "$LCF" "$1"); then :
+    elif case "$1" in launch.*) false ;; esac && v=$(file_val "$ROOT/home.config" "$1"); then :
+    else v=$(printf '%s\n' "$MACHINE_DEFAULTS" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }')
+    fi
+    printf '%s=%s\n' "$1" "$v"
+  }
+  settable() { # settable <key>: refuses committed, other and unknown keys
+    case " $SETTABLE " in *" $1 "*) return 0 ;; esac
+    if printf '%s\n' "$COMMITTED_DEFAULTS" | grep -q "^$1="; then
+      BAD+=("$1 is a committed key of home.config; --set changes machine keys only ($SETTABLE)")
+    else
+      BAD+=("$1 cannot be set here (allowed: $SETTABLE)")
+    fi
+    return 1
+  }
+  BAD=(); KEYS=(); VALS=()
+  for k in ${GETS[@]+"${GETS[@]}"}; do settable "$k"; done
+  for a in ${SETS[@]+"${SETS[@]}"}; do
+    case "$a" in *=*) ;; *) BAD+=("--set $a (write <key>=<value>)"); continue ;; esac
+    k=${a%%=*}; v=${a#*=}
+    settable "$k" || continue
+    case "$v" in *$'\n'*|*$'\r'*) BAD+=("$k: the value must be one line"); continue ;; esac
+    case "$v" in *" #"*|*$'\t#'*) BAD+=("$k=$v (' #' starts a comment in the config files)"); continue ;; esac
+    if [ -n "$v" ]; then
+      case "$k" in
+        launch.profile.orchestrator|launch.profile.worker)
+          printf '%s' "$v" | grep -Eq '^[A-Za-z0-9._@-]+$' || BAD+=("$k=$v (one word: the profile name)") ;;
+        launch.command)
+          printf '%s' "$v" | grep -Eq '^[A-Za-z0-9._-]+$' || BAD+=("$k=$v (one command word, such as claude or codex)") ;;
+        launch.profile_flag)
+          printf '%s' "$v" | grep -Eq '^--?[A-Za-z0-9][A-Za-z0-9-]*$' || BAD+=("$k=$v (one flag, such as -p)") ;;
+        launch.model)
+          printf '%s' "$v" | grep -Eq '^[a-z]+(\[1m\])?$' || BAD+=("$k=$v (an alias such as opus or sonnet, not a pinned version)") ;;
+        terminal_helpers)
+          case "$v" in
+            off) ;;
+            on) device_ok || BAD+=("terminal_helpers=on (device check failed: needs macOS, osascript and iTerm2)") ;;
+            *) BAD+=("$k=$v (allowed: on off)") ;;
+          esac ;;
+      esac
+    fi
+    KEYS+=("$k"); VALS+=("$v")
+  done
+  if [ ${#BAD[@]} -gt 0 ]; then
+    for b in "${BAD[@]}"; do echo "configure: refused: $b" >&2; done
+    echo "configure: nothing written" >&2
+    exit 2
+  fi
+  if [ ${#KEYS[@]} -gt 0 ]; then
+    OLD=""; [ -f "$LCF" ] && OLD=$(cat "$LCF")
+    NEW=$OLD
+    [ -n "$NEW" ] || NEW="# .local/config: this machine only (gitignored). Overrides home.config.
+# Machine keys below are written by scripts/configure; other key lines are kept."
+    i=0
+    while [ $i -lt ${#KEYS[@]} ]; do
+      k=${KEYS[$i]}; v=${VALS[$i]}; i=$((i + 1))
+      # the first line of the key becomes the new value (or goes when empty); later ones go
+      NEW=$(printf '%s\n' "$NEW" | V_K="$k" V_V="$v" awk '
+        BEGIN { k = ENVIRON["V_K"]; v = ENVIRON["V_V"] }
+        !/^[[:space:]]*#/ && index($0, "=") { key = substr($0, 1, index($0, "=") - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+          if (key == k) { if (!done && v != "") print k "=" v; done = 1; next } }
+        { print }
+        END { if (!done && v != "") print k "=" v }')
+    done
+    if [ "$NEW" != "$OLD" ] || [ ! -f "$LCF" ]; then
+      mkdir -p "$ROOT/.local" 2>/dev/null && printf '%s\n' "$NEW" > "$LCF.tmp" 2>/dev/null && mv "$LCF.tmp" "$LCF" 2>/dev/null \
+        || { rm -f "$LCF.tmp"; die 3 "cannot write .local/config; nothing changed"; }
+    fi
+    for k in "${KEYS[@]}"; do effective "$k"; done
+  fi
+  for k in ${GETS[@]+"${GETS[@]}"}; do effective "$k"; done
+  exit 0
+fi
 
 val() { # val <key>: the answer when non-empty, else the default
   local d v
@@ -195,12 +316,6 @@ fi
 # ---------- terminal helpers: on only after the device check ----------
 HELPERS=$(ans terminal_helpers)
 HELPERS_NOTE=""
-device_ok() {
-  [ "$(uname -s)" = Darwin ] || return 1
-  command -v osascript >/dev/null 2>&1 || return 1
-  [ "$(osascript -e 'return "ok"' 2>/dev/null)" = ok ] || return 1
-  osascript -e 'id of application "iTerm"' >/dev/null 2>&1   # resolves the app without launching it
-}
 if [ "$HELPERS" = on ] && ! device_ok; then
   HELPERS=off; HELPERS_NOTE=" (asked on; device check failed: needs macOS, osascript and iTerm2)"
 fi
@@ -270,7 +385,11 @@ LC="# .local/config: this machine only (gitignored). Overrides home.config.
 # Machine keys below are written by scripts/configure; other key lines are kept."
 [ -n "$KEPT" ] && LC="$LC"$'\n'"$KEPT"
 for k in $MANAGED; do
-  if [ "$k" = terminal_helpers ]; then v=$HELPERS; else v=$(val "$k"); fi
+  if [ "$k" = terminal_helpers ]; then v=$HELPERS
+  elif ! ans_has "$k" && v=$(printf '%s\n' "$LC_OLD" | awk -v k="$k" '/^[[:space:]]*#/ { next }
+      { i = index($0, "="); if (i == 0) next; key = substr($0, 1, i - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+        if (key == k) { f = 1; out = substr($0, i + 1) } } END { if (f) { print out; exit 0 } exit 1 }'); then : # kept from .local/config
+  else v=$(val "$k"); fi
   [ -n "$v" ] && LC="$LC"$'\n'"$k=$v"
 done
 put .local/config "$LC"

@@ -36,6 +36,7 @@ For `SWEEP stale-claim`: a claim is dead only with **two signals**: its tab is g
 - When the owner asks for a separate session or terminal for a task, open it (`scripts/term/term.sh open`) with a brief; never do that task in this session instead, and never hand the launch back to him.
 - A session that holds an open question of the owner is never closed unless he says so: park it (its question moves to the issue) or leave it.
 - Kill only PIDs this home launched or the owner named, by exact number.
+- "set profile <orchestrator|worker> <name>" (or "use profile <name> for workers"): run `scripts/configure --set launch.profile.<role>=<name>` and confirm in one line; "show profiles": `scripts/configure --get launch.profile.orchestrator --get launch.profile.worker`.
 - A cap the owner states ("3-4 sessions") counts every tab this session opens, child orchestrators included.
 Pick `status:ready` issues, oldest first, one worker per issue. Before launching, check open claims (`status:claimed`) and `scripts/term/term.sh survey` so no task gets two sessions.
 

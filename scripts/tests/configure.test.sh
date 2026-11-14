@@ -307,5 +307,54 @@ out=$("$R4/scripts/configure" --answers "$W/answers.lang" 2>&1); rc=$?
 check "language name refused (exit 2)" [ "$rc" = 2 ]
 check "language name named" grep -q 'invalid answer: lang.files=English (a two-letter language code' <<<"$out"
 
+# 12. --set / --get change machine keys in .local/config only
+R7="$W/home7"; mkdir -p "$R7"; cp -R "$SRC/scripts" "$SRC/templates" "$R7/"
+printf 'repo=example-org/orchard-home\ngh.config_dir=~/ghdir\n' > "$R7/home.config"
+HC7=$(shasum "$R7/home.config")
+out=$("$R7/scripts/configure" --get launch.profile.worker 2>&1); rc=$?
+check "get with no .local: exit 0" [ "$rc" = 0 ]
+check "get with no .local: default printed" [ "$out" = "launch.profile.worker=" ]
+check "get writes nothing" [ ! -e "$R7/.local" ]
+check "get: home.config value for a non-launch key" [ "$("$R7/scripts/configure" --get gh.config_dir)" = "gh.config_dir=~/ghdir" ]
+out=$("$R7/scripts/configure" --set launch.profile.worker=personal --set launch.profile_flag=-p 2>&1); rc=$?
+check "set: exit 0" [ "$rc" = 0 ]
+check "set: effective values printed" [ "$out" = "launch.profile.worker=personal"$'\n'"launch.profile_flag=-p" ]
+check "set: written to .local/config" grep -qx 'launch.profile.worker=personal' "$R7/.local/config"
+printf 'lang.owner=fr\n' >> "$R7/.local/config"
+"$R7/scripts/configure" --set launch.profile.worker=work >/dev/null 2>&1
+check "set again: value replaced, one line" [ "$(grep -c '^launch.profile.worker=' "$R7/.local/config")" = 1 ]
+check "set again: new value" [ "$("$R7/scripts/configure" --get launch.profile.worker)" = "launch.profile.worker=work" ]
+check "set: other lines kept" grep -qx 'lang.owner=fr' "$R7/.local/config"
+lc=$(shasum "$R7/.local/config")
+"$R7/scripts/configure" --set launch.profile.worker=work >/dev/null 2>&1
+check "set: idempotent" [ "$(shasum "$R7/.local/config")" = "$lc" ]
+check "set: home.config untouched" [ "$(shasum "$R7/home.config")" = "$HC7" ]
+out=$("$R7/scripts/configure" --set launch.profile.worker= 2>&1); rc=$?
+check "unset: exit 0" [ "$rc" = 0 ]
+check "unset: line removed" sh -c "! grep -q '^launch.profile.worker=' '$R7/.local/config'"
+check "unset: default printed" [ "$out" = "launch.profile.worker=" ]
+check "unset launch.command: default claude" [ "$("$R7/scripts/configure" --set launch.command= )" = "launch.command=claude" ]
+lc=$(shasum "$R7/.local/config")
+out=$("$R7/scripts/configure" --set launch.profile.worker=ok --set guard.private_values=x 2>&1); rc=$?
+check "refused key: exit 2" [ "$rc" = 2 ]
+check "refused key: named" grep -q 'refused: guard.private_values cannot be set here' <<<"$out"
+check "refused key: nothing written" [ "$(shasum "$R7/.local/config")" = "$lc" ]
+out=$("$R7/scripts/configure" --set repo=example-org/other 2>&1); rc=$?
+check "refused committed key: exit 2" [ "$rc" = 2 ]
+check "refused committed key: named" grep -q 'refused: repo is a committed key of home.config' <<<"$out"
+check "refused committed key: home.config untouched" [ "$(shasum "$R7/home.config")" = "$HC7" ]
+check "refused committed key: .local/config untouched" [ "$(shasum "$R7/.local/config")" = "$lc" ]
+out=$("$R7/scripts/configure" --set "launch.profile.worker=two words" --set launch.model=claude-opus-4-1 2>&1); rc=$?
+check "two-word profile and pinned model refused: exit 2" [ "$rc" = 2 ]
+check "two-word profile named" grep -q 'refused: launch.profile.worker=two words (one word' <<<"$out"
+check "pinned model named" grep -q 'refused: launch.model=claude-opus-4-1 (an alias' <<<"$out"
+check "refused values: nothing written" [ "$(shasum "$R7/.local/config")" = "$lc" ]
+check "--set with --answers refused" sh -c "! '$R7/scripts/configure' --answers '$A' --set launch.model=opus >/dev/null 2>&1"
+# a later answers run keeps a profile set with --set
+"$R2/scripts/configure" --set launch.profile.worker=personal >/dev/null 2>&1
+"$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1; rc=$?
+check "answers rerun after --set: exit 0" [ "$rc" = 0 ]
+check "answers rerun keeps the profile" grep -qx 'launch.profile.worker=personal' "$R2/.local/config"
+
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

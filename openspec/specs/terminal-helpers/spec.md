@@ -207,3 +207,10 @@ A session SHALL never edit `.local/registry.json` by hand; only `term.sh` writes
 #### Scenario: A tab is bound to the wrong issue
 - **WHEN** a registry entry names the wrong issue
 - **THEN** the session uses a `term.sh` command with the right `--issue` and does not edit the file
+
+### Requirement: HOME-139 Profiles are set by saying so
+When the owner says "set profile <orchestrator|worker> <name>" or "use profile <name> for workers", the `orchestrate` skill SHALL run `scripts/configure --set launch.profile.<role>=<name>` and confirm in one line, and on "show profiles" run `scripts/configure --get` for both roles.
+
+#### Scenario: Worker profile named
+- **WHEN** the owner says "use profile work for workers"
+- **THEN** the orchestrator runs `scripts/configure --set launch.profile.worker=work` and replies with one line holding `launch.profile.worker=work`

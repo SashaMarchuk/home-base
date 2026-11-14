@@ -40,6 +40,7 @@ Plain everyday words in the person's language, never a key name or labels, hooks
 
 ## Defaults, set silently
 `base.url=` from step 2; `lang.owner=` the code of the person's language; `terminal_helpers=` from the checks; `launch.command=codex` in a Codex session, else `claude`; `tracker.backend=github`; `tracker.board_write=ask-first` only when a board is named; `labels.needs_owner=needs-owner`; `limits.mode=none`; `proactivity.mode=assigned`; `dreams.mode=manual`; `plugins=` (empty); `accounts.multi=no`. Never asked unless raised.
+The launch profiles are not asked; the owner sets them later by saying "set profile worker <name>" (or orchestrator).
 
 ## Run
 Write every answer and default as `key=value` lines (repeatable keys one per line) to `<root>/.local/answers` without checking first. Asked to create the repository: `gh repo create <repo> --private` only when `gh api repos/<repo>` finds nothing; it decides nothing else. Then from `<root>`, once, as is: `scripts/configure --answers .local/answers --labels` (safe to run again).
