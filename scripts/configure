@@ -400,6 +400,9 @@ RULES=$(ans_all home.rules | grep -v '^$' | sed 's/^/- /')
 SECTION=$(S_OWNER_NAMES=$(ans owner.names) S_HOME_DOMAIN=$(ans home.domain) S_HOME_BOUNDARY=$(ans home.boundary) \
   S_HOME_RULES=$RULES subst "$T/CLAUDE.home-section.md")
 HEAD=$(awk -v b="$BUF4" '{ print } $0 == b { exit }' "$ROOT/CLAUDE.md")
+# Keep the Standing approvals list (written by the decide skill) across re-runs.
+STANDING=$(awk -v b="$BUF4" 'h && /^### Standing approvals[[:space:]]*$/ { f = 1 } f && /^##?#? / && !/^### Standing approvals/ { f = 0 } f { print } $0 == b { h = 1 }' "$ROOT/CLAUDE.md" 2>/dev/null)
+[ -n "$STANDING" ] && SECTION="$SECTION"$'\n\n'"$STANDING"
 put CLAUDE.md "$HEAD"$'\n'"$SECTION"
 
 # .claude/settings.json: template (or the existing file) with enabledPlugins from the answers

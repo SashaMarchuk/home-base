@@ -355,6 +355,14 @@ check "--set with --answers refused" sh -c "! '$R7/scripts/configure' --answers 
 "$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1; rc=$?
 check "answers rerun after --set: exit 0" [ "$rc" = 0 ]
 check "answers rerun keeps the profile" grep -qx 'launch.profile.worker=personal' "$R2/.local/config"
+# a later answers run keeps the Standing approvals list the decide skill wrote, and adds none when absent
+"$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1
+check "answers rerun without a list adds none" sh -c "! grep -q '^### Standing approvals' '$R2/CLAUDE.md'"
+printf '\n### Standing approvals\n- D9: close named sessions, this home; unless a draft.\n' >> "$R2/CLAUDE.md"
+"$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1; rc=$?
+check "answers rerun with a list: exit 0" [ "$rc" = 0 ]
+check "answers rerun keeps the Standing approvals list" grep -qx -- '- D9: close named sessions, this home; unless a draft.' "$R2/CLAUDE.md"
+check "answers rerun keeps the list once" [ "$(grep -c '^### Standing approvals' "$R2/CLAUDE.md")" = 1 ]
 
 echo "configure.test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

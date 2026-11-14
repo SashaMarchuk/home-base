@@ -27,11 +27,10 @@ description: Record one owner decision in DECISIONS.md with the verbatim quote. 
    Where: <this home | a project path prefix | a window or group>
    Unless: <conditions that send it back to a question>
    Until: none (a limit only when the owner states one)
-   Evidence: (only when the quote is the owner's yes to a Dreams candidate) the session ids of the earlier yes answers
    ```
    The `Quote:` is the owner's own words: the statement, or the yes. Write only the scope the owner named; never widen it.
 5. If it supersedes an older entry: change only that entry's line to `Status: superseded-by <ID>`. Never edit or delete anything else (append-only).
-6. **Standing approvals list.** For an active standing entry, add one line to the `### Standing approvals` list in the home section of `CLAUDE.md` (below the buffer lines; create the heading there when absent): `- <ID>: <action>, <where>; unless <condition>.` Only active entries are listed. An entry whose `Status:` is not `active` gets no line.
-7. **Undo.** When the owner withdraws a standing approval ("ask me again about X", "cancel that"), append a new entry with the owner's words that supersedes it (step 5), and remove its line from the list. Never `git revert` an entry: the file is append-only. When the owner says no to, edits or undoes an action done under an entry, stop using that entry for the task and record the owner's words the same way.
+6. **Standing approvals list.** For an active standing entry, add one line to the `### Standing approvals` list in the home section of `CLAUDE.md` (create the heading at the end of the home section when absent): `- <ID>: <action>, <where>; unless <condition>.` Only active entries are listed. An entry whose `Status:` is not `active` gets no line.
+7. **Undo.** When the owner withdraws a standing approval ("ask me again about X", "cancel that"), append a new entry with the owner's words that supersedes it (step 5), and remove its line from the list. Never `git revert` an entry: the file is append-only. When the owner says no to, edits or undoes an action done under an entry, stop using that entry for this task only, and record the owner's words as a plain entry; the standing entry stays active until the owner withdraws it.
 8. No personal values in the quote; cut or paraphrase that part and say so.
 9. Commit: `decision <ID>: <title>` (a withdrawal: `decision <ID>: revoke <old ID>`), with the `CLAUDE.md` line in the same commit.

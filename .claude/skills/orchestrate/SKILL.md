@@ -59,7 +59,7 @@ Rules:
 - Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>".
 - Nothing external without the owner's yes; prepare a draft and show it for approval on a review page (the draft as an editable text, yes / no / note per row; see section 8 of <home path>/.claude/skills/orchestrate/SKILL.md), not as a plain question. After the owner's yes on the exact text, send it yourself as approved, then read it back. Text the owner writes in direct answer to a question asking whether to send a specific text is the owner's yes on exactly that text: send it as written, read it back, do not ask again. Approved text is sent with its words unchanged, in the format the recipient's recorded rules give (for example "one point per message": one message per paragraph).
 - Limits: <mode, only when set for this task>
-- Standing approval <ID>: <action>, <where>; unless <condition>. Inside it, act without asking and write "done under <ID>" in the finish text. (one line per active entry that touches the task)
+- Standing approval <ID>: <action>, <where>; unless <condition>. Inside it, act without asking and write "done under <ID>" in the finish text; rules 6 and 7 still apply as written. (one line per active entry that touches the task)
 Owner's words for this task (verbatim):
 <quote>
 ```
