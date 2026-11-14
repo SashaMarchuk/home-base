@@ -12,7 +12,8 @@
 # issue (an unmapped tab's details stay on the machine that froze it). Memory is checked before each tab;
 # a refusal stops the run and prints what is left. Workers count against term.max_workers; at the cap the
 # rest are queued. A dialog shown by a reopened session (such as "resume this conversation?") is never
-# answered: thaw types nothing after the launch line.
+# answered: thaw types nothing after the launch line. A freeze issue is finished once each of its closed
+# sessions is reopened or live already (such as the caller that ran the freeze).
 # Exit: 0 done, 2 usage, 3 stopped (memory, lock), 4 no snapshot.
 
 thaw_message() { # thaw_message <entry json> -> the one message for that session
@@ -179,7 +180,7 @@ thaw_record() { # mark the reopened rows on each freeze issue; finish it when ev
     jq -r --arg r "$repo" '"Thaw of Freeze \(.id):", (.entries[] | select(.home == $r and .recorded) | "- \(.session_id): \(.thaw_outcome // .outcome)")' \
       "$SNAP" > "$tf"
     all=$(jq --arg r "$repo" '[.entries[] | select(.home == $r and .recorded and (.outcome == "exited" or .outcome == "kept:caller"))] | length' "$SNAP")
-    done=$(jq --arg r "$repo" '[.entries[] | select(.home == $r and .recorded and .thaw_outcome == "reopened")] | length' "$SNAP")
+    done=$(jq --arg r "$repo" '[.entries[] | select(.home == $r and .recorded and (.thaw_outcome == "reopened" or .thaw_outcome == "skipped:live"))] | length' "$SNAP")
     if [ "$all" -gt 0 ] && [ "$done" = "$all" ]; then
       "$HOME_LOG" finish "$issue" --repo "$repo" --run-id "freeze-$FID" --text-file "$tf" >/dev/null 2>>"$FREEZE_DIR/$FID.log" ||
         note "could not finish $repo#$issue"

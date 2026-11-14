@@ -70,7 +70,7 @@ Owner's words for this task (verbatim):
 ## 5. Limits (`scripts/limits`; the owner's live word is written to `.local/limits` as `mode=soft|hard` and optional `until=<ISO time>`)
 - `ok`: work normally.
 - `soft`: start nothing new; running tasks finish.
-- `hard`: freeze the tabs this home opened (`scripts/term/term.sh freeze <their ttys> --hard`; the ttys are the `registered` tabs of `term.sh survey --json`) and start nothing. Freeze saves every resume line and open question to a `Freeze <id>` issue before any key, closes idle tabs and keeps a tab running while its turn runs or a real draft is in its box: re-run `scripts/term/term.sh freeze --continue <id>` as soon as that turn ends.
+- `hard`: freeze the tabs this home opened (`scripts/term/term.sh freeze <their ttys> --hard`; the ttys: `scripts/term/term.sh survey --json | jq -r 'select(.registered and (.adopted | not) and (.role == "worker" or .role == "orchestrator")) | .tty'`, never the owner's own tabs) and start nothing. Freeze saves every resume line and open question to a `Freeze <id>` issue before any key, closes idle tabs and keeps a tab running while its turn runs or a real draft is in its box: re-run `scripts/term/term.sh freeze --continue <id>` as soon as that turn ends.
 - After the reset time passes, while this session runs, re-check and reopen them (`scripts/term/term.sh thaw <id>`; a parked task: `term.sh resume <session id>`).
 - Keeping the Mac awake: only `caffeinate -w <pid of this session>`; never a timed or orphan caffeinate.
 - A task brief's `Limits: <mode>` line applies to that worker: its session runs `scripts/limits` with `LIMITS_MODE=<mode>`.

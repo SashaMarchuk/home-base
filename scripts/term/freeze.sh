@@ -154,11 +154,15 @@ freeze_record() { # phase B for one repo: open and claim the issue, read it back
 }
 
 park_own_issue() { # park_own_issue <entry json>: a tab bound to this home's issue gets today's park checkpoint
-  local issue sid q resume qa=()
+  # An orchestrator tab's issue is a child home's issue: never touched. The question goes along only when the
+  # tab's group belongs to this home; another home's question stays in that home's freeze issue.
+  local issue sid q="" resume qa=()
   issue=$(printf '%s' "$1" | jq -r '.issue // empty')
   [ -n "$issue" ] || return 0
+  [ "$(printf '%s' "$1" | jq -r '.role // ""')" = orchestrator ] && return 0
   sid=$(printf '%s' "$1" | jq -r .session_id)
-  q=$(printf '%s' "$1" | jq -r '.question // empty')
+  printf '%s' "$1" | jq -e --arg r "$HOME_REPO" '.home == $r and (.local | not)' >/dev/null &&
+    q=$(printf '%s' "$1" | jq -r '.question // empty')
   resume=$(printf '%s' "$1" | jq -r .resume)
   [ -n "$q" ] && qa=(--question "$q")
   "$HOME_LOG" checkpoint "$issue" --run-id "$sid" --park ${qa[@]+"${qa[@]}"} \

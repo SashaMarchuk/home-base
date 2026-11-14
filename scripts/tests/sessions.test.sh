@@ -9,7 +9,7 @@ SESS="$ROOT/scripts/term/sessions.sh"
 FAKE="$ROOT/scripts/tests/stubs/term-fake"
 mkdir -p "$ROOT/.local"
 T=$(mktemp -d "$ROOT/.local/sessions-test.XXXXXX") || exit 1
-trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT
 
 export HOME_ROOT="$T/home"
 export TERM_SH_BACKEND=fake TERM_FAKE_DIR="$T/fake"
@@ -77,8 +77,10 @@ be_twins() { # every be_* function of the real backend (except be_sleep) is rede
 check "fake redefines every backend function" be_twins "$FAKE"
 grep -v '^be_tabs()' "$FAKE" > "$T/fake-missing"
 check "lint catches a backend function without a fake" not be_twins "$T/fake-missing"
-check "sessions.sh has no temp/user paths" lint_paths "$SESS"
-check "sessions.sh has no underscore functions" lint_underscore "$SESS"
+for f in "$SESS" "$ROOT/scripts/term/freeze.sh" "$ROOT/scripts/term/thaw.sh"; do
+  check "${f##*/} has no temp/user paths" lint_paths "$f"
+  check "${f##*/} has no underscore functions" lint_underscore "$f"
+done
 check "this test has no underscore functions" lint_underscore "$0"
 
 # ---------------------------------------------------------------- identity: session files
@@ -493,6 +495,72 @@ ts freeze --all --soft >/dev/null 2>&1
 check "soft boundary: the peer tab's checkpoint goes to the peer issue" issue_text test/peer | grep -qF "Checkpoint question ttyw2?"
 check "soft boundary: an unmapped tab's checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw3?"
 check "soft boundary: the peer checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw2?"
+
+# ---------------------------------------------------------------- review fixes
+# limits hard: the selector of orchestrate section 5 picks the tabs this home opened, never the owner's own
+OWNSEL='select(.registered and (.adopted | not) and (.role == "worker" or .role == "orchestrator")) | .tty'
+reset "${FKEYS[@]}"
+live ttyw1 801 "$W1" w7 "$S1"
+ts freeze ttyw1 --hard >/dev/null 2>&1; transcript work "$S1"; ts thaw latest >/dev/null 2>&1
+o=$(ts open "$W1"); wtty=$(echo "$o" | awk '{ print $2 }')
+check "limits selector: a worker this home opened is picked" [ "$(ts survey --json | jq -r "$OWNSEL")" = "$wtty" ]
+check "limits selector: the owner's thawed tab is registered but not picked" [ "$(ts survey --json | jq -r 'select(.registered and .adopted) | .tty' | wc -l | tr -d ' ')" = 1 ]
+# thaw finishes the freeze issue when the only session left is the live caller
+setup_main
+mkdir -p "$TERM_FAKE_DIR/proc/850"; printf 'bash term.sh' > "$TERM_FAKE_DIR/proc/850/cmd"; printf 'ttyw1' > "$TERM_FAKE_DIR/proc/850/tty"
+printf '801' > "$TERM_FAKE_DIR/proc/850/ppid"; printf '850' > "$TERM_FAKE_DIR/self-pid"
+ts freeze ttyw1 ttyw3 --hard >/dev/null 2>&1; transcript work "$S3"
+ts thaw latest >/dev/null 2>&1
+check "thaw: a live caller counts as back, the freeze issue is finished" [ "$(cat "$GH_STUB_DIR"/test__home/issues/*.json | jq -r .state)" = closed ]
+# a tab bound to this home's issue but grouped with another home: its question stays out of this home's issues
+reset "${FKEYS[@]}"
+o=$(ts open "$W2" --issue 41); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+sess_file work "$opid" "$osid" waiting "$W2"; claim 41 "$osid"; fdialog "$otty" "$QP"
+ts freeze "$otty" --hard >/dev/null 2>&1
+check "boundary: an issue-bound tab of another home's group keeps its question out of this home" no_leak test/home "$QP"
+check "boundary: that question is in the peer freeze issue" issue_text test/peer | grep -qF "$QP"
+check "boundary: the tab's own issue still got the park checkpoint" grep -qF "Frozen by term.sh" <(issue_text test/home)
+reset "${FKEYS[@]}"
+mkdir -p "$GH_STUB_DIR/test__home/issues"
+o=$(ts open "$W1" --issue 42 --role orchestrator); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+sess_file work "$opid" "$osid" idle "$W1"
+ts freeze "$otty" --hard >/dev/null 2>&1
+check "orchestrator tab: its (child) issue number is never checkpointed here" [ ! -f "$GH_STUB_DIR/test__home/issues/42.json" ]
+check "orchestrator tab: it is still frozen" [ "$(outcome "$otty")" = exited ]
+# sensitive text in a question: the record is retried with the questions kept locally
+PHONE="+44 20""79 46 0""958"
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" waiting; fdialog ttyw1 "Call $PHONE now?"
+ts freeze ttyw1 --hard >/dev/null 2>&1
+check "sensitive: the record holds the redacted question" grep -qF "question saved locally: contained sensitive text" <(issue_text test/home)
+check "sensitive: the value is in no issue" no_leak test/home "$PHONE"
+check "sensitive: the tab was still frozen" [ "$(outcome ttyw1)" = exited ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"
+cat > "$(tabdir ttyw1)/on-submit" <<EOF
+#!/bin/bash
+case "\$1" in "Freeze "*) ;; *) exit 0 ;; esac
+p=\$(printf '%s' "\$1" | sed -n 's/.* Write \(.*\) with the headings: .*/\1/p')
+n=\$(printf '%s' "\$1" | sed -n 's/.*last line exactly: nonce: \([^.]*\)\..*/\1/p')
+printf 'call $PHONE\nnonce: %s\n' "\$n" > "\$p"
+EOF
+ts freeze ttyw1 --soft >/dev/null 2>&1
+check "sensitive: a checkpoint with a personal value is not copied" no_leak test/home "$PHONE"
+check "sensitive: the outcomes are still written" grep -qF "$S1: exited" <(issue_text test/home)
+# thaw queues workers at the cap
+reset "${FKEYS[@]}"
+o1=$(ts open "$W1"); o2=$(ts open "$W1")
+for o in "$o1" "$o2"; do sess_file work "${o##* }" "${o%% *}" idle "$W1"; transcript work "${o%% *}"; done
+ts freeze --all --hard >/dev/null 2>&1
+config "${FKEYS[@]}" term.max_workers=1
+out=$(ts thaw latest)
+check "thaw: one worker reopened at a cap of one" [ "$(grep -c '^REOPENED' <<<"$out")" = 1 ]
+check "thaw: the other is queued with its reason" [ "$(grep -c '^QUEUED .*worker cap' <<<"$out")" = 1 ]
+# --window by group name and front
+setup_main
+ts freeze --window g2 --hard >/dev/null 2>&1
+check "selector: --window <group> picks that group's window" [ "$(jq -r '[.entries[].tty] | join(" ")' "$(snapf)")" = ttyw2 ]
+setup_main; printf 'w9' > "$TERM_FAKE_DIR/front-window"
+ts freeze --window front --hard >/dev/null 2>&1
+check "selector: --window front picks the front window" [ "$(jq -r '[.entries[].tty] | join(" ")' "$(snapf)")" = ttyw3 ]
 
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
