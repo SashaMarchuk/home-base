@@ -235,6 +235,14 @@ A standing rule the owner states inside another request SHALL be recorded with t
 - **WHEN** the owner states a rule for all future cases while asking for something else
 - **THEN** that task appends the rule to `DECISIONS.md` through the `decide` skill
 
+#### Scenario: A standing approval
+- **WHEN** the owner says an action needs no confirm from now on
+- **THEN** the entry carries `Standing: yes` with `Allows:`, `Where:`, `Unless:` and `Until:` lines in the scope the owner named, and the home section of `CLAUDE.md` gets one line for it under `### Standing approvals`
+
+#### Scenario: A standing approval is withdrawn
+- **WHEN** the owner withdraws a standing approval
+- **THEN** a new entry with the owner's words supersedes it, only the old entry's `Status:` line changes, its `Standing approvals` line is removed, and no commit is reverted
+
 ### Requirement: HOME-165 A yes to the pointer question approves the page as shown
 The first option of a pointer question SHALL be a plain yes to everything as shown on the review page, in the owner's language; after the owner's yes the session reads the page, where a row the owner answered or text the owner edited wins, acts on it, reads it back and does not ask again.
 
