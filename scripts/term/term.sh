@@ -174,7 +174,7 @@ on run argv
       end tell
       set s to current session of t
     end if
-    -- a new window's session can be unready for a moment: wait until it answers, then type
+    -- the session of a new window can be unready for a moment: wait until it answers, then type
     set ready to false
     repeat 50 times
       try

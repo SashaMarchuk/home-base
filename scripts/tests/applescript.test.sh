@@ -27,6 +27,10 @@ for f in "$SRC"/scripts/term/*.sh; do
     if compiles "$s"; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $(basename "$f"): block $(basename "$s") does not compile"; fi
   done
 done
+# the scripts holding them parse under the system bash (a quote inside a heredoc in $(...) breaks bash 3.2)
+for f in "$SRC"/scripts/term/*.sh; do
+  if /bin/bash -n "$f" 2>/dev/null; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $(basename "$f") does not parse under /bin/bash"; fi
+done
 [ "$PASS" -ge 5 ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL fewer AppleScript blocks found than expected ($PASS)"; }
 # must fail: a reserved word used as a variable name (the bug that broke "open" on a real tab)
 printf 'on run argv\n  set where to item 1 of argv\nend run\n' > "$T/bad.applescript"
