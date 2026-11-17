@@ -5,7 +5,7 @@ description: Short, plain status of this home and its child homes. Use when the 
 
 # status
 
-Read only. No tool beyond `gh` reads and the files of this home.
+Read only: the status itself writes nothing, and no tool beyond `gh` reads and the files of this home. The request's own issue (rule 1) is opened and finished by the orchestrator around it, not by this skill.
 
 1. Repos: this home (`repo` in `home.config`) plus every `homes.<name>.repo` whose `role` is `child`.
 2. Owner label per repo: this home's `labels.needs_owner`; for a child, read `labels.needs_owner` from `<homes.<name>.path>/home.config` (fall back to `gh api repos/<child>/contents/home.config` and decode; then to `needs-owner`). Read `.local/config` overrides only for this home.
