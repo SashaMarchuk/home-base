@@ -336,6 +336,83 @@ check "r8 session gone on its own -> entry closed" ts close "$TTY"
 check "r8 nothing typed into a tab that still shows a box" [ -z "$(keys)" ]
 check "r8 that draft intact" [ "$(cat "$(tabdir "$TTY")/box")" = "typed by hand" ]
 
+# ---------------------------------------------------------------- finished: which tabs close would accept (read only)
+verdict() { ts finished 2>/dev/null | awk -v t="$TTY" '$1 == t { print $4 }'; }
+untouched_by_finished() { # the verdict equals $1, and finished sent no key and left the registry as it was
+  local before v
+  before=$(cksum < "$REG"); v=$(verdict)
+  [ "$v" = "$1" ] && [ -z "$(keys)" ] && [ "$(cksum < "$REG")" = "$before" ]
+}
+reset; new_tab --issue 12; issue 12 final
+check "finished: a finished worker is closable" [ "$(ts finished)" = "$TTY $SID 12 closable" ]
+check "finished: no key, no registry write" untouched_by_finished closable
+check "finished: the session still runs" alive "$PID"
+check "finished: --json names the repo of the issue" [ "$(ts finished --json | jq -r '"\(.tty) \(.session_id) \(.issue) \(.repo) \(.role) \(.verdict)"')" = "$TTY $SID 12 test/home worker closable" ]
+check "finished: close then accepts that tab" ts close "$TTY"
+check "finished: a closed entry is not listed" [ -z "$(ts finished)" ]
+reset; new_tab --issue 12; issue 12 active
+check "finished: no final comment -> keep:no-final" untouched_by_finished keep:no-final
+reset; new_tab --issue 12; issue 12 -
+check "finished: no home-log comment -> keep:no-final" untouched_by_finished keep:no-final
+reset; new_tab --issue 12; issue 12 final needs-test
+check "finished: owner label -> keep:owner-question" untouched_by_finished keep:owner-question
+reset; new_tab --issue 12
+check "finished: issue unreadable -> unsure:issue-unreadable" untouched_by_finished unsure:issue-unreadable
+reset; new_tab
+check "finished: no issue -> keep:no-issue" untouched_by_finished keep:no-issue
+reset; new_tab --issue 12; issue 12 final; dialog 1
+check "finished: open dialog -> keep:dialog" untouched_by_finished keep:dialog
+check "finished: the dialog is not answered" [ ! -f "$(tabdir "$TTY")/answered" ]
+reset; new_tab --issue 12; issue 12 final; : > "$(tabdir "$TTY")/busy"
+check "finished: running turn -> keep:busy" untouched_by_finished keep:busy
+reset; new_tab --issue 12; issue 12 final; put status "2 shells"
+check "finished: background work -> keep:background" untouched_by_finished keep:background
+reset; new_tab --issue 12; issue 12 final; put box "unsent note"
+check "finished: text in the box -> unsure:box, no probe" untouched_by_finished unsure:box
+check "finished: that text is intact" [ "$(cat "$(tabdir "$TTY")/box")" = "unsent note" ]
+check "finished: close itself still refuses that draft" [ "$(rc_of ts close "$TTY")" = 3 ]
+reset; new_tab --issue 12; issue 12 final; put ghost "a suggestion"
+check "finished: a suggestion is unsure:box too (only close probes)" untouched_by_finished unsure:box
+check "finished: close accepts it after its own probe" ts close "$TTY"
+reset; new_tab --issue 12; issue 12 final
+printf 'Heads up: something changed\n  0: Dismiss\n' > "$(tabdir "$TTY")/headsup"
+check "finished: a notice -> unsure:notice, not dismissed" untouched_by_finished unsure:notice
+check "finished: the notice is still there" [ -f "$(tabdir "$TTY")/headsup" ]
+reset; new_tab --issue 12; issue 12 final; put mode shell
+check "finished: no input box on a live session -> unsure:no-box" untouched_by_finished unsure:no-box
+reset; new_tab --issue 12; issue 12 final; rm -rf "$TERM_FAKE_DIR/proc/$PID"; put mode shell
+check "finished: the session ended on its own -> closable" untouched_by_finished closable
+reset; new_tab --issue 12; issue 12 active; rm -rf "$TERM_FAKE_DIR/proc/$PID"
+check "finished: ended on its own but the issue is not final -> keep:no-final" untouched_by_finished keep:no-final
+reset; new_tab --issue 12; issue 12 final; printf 'other-program' > "$TERM_FAKE_DIR/proc/$PID/cmd"
+check "finished: another program under the recorded pid -> unsure:process" untouched_by_finished unsure:process
+reset; new_tab --issue 12; issue 12 final; put mode closed
+check "finished: the tab is gone -> keep:tab-gone" untouched_by_finished keep:tab-gone
+reset; new_tab --issue 12; issue 12 final; printf 'fake-999' > "$(tabdir "$TTY")/tab"
+check "finished: another tab on that tty -> keep:tab-gone" untouched_by_finished keep:tab-gone
+reset; new_tab --issue 12; issue 12 final
+check "finished: the calling session is kept" [ "$(CLAUDE_CODE_SESSION_ID=$SID /bin/bash "$TERM_SH" finished | awk '{ print $4 }')" = keep:caller ]
+CHILD="$T/child home"; mkdir -p "$CHILD"; printf 'repo=test/child\n' > "$CHILD/home.config"
+child_tab() { local out; out=$(ts open "$CHILD" --role orchestrator --issue 5) || return 1; SID=${out%% *}; out=${out#* }; TTY=${out%% *}; PID=${out#* }; }
+reset; child_tab; issue 5 final --repo test/child
+check "finished: an orchestrator tab is judged in its own home's repo" [ "$(ts finished --json | jq -r '"\(.repo) \(.verdict)"')" = "test/child closable" ]
+reset; child_tab; issue 5 final; issue 5 active --repo test/child
+check "finished: never judged against this home's issue of the same number" untouched_by_finished keep:no-final
+reset; child_tab; issue 5 final
+check "finished: the child's issue unreadable -> unsure" untouched_by_finished unsure:issue-unreadable
+reset; out=$(ts open "$WORK" --role orchestrator --issue 5); TTY=$(echo "$out" | awk '{ print $2 }'); issue 5 final
+check "finished: an orchestrator tab whose folder names no repo -> unsure:issue-repo" untouched_by_finished unsure:issue-repo
+reset; new_tab --issue 12; issue 12 final; A=$TTY; new_tab --issue 13; issue 13 active; new_tab
+check "finished: one line per open tab of the registry" [ "$(ts finished | awk '{ print $3 ":" $4 }' | tr '\n' ' ')" = "12:closable 13:keep:no-final -:keep:no-issue " ]
+hand_tab_plain() { mkdir -p "$TERM_FAKE_DIR/tabs/ttyh9" "$TERM_FAKE_DIR/proc/709"; printf 'hand-9' > "$TERM_FAKE_DIR/tabs/ttyh9/tab"; printf claude > "$TERM_FAKE_DIR/tabs/ttyh9/mode"
+  printf claude > "$TERM_FAKE_DIR/proc/709/cmd"; printf ttyh9 > "$TERM_FAKE_DIR/proc/709/tty"; }
+hand_tab_plain
+check "finished: a tab outside the registry is never listed" not grep -q ttyh9 <(ts finished)
+check "finished: an option it does not know -> usage" [ "$(rc_of ts finished --force)" = 2 ]
+check "finished: works from a Codex session" [ "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" finished | grep -c .)" = 3 ]
+reset; printf '%s\n' terminal_helpers=off > "$HOME_ROOT/.local/config"
+check "finished: helpers off -> exit 3" [ "$(rc_of ts finished)" = 3 ]
+
 # ---------------------------------------------------------------- rule 9: park
 reset; new_tab --issue 21; dialog 1
 check "r9 park with an open question" ts park "$TTY"

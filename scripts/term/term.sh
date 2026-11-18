@@ -12,6 +12,9 @@
 #   term.sh park   <target> [--issue N] [--adopt] [--timeout S]
 #   term.sh resume <session_id> [--message TEXT | --silent]
 #   term.sh close  <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]
+#   term.sh finished [--json]        -> "<tty> <session_id> <issue|-> <verdict>" per open tab of the registry;
+#                                       verdict: closable | keep:<reason> | unsure:<what could not be read>,
+#                                       from the checks of close; read only (no key, no write, nothing closed)
 #   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
 #   term.sh freeze ... --hard         -> see scripts/term/freeze.sh
 #   term.sh thaw [<id>|latest] ...    -> see scripts/term/thaw.sh
@@ -991,19 +994,26 @@ send_cancel() { # send_cancel <target>: one Esc on an open dialog, then check it
   echo "CANCELLED $T_TTY"
 }
 
-issue_finished() { # issue_finished <repo> <n>: a final home-log comment exists and no owner label (rule 8)
-  local repo=$1 n=$2 raw comments labels owner
-  raw=$(gh api --paginate "repos/$repo/issues/$n/comments?per_page=100" 2>/dev/null) &&
-    comments=$(printf '%s' "$raw" | jq -s 'add // []' 2>/dev/null) ||
-    die 3 "cannot read the comments of $repo#$n; not closing"
+issue_state() { # issue_state <repo> <n> -> final | no-final | owner-label | unreadable-comments | unreadable-labels (rule 8; read only)
+  local raw comments labels
+  raw=$(gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null) &&
+    comments=$(printf '%s' "$raw" | jq -s 'add // []' 2>/dev/null) || { echo unreadable-comments; return 0; }
   printf '%s' "$comments" | jq -e 'any(.[]; .body | test("^<!-- home-log run=[^ ]+ state=final -->"))' >/dev/null ||
-    die 3 "issue $repo#$n has no final home-log comment; not closing"
-  labels=$(gh api "repos/$repo/issues/$n" --jq '.labels[].name' 2>/dev/null) ||
-    die 3 "cannot read the labels of $repo#$n; not closing"
-  owner=$(cfg labels.needs_owner needs-owner)
-  printf '%s\n' "$labels" | grep -qxF -- "$owner" &&
-    die 3 "issue $repo#$n carries '$owner' (a question waits on the owner); not closing"
-  return 0
+    { echo no-final; return 0; }
+  labels=$(gh api "repos/$1/issues/$2" --jq '.labels[].name' 2>/dev/null) || { echo unreadable-labels; return 0; }
+  printf '%s\n' "$labels" | grep -qxF -- "$(cfg labels.needs_owner needs-owner)" && { echo owner-label; return 0; }
+  echo final
+}
+
+issue_finished() { # issue_finished <repo> <n>: a final home-log comment exists and no owner label (rule 8)
+  local repo=$1 n=$2
+  case "$(issue_state "$repo" "$n")" in
+    final) return 0 ;;
+    unreadable-comments) die 3 "cannot read the comments of $repo#$n; not closing" ;;
+    no-final) die 3 "issue $repo#$n has no final home-log comment; not closing" ;;
+    owner-label) die 3 "issue $repo#$n carries '$(cfg labels.needs_owner needs-owner)' (a question waits on the owner); not closing" ;;
+    *) die 3 "cannot read the labels of $repo#$n; not closing" ;;
+  esac
 }
 
 pick_issue() { # pick_issue <given>: the registry issue unless the caller passed a different one
@@ -1151,6 +1161,70 @@ cmd_park() {
   echo "PARKED $T_SID issue #$issue"
 }
 
+F_VERDICT=""; F_REPO=""
+
+finished_verdict() { # finished_verdict <registry entry json> <live tabs>: sets F_VERDICT and F_REPO; reads only
+  # The checks of close, in its order: the tab and the process, the issue, the screen. keep:<reason> = close
+  # would refuse and the reason is known; unsure:<what> = it could not be read here (close decides itself).
+  local e=$1 tty tab sid pid match issue role kind cwd live alive=0 scr n b ct
+  F_VERDICT=""; F_REPO=""
+  IFS=$US read -r tty tab sid pid match issue role kind cwd <<EOF
+$(printf '%s' "$e" | jq -r '[.tty, (.tab // ""), .session_id, (.pid // "" | tostring), (.match // ""), (.issue // "" | tostring),
+    (.role // "worker"), (.kind // "claude"), (.cwd // "")] | join("\u001f")')
+EOF
+  live=$(printf '%s\n' "$2" | awk -v t="$tty" '$2 == t && !f { print $1; f = 1 }')
+  if [ -z "$live" ] || { [ -n "$tab" ] && [ "$live" != "$tab" ]; }; then F_VERDICT=keep:tab-gone; return 0; fi
+  if is_caller "$tty" || [ "$sid" = "${CLAUDE_CODE_SESSION_ID:-}" ] || [ "$sid" = "${CODEX_THREAD_ID:-}" ]; then F_VERDICT=keep:caller; return 0; fi
+  if [ -n "$pid" ] && be_pid_cmd "$pid" >/dev/null; then
+    { [ "$(be_pid_tty "$pid")" = "$tty" ] && pid_alive_as "$pid" "$match"; } || { F_VERDICT=unsure:process; return 0; }
+    alive=1
+  fi
+  [ -n "$issue" ] || { F_VERDICT=keep:no-issue; return 0; }
+  F_REPO=$HOME_REPO   # an orchestrator tab was opened for an issue of the home it runs in
+  if [ "$role" = orchestrator ]; then F_REPO=$(cfg_read_file "$cwd/home.config" repo) || F_REPO=""; fi
+  printf '%s' "$F_REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || { F_REPO=""; F_VERDICT=unsure:issue-repo; return 0; }
+  case "$(issue_state "$F_REPO" "$issue")" in
+    final) ;;
+    no-final) F_VERDICT=keep:no-final; return 0 ;;
+    owner-label) F_VERDICT=keep:owner-question; return 0 ;;
+    *) F_VERDICT=unsure:issue-unreadable; return 0 ;;
+  esac
+  [ "$alive" = 1 ] || { F_VERDICT=closable; return 0; }   # the session ended on its own; close ends the shell
+  if [ "$kind" = codex ]; then
+    ct=$(codex_thread "$tty" "$pid") && [ "${ct%%"$US"*}" = "$sid" ] || { F_VERDICT=keep:codex-no-thread; return 0; }
+  fi
+  scr=$(be_screen "$tty" "$live" 2>/dev/null) || { F_VERDICT=unsure:screen; return 0; }
+  has_headsup "$scr" && { F_VERDICT=unsure:notice; return 0; }
+  has_dialog "$scr" && { F_VERDICT=keep:dialog; return 0; }
+  is_busy "$scr" && { F_VERDICT=keep:busy; return 0; }
+  n=$(bg_count "$scr")
+  [ -n "$n" ] && [ "$n" -gt 0 ] && { F_VERDICT=keep:background; return 0; }
+  b=$(box_text "$scr") || { F_VERDICT=unsure:no-box; return 0; }
+  [ -z "$b" ] || { F_VERDICT=unsure:box; return 0; }   # a suggestion or a draft: only the probe of close can tell
+  F_VERDICT=closable
+}
+
+cmd_finished() { # which tabs of this home's registry close would accept; sends no key, writes nothing, closes nothing
+  local json=0 tabs e
+  if [ "${1:-}" = --json ]; then json=1; shift; fi
+  [ $# -eq 0 ] || die 2 "usage: finished [--json]"
+  need_helpers
+  find_caller
+  tabs=$(be_tabs)
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    finished_verdict "$e" "$tabs"
+    if [ "$json" = 1 ]; then
+      printf '%s' "$e" | jq -c --arg v "$F_VERDICT" --arg r "$F_REPO" \
+        '{tty, session_id, issue, repo: (if $r == "" then null else $r end), role: (.role // "worker"), verdict: $v}'
+    else
+      printf '%s' "$e" | jq -r --arg v "$F_VERDICT" '"\(.tty) \(.session_id) \(.issue // "-") \($v)"'
+    fi
+  done <<EOF
+$(reg_read -c '.[] | select(.closed == null and .tty != null)')
+EOF
+}
+
 run_has_question() { # run_has_question <repo> <n> <run id>: 0 when the run's last home-log comment holds an open owner question
   local raw
   raw=$(gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null) || return 2
@@ -1253,7 +1327,8 @@ case "$VERB" in
   resume) cmd_resume "$@" ;;
   close) cmd_close "$@" ;;
   survey) cmd_survey "$@" ;;
+  finished) cmd_finished "$@" ;;
   freeze) cmd_freeze "$@" ;;
   thaw) cmd_thaw "$@" ;;
-  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|survey|freeze|thaw ... (see the header of this script, freeze.sh and thaw.sh)" ;;
+  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|finished|survey|freeze|thaw ... (see the header of this script, freeze.sh and thaw.sh)" ;;
 esac
