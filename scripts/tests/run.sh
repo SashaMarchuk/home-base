@@ -250,12 +250,71 @@ if sel guards; then
   BG="$H/scripts/hooks/bash-guard"
   for c in 'pkill -f node' 'killall Finder' '/usr/bin/pkill x' 'bash -c "pkill x"' 'sudo -n killall x' 'xargs -I{} pkill {}' 'kill -9 $(pgrep x)' 'pgrep x | xargs kill' 'gh auth switch -u a' 'git push --force origin main' \
            'git push -f' 'gh repo delete a/b --yes' 'gh repo edit a/b --visibility public' 'gh api -X PATCH repos/a/b -f private=false' \
-           'git push base main' 'docker restart web' 'kill -9 -1' 'kill 0' 'kill 1' 'kill -- -1' 'kill -TERM -4242' '/bin/kill -9 -1' 'for p in 1 2; do kill \$p; done' 'if true; then kill \$X; fi' '{ kill \$p; }'; do
+           'git push base main' 'docker restart web' 'kill -9 -1' 'kill 0' 'kill 1' 'kill -- -1' 'kill -TERM -4242' '/bin/kill -9 -1' 'for p in 1 2; do kill \$p; done' 'if true; then kill \$X; fi' '{ kill \$p; }' \
+           'sh -c "kill -9 -1"' 'eval "kill 0"' 'true & kill 0' 'kill -0 -1' 'kill 4242 & kill -- -1'; do
     expect "bash-guard must block: $c" 2 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
-  for c in 'kill 4242' 'kill -TERM 4242' 'kill -s TERM 4242' 'kill 4242 2>&1' 'kill 4242 >/dev/null 2>&1' '/bin/kill 4242' 'kill -TERM 4242 4243' 'if true; then kill 4242; fi' 'echo kill -1' 'kill -l' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix'; do
+  for c in 'echo kill -1' 'kill -l' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix' 'echo a 2>&1 &'; do
     expect "bash-guard must allow: $c" 0 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
+  # Kills of exact PIDs, on real processes. The guard runs under a process whose command is the
+  # agent's name: @OWN@ and @DEEP@ are started inside it, @SELF@ is that process, @FOR@ is
+  # started here, outside it.
+  cat > "$T/agent.sh" <<'EOS'
+#!/bin/bash
+# agent.sh <hook> <command>: start a child and a grandchild, run the hook on the command, pass its output and exit code on
+sleep 300 & own=$!; disown
+( sleep 300 & echo $! > "$0.deep"; wait ) 2>/dev/null & disown
+n=0; until [ -s "$0.deep" ] || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+deep=$(cat "$0.deep"); rm -f "$0.deep"
+c=${2//@OWN@/$own}; c=${c//@DEEP@/$deep}; c=${c//@SELF@/$$}
+jq -n --arg c "$c" '{tool_name:"Bash",tool_input:{command:$c}}' | "$1"; rc=$?
+kill "$own" "$deep" 2>/dev/null
+exit $rc
+EOS
+  sleep 300 & FOR=$!; disown
+  true & DEAD=$!; wait "$DEAD"
+  kg() { # kg <allow|ask|block> <agent name> <command>: allow and block print nothing on stdout; ask prints the decision
+    local out rc c=${3//@FOR@/$FOR}
+    out=$(bash -c 'exec -a "$0" bash "$@"' "$2" "$T/agent.sh" "${GUARD:-$BG}" "$c" 2>"$T/err"); rc=$?
+    case "$1" in
+      allow) [ "$rc" = 0 ] && [ -z "$out" ] ;;
+      ask) [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | test("PID [0-9]+ \\("))' >/dev/null ;;
+      block) [ "$rc" = 2 ] && [ -z "$out" ] && grep -q '^bash-guard: blocked: ' "$T/err" ;;
+    esac && ok || bad "kill guard must $1 under $2: $c (exit $rc, stdout '$out', stderr '$(head -1 "$T/err")')"
+  }
+  for c in 'kill @OWN@' 'kill -TERM @OWN@' 'kill -s TERM @OWN@' 'kill @OWN@ 2>&1' 'kill @OWN@ >/dev/null 2>&1' '/bin/kill @OWN@' 'kill -TERM @OWN@ @DEEP@' \
+           'if true; then kill @OWN@; fi' 'bash -c "kill @OWN@"' 'true & kill @DEEP@' 'kill @OWN@ &'; do
+    kg allow claude "$c"; kg allow codex "$c"
+  done
+  for c in 'kill @FOR@' '/bin/kill -9 @FOR@' 'kill @OWN@ @FOR@' 'sh -c "kill @FOR@"' 'echo x & kill @FOR@' 'kill @SELF@'; do
+    kg ask claude "$c"; kg block codex "$c"
+    GUARD="$H/scripts/hooks/codex-pre-tool" kg block claude "$c"
+  done
+  CODEX_THREAD_ID=t-1 kg block claude 'kill @FOR@'
+  out=$(bash -c 'exec -a claude bash "$@"' _ "$T/agent.sh" "$BG" "kill $FOR" 2>/dev/null)
+  printf '%s' "$out" | jq -e --arg p "PID $FOR (sleep 300)" '.hookSpecificOutput.permissionDecisionReason | contains($p)' >/dev/null && ok || bad "the ask reason must name the PID and its command: $out"
+  kg block claude 'kill @FOR@; gh auth switch'; kg block claude 'kill @FOR@ && docker restart web'
+  for c in 'kill -0 @FOR@' 'kill -s 0 @FOR@' 'kill -n 0 @FOR@' 'kill -0 @FOR@ && echo alive'; do kg allow claude "$c"; kg allow codex "$c"; done
+  kg block claude "kill $DEAD"
+  mkdir -p "$T/nops"; printf '#!/bin/sh\nexit 1\n' > "$T/nops/ps"; chmod +x "$T/nops/ps"
+  PATH="$T/nops:$PATH" kg block claude 'kill @OWN@'
+  # The registry vouches for a PID only while its entry is open, not adopted, and its tty and match fit the live process.
+  FTTY=$(ps -o tty= -p "$FOR" | tr -d ' ')
+  reg() { # reg <tty> <match> [<extra fields>]
+    jq -n --argjson p "$FOR" --arg t "$1" --arg m "$2" --argjson x "${3:-null}" \
+      '[{session_id: "s-old", pid: 1, tty: $t, match: $m, closed: null}, ({session_id: "s-1", pid: $p, tty: $t, match: $m, closed: null} + $x)]' > "$H/.local/registry.json"; }
+  reg "$FTTY" "sleep 300"; kg allow claude 'kill @FOR@'; kg allow codex 'kill @FOR@'; kg allow claude 'kill @OWN@ @FOR@'
+  reg "$FTTY" "another-command"; kg ask claude 'kill @FOR@'; kg block codex 'kill @FOR@'
+  reg "ttys999" "sleep 300"; kg ask claude 'kill @FOR@'
+  reg "$FTTY" ""; kg ask claude 'kill @FOR@'
+  reg "$FTTY" "sleep 300" '{"closed":"2030-01-01T00:00:00Z"}'; kg ask claude 'kill @FOR@'
+  reg "$FTTY" "sleep 300" '{"adopted":true}'; kg ask claude 'kill @FOR@'
+  for r in '[{' '{"pid":1}'; do
+    printf '%s\n' "$r" > "$H/.local/registry.json"; kg block claude 'kill @FOR@'; kg allow claude 'kill @OWN@'
+  done
+  rm -f "$H/.local/registry.json"
+  kill "$FOR"
   SG="$H/scripts/hooks/sensitive-guard"
   printf 'secret-literal-value\n' > "$H/.local/pv"; printf 'guard.private_values=%s\n' "$H/.local/pv" > "$H/.local/config"
   expect "sensitive-guard blocks a new file with a card" 2 sh -c 'jq -n --arg p "$1/wiki/new.md" --arg t "card $2" "{tool_input:{file_path:\$p,content:\$t}}" | "$3"' _ "$H" "$CARD" "$SG"
@@ -298,7 +357,7 @@ if sel guards; then
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -lc gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-lc\",\"gh auth switch -u a\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -e -c kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
-  expect "bash-guard allows .cmd list: bash -e -c kill 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill 4242\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard allows .cmd list: bash -e -c kill -0 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -0 4242\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -lc gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-lc\",\"gh issue list\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
   # Codex hooks: each command exactly as .codex/hooks.json writes it, run from a subfolder of the home.

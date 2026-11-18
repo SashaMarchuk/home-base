@@ -4,13 +4,14 @@
 # exec_command with .tool_input.cmd) to bash-guard, and then to sensitive-guard as
 # a patch (a heredoc "apply_patch <<EOF" writes files too; text without patch
 # headers is ignored there); apply_patch to sensitive-guard. Every other tool
-# passes untouched (exit 0).
+# passes untouched (exit 0). BASH_GUARD_SURFACE=codex makes bash-guard refuse where it
+# would answer "ask" to Claude Code: Codex has no such prompt.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 IN=$(cat)
 case "$(printf '%s' "$IN" | jq -r '.tool_name // empty' 2>/dev/null)" in
   Bash|exec_command|shell|local_shell)
-    printf '%s' "$IN" | "$HERE/bash-guard" || exit $?
+    printf '%s' "$IN" | BASH_GUARD_SURFACE=codex "$HERE/bash-guard" || exit $?
     printf '%s' "$IN" | jq -c '.tool_name = "apply_patch"
       | .tool_input = {command: (.tool_input.command // .tool_input.cmd // "" | if type == "array" then join("\n") else . end)}' \
       | "$HERE/sensitive-guard" ;;
