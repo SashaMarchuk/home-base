@@ -578,7 +578,8 @@ check "selector: --window front picks the front window" [ "$(jq -r '[.entries[].
 
 # ---------------------------------------------------------------- verified review fixes
 # 1. Esc only on a dialog recorded in the snapshot
-reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
+# (a longer grace here: the dialog opens at the third screen read, which a loaded machine reaches after more than a second)
+reset "${FKEYS[@]}" term.freeze.hard_grace=20; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
 cat > "$(tabdir ttyw1)/on-screen" <<EOF
 #!/bin/bash
 n=\$(cat "$T/reads" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$T/reads"
@@ -618,8 +619,16 @@ check "registry: freezing only that tab -> exit 3" [ "$(rc_of ts freeze "$otty" 
 check "registry: a new session in a reused tab is not closed under the old entry" nokeys "$otty"
 check "registry: the old resume line is in no issue" no_leak test/home "--resume $osid"
 # 3b. the same process, tty and tab, a new session id in its session file (as after /clear): the entry follows it
-moved() { # a worker tab this home opened whose session file now names S4; sets osid otty opid
-  reset "${FKEYS[@]}"
+on_open() { # on_open <profile> [session id]: the new session writes its session file under that profile
+  cat > "$TERM_FAKE_DIR/on-open" <<EOF
+sid=\$(printf '%s\n' "\$3" | sed -n 's/.*--session-id \([0-9a-f-]*\).*/\1/p')
+mkdir -p "$TERM_FAKE_DIR/profiles/$1/sessions"
+jq -n --argjson pid "\$2" --arg sid "${2:-\$sid}" '{pid: \$pid, sessionId: \$sid, status: "idle"}' > "$TERM_FAKE_DIR/profiles/$1/sessions/\$2.json"
+EOF
+}
+moved() { # moved [config keys]: a worker tab this home opened whose session file now names S4; sets osid otty opid
+  if [ $# -gt 0 ]; then reset "$@"; else reset "${FKEYS[@]}"; fi
+  on_open work
   o=$(ts open "$W1"); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
   sess_file work "$opid" "$S4" idle "$W1"; transcript work "$S4"
 }
@@ -640,6 +649,15 @@ check "moved: the freeze issue lists the new id" issue_text test/home | grep -qF
 check "moved: the cleared session's resume line is in no issue" no_leak test/home "--resume $osid"
 check "moved: thaw reopens the new id" [ "$(ts thaw latest | grep -c "^REOPENED $S4 ")" = 1 ]
 check "moved: with its resume line" launch_of "$S4" | grep -qF "&& 'claude' -p 'work' --resume $S4 "
+moved "${GKEYS[@]}" term.freeze.hard_grace=1   # no profile flag: the machine picks the profile itself
+check "moved, no profile flag: open recorded a line without a profile" [ "$(regf .resume)" = "cd '$W1' && claude --resume $osid" ]
+check "moved, no profile flag: the recorded line is kept for the new id" [ "$(sj "$otty" | jq -r .resume)" = "cd '$W1' && claude --resume $S4" ]
+ts freeze "$otty" --hard >/dev/null 2>&1
+check "moved, no profile flag: freeze closes the tab" [ "$(outcome "$otty")" = exited ]
+check "moved, no profile flag: the entry holds that line" [ "$(regf '"\(.session_id) \(.resume)"')" = "$S4 cd '$W1' && claude --resume $S4" ]
+reset "${GKEYS[@]}" term.freeze.hard_grace=1; hand_tab ttyw6 806 "claude --model opus" "$W1" w7; sess_file work 806 "$S4" idle "$W1"
+check "moved: a tab opened by hand under a profile that cannot be passed still gets no resume line" [ "$(sj ttyw6 | jq -r '.resume == null')" = true ]
+check "moved: and freeze never closes it" [ "$(rc_of ts freeze ttyw6 --hard)" = 3 ]
 moved; mkdir "$HOME_ROOT/.local/registry.lock"
 ts freeze "$otty" --hard >/dev/null 2>&1
 rmdir "$HOME_ROOT/.local/registry.lock"
@@ -739,13 +757,6 @@ check "placeholder: freeze --soft never types its prompt over a real draft" [ -z
 check "placeholder: freeze --soft never types its prompt over a real draft (second half)" [ "$(outcome ttyw1)" = kept:soft-timeout ]
 
 # ---------------------------------------------------------------- open: the resume line names the real profile
-on_open() { # on_open <profile> [session id]: the new session writes its session file under that profile
-  cat > "$TERM_FAKE_DIR/on-open" <<EOF
-sid=\$(printf '%s\n' "\$3" | sed -n 's/.*--session-id \([0-9a-f-]*\).*/\1/p')
-mkdir -p "$TERM_FAKE_DIR/profiles/$1/sessions"
-jq -n --argjson pid "\$2" --arg sid "${2:-\$sid}" '{pid: \$pid, sessionId: \$sid, status: "idle"}' > "$TERM_FAKE_DIR/profiles/$1/sessions/\$2.json"
-EOF
-}
 reg_resume() { jq -r '.[0].resume' "$REG"; }
 reset launch.profile_flag=-p; on_open work
 out=$(ts open "$W1"); OS=${out%% *}
@@ -877,11 +888,6 @@ check "codex: park refuses a dialog and presses no Esc (second half)" [ -z "$(ke
 creset; codex_tab ttyx1 901; claim 31 "$C1"; printf 'shell' > "$(tabdir ttyx1)/mode"
 check "codex: no input box found -> park refused, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
 check "codex: no input box found -> park refused, nothing typed (second half)" [ -z "$(keys ttyx1)" ]
-creset term.codex_exit=/exit; codex_tab ttyx1 901; claim 31 "$C1"; printf '/exit' > "$(tabdir ttyx1)/exit-word"
-check "codex: term.codex_exit names the exit command" ts park ttyx1 --adopt --issue 31
-creset "term.codex_exit=rm -rf x"; codex_tab ttyx1 901; claim 31 "$C1"
-check "codex: an exit command of another shape -> exit 3, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
-check "codex: an exit command of another shape -> exit 3, nothing typed (second half)" [ -z "$(keys ttyx1)" ]
 creset; codex_tab ttyx1 901; claim 31 "$C1"
 ts park ttyx1 --adopt --issue 31 >/dev/null 2>&1; out=$(ts resume "$C1" 2>/dev/null); NT=$(printf '%s' "$out" | awk '{ print $2 }'); NP=$(printf '%s' "$out" | awk '{ print $3 }')
 codex_rec "$NT" "$C1" "$NP" "$W1"; threads "$C1|900|0|cli|$W1" "$C2|2000|0|cli|$W1"

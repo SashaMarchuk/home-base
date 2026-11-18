@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: HOME-302 Where a session id comes from
-`term.sh` SHALL take a tab's session id from this home's registry only while the entry's pid is the live process and the session file names no other id, else from its session file, else its command line; when the entry's pid, tty and tab id still match the live tab and that process's session file names another id (as after `/clear`), the tab keeps its registration and issue, its id and resume line come from the session file, and freeze and park SHALL update the entry to that id before any key, keeping the first id as the id of the run on the issue; freeze keeps a tab whose registry entry names another process as `kept:changed`, and a tab with no id SHALL get no resume line.
+`term.sh` SHALL take a tab's session id from this home's registry only while the entry's pid is the live process and the session file names no other id, else from its session file, else its command line; when the entry's pid, tty and tab id still match the live tab and that process's session file names another id (as after `/clear`), the tab keeps its registration and issue, its id comes from the session file and its resume line is the recorded one with that id, and freeze and park SHALL update the entry before any key, keeping the first id as the id of the run on the issue; freeze keeps a tab whose registry entry names another process as `kept:changed`, and a tab with no id SHALL get no resume line.
 
 #### Scenario: No session file and no id
 - **WHEN** a tab runs `claude -r` and no session file exists for its process
@@ -14,6 +14,10 @@
 #### Scenario: The session was cleared in its own tab
 - **WHEN** the owner ran `/clear` in a worker tab, so the same process on the same tty and tab now has a session file with a new id, and `freeze --hard` runs on it
 - **THEN** the registry entry names the new id and a resume line for it, the freeze record lists that id, and the tab is closed
+
+#### Scenario: Cleared where the machine picks the profile
+- **WHEN** no `launch.profile_flag` is set, `open` recorded `cd <cwd> && claude --resume <old id>` and the session file under a profile folder now names a new id
+- **THEN** the tab's resume line is `cd <cwd> && claude --resume <new id>` and freeze and park act on it
 
 #### Scenario: The entry cannot be updated
 - **WHEN** the registry cannot be written for a session that moved to a new id

@@ -17,5 +17,5 @@ Facts used (iTerm2's scripting dictionary and source, read only):
 
 ## Impact
 - `scripts/term/term.sh` (`be_open`, `launch_tab`, `open`), the fake backend, tests on the fake backend (must-pass and must-fail), the AppleScript compile test.
-- Needs `xxd` (part of macOS) on the machine that opens tabs.
+- Needs `perl` (part of macOS, already used by the session-end hook) on the machine that opens tabs, to decode the line.
 - No change to where sessions or transcripts are stored.

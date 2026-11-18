@@ -90,13 +90,12 @@
 #   launch.profile.orchestrator / launch.profile.worker   the profile value per role
 #   launch.model                   passed as "--model <alias>" when set
 #   term.sessions_dirs             where Claude Code writes <pid>.json per live session (see sessions.sh)
-#   term.codex_exit=/quit          the line that ends a Codex session (one slash word)
 # close reads the issue with gh (repo: --repo, else repo in home.config).
 # Test seams: TERM_SH_BACKEND=fake (sources ../tests/stubs/term-fake), TERM_SH_POLL,
 #   TERM_SH_SETTLE, TERM_SH_OPEN_WAIT, TERM_SH_EXIT_WAIT, TERM_SH_LOCK_TIMEOUT, TERM_SH_HOME_LOG.
 # Exit: 0 ok, 2 usage, 3 refused by a rule, 4 tab or session not found, 5 timed out.
 #
-# bash 3.2 compatible. Needs jq, gh and xxd; the real backend needs osascript, ps, lsof, memory_pressure.
+# bash 3.2 compatible. Needs jq, gh and perl; the real backend needs osascript, ps, lsof, memory_pressure.
 
 set -u
 TERM_SH_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -547,12 +546,14 @@ follow_session() { # follow_session <tty> <old id> <new id> <resume line>: the o
 }
 
 follow_live() { # after resolve: the recorded process still runs here and its session file names another id (as after /clear)
-  local sf s_sid cwd line
+  local sf s_sid cwd line=""
   [ "$T_REG" = 1 ] && [ "$T_ALIVE" = 1 ] && [ "$T_KIND" = claude ] && [ "$ADOPT_NEW" = 0 ] || return 0
   sf=$(session_of_pid "$T_PID") || return 0
   s_sid=$(printf '%s' "$sf" | cut -d"$US" -f1)
   is_uuid "$s_sid" && [ "$s_sid" != "$T_SID" ] || return 0
   cwd=$(be_pid_cwd "$T_PID"); [ -n "$cwd" ] || cwd=$(printf '%s' "$sf" | cut -d"$US" -f3)
+  # a tab this home opened keeps its recorded line, for the new id; an adopted tab's line is built again
+  { [ "$T_ADOPTED" = 0 ] && line=$(moved_line "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume // empty')" "$T_SID" "$s_sid"); } ||
   line=$(resume_line "$cwd" "$(be_pid_cmd "$T_PID" | head -1)" "$(printf '%s' "$sf" | cut -d"$US" -f5)" "$s_sid" \
     "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .role // "worker"')") ||
     die 3 "the session on $T_TTY moved to a new id and no resume line can be built for it; nothing is typed"
@@ -785,13 +786,14 @@ login_shell() { # the shell a new tab runs its launch line in: $SHELL when it is
 launch_command() { # launch_command <launch line> -> the command a new tab starts with
   # The login shell loads the user's environment (-l -i), runs the line and then becomes a plain login shell, so
   # the tab keeps a shell when the session ends. The line travels as hex: the terminal splits a tab's command
-  # into words by its own quote and backslash rules, and no character of the line meets them.
-  local sh hex xxd
+  # into words by its own quote and backslash rules, and no character of the line meets them (the command
+  # itself holds no backslash and no single quote inside its one quoted word).
+  local sh hex perl
   sh=$(login_shell)
-  xxd=$(command -v xxd) && printf '%s' "$xxd" | grep -Eq '^/[A-Za-z0-9_./-]+$' || { note "xxd is required to open a tab"; return 1; }
-  hex=$(printf '%s' "$1" | "$xxd" -p | tr -d '\n')
+  perl=$(command -v perl) && printf '%s' "$perl" | grep -Eq '^/[A-Za-z0-9_./-]+$' || { note "perl is required to open a tab"; return 1; }
+  hex=$(printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n')
   printf '%s' "$hex" | grep -Eq '^([0-9a-f][0-9a-f])+$' || { note "the launch line could not be encoded"; return 1; }
-  printf "%s -lic 'eval \"\$(printf %%s %s | %s -r -p)\"; exec %s -l'\n" "$sh" "$hex" "$xxd" "$sh"
+  printf "%s -lic 'eval \"\$(printf %%s %s | %s -e \"print pack(q(H*),<STDIN>)\")\"; exec %s -l'\n" "$sh" "$hex" "$perl" "$sh"
 }
 
 launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current] [process name]: open, record tty/tab/window/pid, print the triple
@@ -1029,16 +1031,11 @@ has_resume() { # the session can be reopened: a resume line was built at adopt, 
   [ -n "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume // empty')" ]
 }
 
-exit_word() { # the line that ends the session: /exit for Claude Code, term.codex_exit for Codex, exit for a plain command
-  if [ "$T_KIND" = codex ]; then codex_exit_word
-  elif [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ] || [ -n "$T_MOVED" ]; then echo /exit; else echo exit; fi
-}
+CODEX_EXIT=/quit   # the line that ends a Codex session; the real-tab check of Codex tabs confirms or corrects it
 
-codex_exit_word() {
-  local w
-  w=$(local_cfg term.codex_exit /quit)
-  printf '%s' "$w" | grep -Eq '^/[a-z]+$' || die 3 "term.codex_exit must be one slash word such as /quit, not '$w'"
-  printf '%s\n' "$w"
+exit_word() { # the line that ends the session: /exit for Claude Code, CODEX_EXIT for Codex, exit for a plain command
+  if [ "$T_KIND" = codex ]; then echo "$CODEX_EXIT"
+  elif [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ] || [ -n "$T_MOVED" ]; then echo /exit; else echo exit; fi
 }
 
 codex_same_thread() { # a Codex tab is acted on only while its record still names the recorded thread

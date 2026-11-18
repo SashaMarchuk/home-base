@@ -120,7 +120,7 @@ fake_key() { # the effect of one key on the tab
       printf '%s\n' "$line" >> "$d/sent"
       fake_put "$1" box ""; rm -f "$d/ghost"
       [ -f "$d/on-submit" ] && /bin/bash "$d/on-submit" "$line" >/dev/null 2>&1
-      if { [ "$mode" = claude ] && [ "$line" = /exit ]; } || { [ "$mode" = codex ] && [ "$line" = "$(cat "$d/exit-word" 2>/dev/null || echo /quit)" ]; }; then
+      if { [ "$mode" = claude ] && [ "$line" = /exit ]; } || { [ "$mode" = codex ] && [ "$line" = /quit ]; }; then
         fake_put "$1" mode shell
         pid=$(fake_get "$1" pid)
         [ -f "$d/linger" ] || rm -rf "$TERM_FAKE_DIR/proc/$pid"
@@ -137,12 +137,12 @@ be_open() { # mirrors the real launch: the tab starts with "<shell> -lic '<wrapp
   # Fixtures: open-fail (the create fails), wrapper-holds-line (the shell's command line holds the launch line
   # and gets a higher pid), no-agent (only the shell starts), on-open (a script run with the tty, the pid and
   # the launch line once the session's process exists: stands in for the session writing its session file).
-  local n=1 tty pid cmd cwd d w=${2:-current} m=1 hex xxd line front
+  local n=1 tty pid cmd cwd d w=${2:-current} m=1 dec line front
   [ -f "$TERM_FAKE_DIR/open-fail" ] && return 1
-  printf '%s\n' "$1" | grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval \"\\\$\(printf %s ([0-9a-f][0-9a-f])+ \| /[A-Za-z0-9_./-]+ -r -p\)\"; exec /[A-Za-z0-9_./-]+ -l'\$" || return 1
-  hex=$(printf '%s\n' "$1" | sed -n 's/.*printf %s \([0-9a-f]*\) | .*/\1/p')
-  xxd=$(printf '%s\n' "$1" | sed -n 's/.* | \([^ ]*\) -r -p).*/\1/p')
-  line=$(printf %s "$hex" | "$xxd" -r -p) || return 1
+  printf '%s\n' "$1" | grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval \"\\\$\(printf %s ([0-9a-f][0-9a-f])+ \| /[A-Za-z0-9_./-]+ -e \"print pack\(q\(H\*\),<STDIN>\)\"\)\"; exec /[A-Za-z0-9_./-]+ -l'\$" || return 1
+  dec=$(printf '%s\n' "$1" | sed -n 's/.*eval "\$(\(.*\))"; exec .*/\1/p')   # the wrapper's own decode pipeline, run as the tab's shell would
+  line=$(/bin/bash -c "$dec") || return 1
+  [ -n "$line" ] || return 1
   while ! mkdir "$TERM_FAKE_DIR/tabs/ttyf$n" 2>/dev/null; do n=$((n + 1)); done
   tty=ttyf$n; d=$(fake_tab "$tty"); pid=$((60000 + n))
   case "$w" in

@@ -119,9 +119,9 @@ check "r0 a shell with a higher pid that holds the session id is not recorded (s
 reset; : > "$TERM_FAKE_DIR/wrapper-holds-line"; : > "$TERM_FAKE_DIR/no-agent"
 check "r0 only the shell started -> exit 5, never recorded as the session" [ "$(rc_of ts open "$WORK")" = 5 ]
 check "r0 that entry is closed with no pid" [ "$(jq -r '.[0] | (.closed != null and .pid == null)' "$REG")" = true ]
-mkdir -p "$T/noxxd"; printf '#!/bin/bash\nexit 1\n' > "$T/noxxd/xxd"; chmod +x "$T/noxxd/xxd"
+mkdir -p "$T/badod"; printf '#!/bin/bash\nexit 1\n' > "$T/badod/od"; chmod +x "$T/badod/od"
 reset
-check "r0 the launch line cannot be encoded -> exit 3" [ "$(rc_of env PATH="$T/noxxd:$PATH" /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
+check "r0 the launch line cannot be encoded -> exit 3" [ "$(rc_of env PATH="$T/badod:$PATH" /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
 check "r0 nothing opened without the encoding" [ ! -f "$TERM_FAKE_DIR/commands" ]
 check "r0 nothing opened without the encoding (second half)" [ "$(jq -r '.[0].closed != null' "$REG")" = true ]
 reset; new_tab --issue 21; ts park "$TTY" >/dev/null 2>&1; out=$(ts resume "$SID" 2>/dev/null); TTY=$(echo "$out" | awk '{ print $2 }')
@@ -456,8 +456,14 @@ out=$(ts resume "$NSID" 2>"$T/err")
 check "r9 resume by the new id reopens it" [ "$(echo "$out" | awk '{ print $1 }')" = "$NSID" ]
 check "r9 the old id is no longer a target" [ "$(rc_of ts resume "$SID")" = 4 ]
 reset; new_tab --issue 21; sfile "$PID" "$NSID"
-check "r9 moved, but its profile cannot be passed -> refused" [ "$(rc_of ts park "$TTY")" = 3 ]
-check "r9 nothing typed and nothing recorded on that refusal" [ -z "$(keys)" ]
+check "r9 moved, no profile flag: a tab this home opened keeps its recorded line for the new id" ts park "$TTY"
+check "r9 that line names the new id and no profile" \
+  grep -q "^checkpoint 21 --run-id $SID --park --text Parked by term.sh. Resume: cd '$WORK' && claude --resume $NSID$" "$T/home-log.calls"
+reset; new_tab --issue 21; sfile "$PID" "$NSID"; mkdir "$HOME_ROOT/.local/registry.lock"
+check "r9 moved, but the registry cannot be written -> refused" [ "$(rc_of ts park "$TTY")" = 3 ]
+rmdir "$HOME_ROOT/.local/registry.lock"
+check "r9 nothing typed on that refusal" [ -z "$(keys)" ]
+check "r9 home-log not called on that refusal" [ ! -f "$T/home-log.calls" ]
 check "r9 the entry keeps its id on that refusal" [ "$(jq -r '.[0].session_id' "$REG")" = "$SID" ]
 reset launch.profile_flag=-p launch.profile.worker=work; new_tab --issue 21; sfile "$PID" "$SID"
 ts park "$TTY" >/dev/null 2>&1

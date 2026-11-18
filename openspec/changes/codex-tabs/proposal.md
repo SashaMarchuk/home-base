@@ -8,7 +8,7 @@ Facts seen so far (read only, codex-cli 0.164; earlier Codex hook runs):
 
 Not seen yet, so the real-tab check proves them (tasks 1.0 and 1.5): that the SessionStart hook of a terminal session runs with that session's tty above it; whether `/new` keeps the process and starts a new thread; which process holds a terminal session's rollout file open; and whether `codex resume <id>` keeps the same id.
 
-Also not seen: the screen of a Codex tab. The helpers read a Codex tab with the readers they have (built for Claude Code's screen) and refuse when they find no input box; the real-tab check names the Codex markers and the exit command (`term.codex_exit` in `.local/config`, default `/quit`).
+Also not seen: the screen of a Codex tab. The helpers read a Codex tab with the readers they have (built for Claude Code's screen) and refuse when they find no input box; the real-tab check names the Codex markers and confirms or corrects the exit command (`/quit`, one constant in `term.sh`).
 
 So the id comes from inside the session: the Codex SessionStart hook records it per tty, and the helpers trust that record only when it still matches the live tab. Known limit: when two Codex tabs work in one folder, the newer-thread rule leaves the older one unmapped (listed only, never closed); that fails safe.
 

@@ -36,6 +36,6 @@ In your home, the `base-update` skill fetches `base`, merges, removes base-only 
 
 The terminal helpers (`scripts/term/term.sh`) open, freeze and thaw Claude Code tabs only. `survey`, `state`, `send`, `park`, `resume` and `close` also run from a Codex session, and park, resume and close drive a Codex tab once its SessionStart hook has recorded its thread id. `term.sh finished` lists, without touching anything, which tabs `close` would accept. The hooks and the session-end stub support Claude Code and Codex; Codex runs them once you trust the folder and, with `/hooks`, the home's hooks. Known limit: a Claude Code session started from a Codex shell inherits `CODEX_THREAD_ID`, so `home-log` records it as a Codex run and `term.sh open`, `freeze` and `thaw` refuse to run in it.
 
-Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git, xxd; no network; a full run takes a few minutes).
+Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git; no network; a full run takes a few minutes).
 
 Licence: MIT (see LICENSE)

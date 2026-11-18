@@ -7,8 +7,8 @@
 # The session id comes from the registry (a tab this home opened), then the session file, then the
 # command line. A session with no id gets no resume line ("resume: manual") and is never closed by freeze.
 # When the recorded process still runs on the recorded tty and tab and its session file names another id
-# (as after /clear), the session moved: the id and the resume line come from the session file ("moved_from"
-# names the registry's id) and freeze and park update the entry (follow_session in term.sh), keeping the
+# (as after /clear), the session moved: the id comes from the session file, the resume line is the recorded
+# one with that id ("moved_from" names the registry's id) and freeze and park update the entry (follow_session in term.sh), keeping the
 # first id as "moved_from": the run on the issue was started under it.
 #
 # A Codex tab: the Codex SessionStart hook (scripts/hooks/session-start --surface codex) writes
@@ -123,6 +123,13 @@ resume_line() { # resume_line <cwd> <command line> <profile> <session id> [role]
   [ -n "$model" ] && line="$line --model $(shq "$model")"
   case " $cmd " in *" --dangerously-skip-permissions "*) line="$line --dangerously-skip-permissions" ;; esac
   printf '%s --resume %s\n' "$line" "$sid"
+}
+
+moved_line() { # moved_line <recorded resume line> <old id> <new id> -> that line for the new id; rc 1 when it does not name the old one
+  case "$1" in
+    *"--resume $2"*) printf '%s--resume %s%s\n' "${1%%"--resume $2"*}" "$3" "${1#*"--resume $2"}" ;;
+    *) return 1 ;;
+  esac
 }
 
 # ------------------------------------------------------------------ Codex tabs
@@ -323,7 +330,9 @@ tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a l
 $sf
 EOF
       if [ "$src" = registry ] && [ "$stale" = false ] && is_uuid "$s_sid" && [ "$s_sid" != "$sid" ]; then
-        moved=$sid; sid=""; src=none; resume=""   # the same process, a new session id: the session moved
+        # the same process, a new session id: the session moved; a tab this home opened keeps its recorded line
+        moved=$sid; resume=$(moved_line "$resume" "$sid" "$s_sid") || resume=""
+        sid=""; src=none
       fi
       if [ "$stale" = true ]; then sid=""; src=none; resume=""; fi
       if [ -z "$sid" ] && is_uuid "$s_sid"; then sid=$s_sid; src=file; fi
