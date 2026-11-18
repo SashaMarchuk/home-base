@@ -46,6 +46,7 @@ while IFS= read -r s; do
     args=$(printf '%s' "$s" | sed -E 's/^kill[[:space:]]*//; s/[0-9]*>&[0-9]+//g; s/[0-9]*[<>]{1,2}[[:space:]]*[^[:space:]]+//g; s/["'"'"']+([[:space:]]|$)/\1/g')
     # One signal option may come first; every other argument is a PID: a single positive
     # number above 1. Negative numbers (process groups), 0, 1 and -1 kill more than one process.
+    # Options end at the first PID, as in the shell: a later "-x" is a group or a mistake.
     # probe=1: signal 0 or a signal listing; it ends nothing, so its PIDs need no owner.
     skip=0; sig=0; dd=0; probe=0; pids=""
     for a in $args; do
@@ -53,7 +54,7 @@ while IFS= read -r s; do
       if [ "$dd" = 0 ]; then
         case "$a" in
           --) dd=1; continue ;;
-          -l|-L) probe=1; continue ;;
+          -l|-L) [ "$sig" = 0 ] && { sig=1; probe=1; continue; } ;;
           -s|-n) [ "$sig" = 0 ] && { sig=1; skip=1; continue; } ;;
           -[0-9]*|-[A-Za-z]*) [ "$sig" = 0 ] && { sig=1; [ "$a" = -0 ] && probe=1; continue; } ;;
         esac
@@ -61,7 +62,7 @@ while IFS= read -r s; do
       case "$a" in
         ''|*[!0-9]*|0|1|0*) block "kill with '$a'" "Kill exact numeric PIDs only, one process each (rule 9)." ;;
       esac
-      pids="$pids $a"
+      pids="$pids $a"; dd=1
     done
     [ "$probe" = 1 ] || PIDS="$PIDS$pids"
   fi

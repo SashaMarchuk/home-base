@@ -27,6 +27,10 @@ The pre-tool hook for shell commands SHALL block with exit 2 and a reason any co
 - **WHEN** a session runs `sh -c "kill -9 -1"` or `true & kill 0`
 - **THEN** the hook blocks it with exit 2
 
+#### Scenario: An option after a process id
+- **WHEN** a session runs `kill 1234 -0`, `kill 1234 -l` or `kill 1234 -5678`
+- **THEN** the hook blocks it with exit 2, because the shell reads options only before the first process id
+
 ## ADDED Requirements
 
 ### Requirement: HOME-350 Kill of the session's own processes

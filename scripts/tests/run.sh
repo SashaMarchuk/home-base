@@ -299,6 +299,13 @@ EOS
   kg block claude "kill $DEAD"
   mkdir -p "$T/nops"; printf '#!/bin/sh\nexit 1\n' > "$T/nops/ps"; chmod +x "$T/nops/ps"
   PATH="$T/nops:$PATH" kg block claude 'kill @OWN@'
+  # an option after a PID makes no probe: the shell stops reading options at the first PID
+  for c in 'kill @FOR@ -l' 'kill @FOR@ -0' 'kill @FOR@ -s 0' 'kill -9 -l @FOR@' 'kill @OWN@ -0' 'kill @OWN@ -4242'; do kg block claude "$c"; done
+  # no agent process above the hook: its parent exits at once, so the hook hangs under PID 1
+  jq -n --arg c "kill $FOR" '{tool_name:"Bash",tool_input:{command:$c}}' > "$T/orph.json"; rm -f "$T/orph.rc"
+  bash -c '( sleep 0.5; "$1" < "$2" > "$3" 2>&1; echo $? > "$4" ) >/dev/null 2>&1 &' _ "$BG" "$T/orph.json" "$T/orph.out" "$T/orph.rc"
+  n=0; until [ -s "$T/orph.rc" ] || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+  [ "$(cat "$T/orph.rc" 2>/dev/null)" = 2 ] && grep -q 'no agent process above this hook' "$T/orph.out" && ok || bad "kill guard must refuse with no agent process above it (exit $(cat "$T/orph.rc" 2>/dev/null): $(head -1 "$T/orph.out" 2>/dev/null))"
   # The registry vouches for a PID only while its entry is open, not adopted, and its tty and match fit the live process.
   FTTY=$(ps -o tty= -p "$FOR" | tr -d ' ')
   reg() { # reg <tty> <match> [<extra fields>]
