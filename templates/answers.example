@@ -45,6 +45,8 @@ homes.allotment.path=~/homes/allotment-home
 homes.allotment.role=child
 
 # ---------- behaviour ----------
+# park | continue: what a worker does with a question while the owner is away.
+questions.worker_away=park
 # REQUIRED. none | soft | hard
 limits.mode=none
 limits.threshold=90

@@ -107,6 +107,7 @@ tracker.backend=github
 tracker.board=none
 tracker.board_write=
 labels.needs_owner=needs-owner
+questions.worker_away=park
 base.url=
 limits.mode=none
 limits.threshold=90
@@ -291,6 +292,7 @@ num() { local v; v=$(ans "$1"); [ -n "$v" ] || return 0
   case "$v" in *[!0-9]*) BAD+=("$1=$v (a whole number)") ;; esac; }
 enum tracker.backend github
 enum tracker.board_write ask-first yes read-only
+enum questions.worker_away park continue
 enum limits.mode none soft hard
 enum proactivity.mode assigned off watch
 enum dreams.mode manual daily

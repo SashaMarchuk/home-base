@@ -87,10 +87,11 @@ check "missing keys write nothing" [ "$before" = "$(tree_sum)" ]
 
 # 2. invalid values and an address in accounts rows
 AT=@   # the fake address is built at run time, so none sits in this file
-sed -e 's/^limits.mode=soft/limits.mode=sometimes/' -e "s/^accounts.rows=orchard |/accounts.rows=jo${AT}example.org |/" "$A" > "$W/answers.bad"
+{ sed -e 's/^limits.mode=soft/limits.mode=sometimes/' -e "s/^accounts.rows=orchard |/accounts.rows=jo${AT}example.org |/" "$A"; echo questions.worker_away=maybe; } > "$W/answers.bad"
 out=$("$R/scripts/configure" --answers "$W/answers.bad" 2>&1); rc=$?
 check "invalid values exit 2" [ "$rc" = 2 ]
 check "invalid enum named" grep -q "invalid answer: limits.mode=sometimes" <<<"$out"
+check "invalid worker_away named" grep -q "invalid answer: questions.worker_away=maybe (allowed: park continue)" <<<"$out"
 check "address refused" grep -q "holds an address" <<<"$out"
 check "invalid values write nothing" [ "$before" = "$(tree_sum)" ]
 
@@ -104,6 +105,7 @@ done
 check "home.config repo" grep -qx 'repo=example-org/orchard-home' "$R/home.config"
 check "home.config board_write" grep -qx 'tracker.board_write=read-only' "$R/home.config"
 check "home.config default kept" grep -qx 'sweep.stale_hours=6' "$R/home.config"
+check "home.config worker_away default" grep -qx 'questions.worker_away=park' "$R/home.config"
 check "home.config sweep lookback default" grep -qx 'sweep.lookback_days=14' "$R/home.config"
 check "home.config guard.extra" grep -qx 'guard.extra=docker compose down' "$R/home.config"
 check "home.config homes" grep -qx 'homes.cellar.role=child' "$R/home.config"
@@ -136,6 +138,7 @@ check "base-only removal reported" grep -q 'configure: removed base-only path RE
 check "flowing paths kept" [ -n "$(git -C "$R" ls-files scripts/configure)" ]
 check "labels not run without --labels" grep -q 'labels not run' <<<"$out"
 check "completeness lists keys" grep -q '^  sweep.stale_hours=6 (default)' <<<"$out"
+check "completeness lists worker_away" grep -q '^  questions.worker_away=park (default)' <<<"$out"
 check "completeness lists machine keys" grep -q '^  limits.reader=none (default)' <<<"$out"
 
 # 4. idempotent
@@ -165,10 +168,11 @@ check "multi=no: no accounts page" [ ! -f "$R2/wiki/howto/accounts.md" ]
 check "empty plugins: no enabledPlugins" [ "$(jq 'has("enabledPlugins")' "$R2/.claude/settings.json")" = false ]
 
 # 6b. no board: board_write is not written even when answered
-sed 's/^tracker.board=.*/tracker.board=none/' "$W/answers.no" > "$W/answers.noboard"
+{ sed 's/^tracker.board=.*/tracker.board=none/' "$W/answers.no"; echo questions.worker_away=continue; } > "$W/answers.noboard"
 "$R2/scripts/configure" --answers "$W/answers.noboard" >/dev/null 2>&1; rc=$?
 check "no board: exit 0" [ "$rc" = 0 ]
 check "no board: board_write empty" grep -qx 'tracker.board_write=' "$R2/home.config"
+check "worker_away answered: continue written" grep -qx 'questions.worker_away=continue' "$R2/home.config"
 check "board named: board_write kept" grep -qx 'tracker.board_write=read-only' "$R/home.config"
 
 # 6c. helpers asked on, device check fails: the answers file is rewritten to off

@@ -59,13 +59,16 @@ Rules:
 - Start with: <home path>/scripts/home-log start <n> --repo <repo>
 - End with:   <home path>/scripts/home-log finish <n> --repo <repo> --text "<summary: what was done, links, owner answers that changed the outcome>"
 - Questions and every message to the owner, the final status included, in <lang.owner>.
-- Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>".
+- Anything that needs the owner: use your surface's ask tool (context first, recommended option first). If the owner is away: no questions; <the owner-away line, below>
 - Nothing external without the owner's yes; prepare a draft and show it for approval on a review page (the draft as an editable text, yes / no / note per row; see section 8 of <home path>/.claude/skills/orchestrate/SKILL.md), not as a plain question. After the owner's yes on the exact text, send it yourself as approved, then read it back. Text the owner writes in direct answer to a question asking whether to send a specific text is the owner's yes on exactly that text: send it as written, read it back, do not ask again. Approved text is sent with its words unchanged, in the format the recipient's recorded rules give (for example "one point per message": one message per paragraph).
 - Limits: <mode, only when set for this task>
 - Standing approval <ID>: <action>, <where>; unless <condition>. Inside it, act without asking and write "done under <ID>" in the finish text; rules 6 and 7 still apply as written. (one line per active entry that touches the task)
 Owner's words for this task (verbatim):
 <quote>
 ```
+The owner-away line follows `questions.worker_away` (`.local/config`, then `home.config`; unset or any other value is `park`):
+- `park`: `park with the question and stop: <home path>/scripts/home-log checkpoint <n> --repo <repo> --park --question "<text>".`
+- `continue`: `take the reversible default and store the question: <home path>/scripts/home-log checkpoint <n> --repo <repo> --question "<text>" (no reversible default: add --park and stop).`
 
 ## 5. Limits (`scripts/limits`; the owner's live word is written to `.local/limits` as `mode=soft|hard` and optional `until=<ISO time>`)
 - `ok`: work normally.
