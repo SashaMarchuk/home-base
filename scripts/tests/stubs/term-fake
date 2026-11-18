@@ -5,6 +5,7 @@
 #           (a codex tab is drawn with the same box: the real Codex screen is not modelled; it ends on /quit)
 #   body    text above the input box   box     what is typed in the box
 #   ghost   a suggestion shown while the box is empty (typing replaces it)
+#   placeholder  a hint shown whenever the box is empty (it comes back after the text is deleted)
 #   dialog  an open dialog (rows "N. label"); free-text focus in "freetext", typed text in "answer"
 #   headsup a notice with "0: Dismiss" busy  a running turn ("esc to interrupt")
 #   status  status line under the box  swallow  how many next Enters are lost
@@ -56,6 +57,7 @@ be_screen() {
   [ -f "$d/busy" ] && printf '* Working... (esc to interrupt)\n'
   box=$(fake_get "$1" box); ghost=$(fake_get "$1" ghost)
   [ -z "$box" ] && [ -n "$ghost" ] && box=$ghost
+  [ -z "$box" ] && [ -f "$d/placeholder" ] && box=$(cat "$d/placeholder")
   printf '%s\n' "--------------------------------------------------" | sed "s/-/$RULE/g"
   printf '%s %s\n' "$PROMPT" "$box"
   printf '%s\n' "--------------------------------------------------" | sed "s/-/$RULE/g"

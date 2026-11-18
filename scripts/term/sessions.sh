@@ -6,6 +6,10 @@
 # says where; the profile is the name of the folder above "sessions" (none when it is .claude).
 # The session id comes from the registry (a tab this home opened), then the session file, then the
 # command line. A session with no id gets no resume line ("resume: manual") and is never closed by freeze.
+# When the recorded process still runs on the recorded tty and tab and its session file names another id
+# (as after /clear), the session moved: the id and the resume line come from the session file ("moved_from"
+# names the registry's id) and freeze and park update the entry (follow_session in term.sh), keeping the
+# first id as "moved_from": the run on the issue was started under it.
 #
 # A Codex tab: the Codex SessionStart hook (scripts/hooks/session-start --surface codex) writes
 # .local/codex-threads/<tty> (thread id, pid of the codex process, cwd, time). The tab has that thread id
@@ -270,7 +274,7 @@ is_caller() { case " $CALLER_TTYS " in *" $1 "*) return 0 ;; esac; return 1; }
 tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
   local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
-  local group="" gfrom="" stale=false ct=""
+  local group="" gfrom="" stale=false ct="" moved=""
   name=$(launch_name)
   pids=$(tty_pids "$tty" "$name" "$procs")
   n=$(printf '%s\n' "$pids" | grep -c .)
@@ -307,7 +311,7 @@ tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a l
       issue=$(printf '%s' "$entry" | jq -r '.issue // ""')
       role=$(printf '%s' "$entry" | jq -r '.role // "worker"')
       printf '%s' "$entry" | jq -e '.adopted == true' >/dev/null && adopted=true
-      if printf '%s' "$entry" | jq -e '.match == .session_id' >/dev/null; then
+      if printf '%s' "$entry" | jq -e '.match == .session_id or .moved_from != null' >/dev/null; then
         sid=$(printf '%s' "$entry" | jq -r '.session_id'); src=registry
         resume=$(printf '%s' "$entry" | jq -r '.resume // ""')
       fi
@@ -318,7 +322,9 @@ tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a l
       IFS=$US read -r s_sid status s_cwd sname prof pdir <<EOF
 $sf
 EOF
-      if [ "$src" = registry ] && is_uuid "$s_sid" && [ "$s_sid" != "$sid" ]; then stale=true; fi
+      if [ "$src" = registry ] && [ "$stale" = false ] && is_uuid "$s_sid" && [ "$s_sid" != "$sid" ]; then
+        moved=$sid; sid=""; src=none; resume=""   # the same process, a new session id: the session moved
+      fi
       if [ "$stale" = true ]; then sid=""; src=none; resume=""; fi
       if [ -z "$sid" ] && is_uuid "$s_sid"; then sid=$s_sid; src=file; fi
       [ -n "$cwd" ] || cwd=$s_cwd
@@ -338,7 +344,7 @@ EOF
   jq -nc --arg tty "$tty" --arg win "$win" --arg tab "$tab" --arg pid "$pid" --arg kind "$kind" --argjson n "$n" \
     --arg cmd "$cmd" --arg sid "$sid" --arg src "$src" --arg prof "$prof" --arg pdir "$pdir" --arg status "$status" \
     --arg cwd "$cwd" --arg name "$sname" --argjson reg "$reg" --arg issue "$issue" --arg role "$role" \
-    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" \
+    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" --arg moved "$moved" \
     '{tty: $tty, window: $win, tab: $tab, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
       processes: $n, command: $cmd, session_id: (if $sid == "" then null else $sid end), id_from: $src,
       profile: $prof, profile_dir: $pdir, status: (if $status == "" then null else $status end), cwd: $cwd,
@@ -346,7 +352,7 @@ EOF
       role: (if $role == "" then null else $role end), adopted: $adopted,
       resume: (if $resume == "" then null else $resume end), caller: $caller,
       group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end),
-      registry_stale: $stale}'
+      registry_stale: $stale, moved_from: (if $moved == "" then null else $moved end)}'
 }
 
 survey_json() { # one JSON line per live tab

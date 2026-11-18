@@ -17,7 +17,9 @@
 #   C. per tab (workers, then orchestrators, then the rest), after the session file's status and the
 #      screen agree: hard closes an idle tab with /exit; a dialog gets one Esc once its question was
 #      recorded (never an option; a dialog that stays open keeps the tab); a suggestion is cleared by
-#      the ghost probe; a real draft keeps the tab (term.freeze.drafts=skip); a running turn is waited
+#      one ghost probe and the box then counts as empty, as for send and close (a placeholder hint comes
+#      back after the probe and is not read again); a real draft keeps the tab (term.freeze.drafts=skip);
+#      the session file is read once more right before /exit; a running turn is waited
 #      on for term.freeze.hard_grace seconds and then kept running (term.freeze.busy=wait).
 #      Soft (--soft, and first in --soft-then-hard) types one prompt through the same checks as send (no
 #      dialog, no running turn, an empty box, both signals idle; a running turn is never interrupted) asking
@@ -156,17 +158,26 @@ freeze_record() { # phase B for one repo: open and claim the issue, read it back
 park_own_issue() { # park_own_issue <entry json>: a tab bound to this home's issue gets today's park checkpoint
   # An orchestrator tab's issue is a child home's issue: never touched. The question goes along only when the
   # tab's group belongs to this home; another home's question stays in that home's freeze issue.
-  local issue sid q="" resume qa=()
+  local issue sid q="" resume qa=() run
   issue=$(printf '%s' "$1" | jq -r '.issue // empty')
   [ -n "$issue" ] || return 0
   [ "$(printf '%s' "$1" | jq -r '.role // ""')" = orchestrator ] && return 0
   sid=$(printf '%s' "$1" | jq -r .session_id)
+  # the run on the issue keeps the id the session started with, also after the session moved to a new one
+  run=$(reg_read -r --arg s "$sid" '[.[] | select(.session_id == $s and .closed == null)] | last | (.moved_from // .session_id) // empty')
   printf '%s' "$1" | jq -e --arg r "$HOME_REPO" '.home == $r and (.local | not)' >/dev/null &&
     q=$(printf '%s' "$1" | jq -r '.question // empty')
   resume=$(printf '%s' "$1" | jq -r .resume)
   [ -n "$q" ] && qa=(--question "$q")
-  "$HOME_LOG" checkpoint "$issue" --run-id "$sid" --park ${qa[@]+"${qa[@]}"} \
+  "$HOME_LOG" checkpoint "$issue" --run-id "${run:-$sid}" --park ${qa[@]+"${qa[@]}"} \
     --text "Frozen by term.sh (Freeze $FID). Resume: $resume" >/dev/null 2>>"$FREEZE_DIR/$FID.log"
+}
+
+follow_moved() { # follow_moved <entry json>: a registered session that moved to a new id in its own process; the entry follows it
+  local old
+  old=$(printf '%s' "$1" | jq -r '.moved_from // empty')
+  [ -n "$old" ] || return 0
+  follow_session "$(printf '%s' "$1" | jq -r .tty)" "$old" "$(printf '%s' "$1" | jq -r .session_id)" "$(printf '%s' "$1" | jq -r .resume)"
 }
 
 record_adopted() { # record_adopted <entry json>: a tab this home did not open enters the registry before any key
@@ -182,7 +193,7 @@ record_adopted() { # record_adopted <entry json>: a tab this home did not open e
 # ------------------------------------------------------------------ acting on one tab (phase C)
 
 freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints the outcome; rc 0 exited, 5 linger
-  local e=$1 grace end scr st fs b probes=0 escaped=0 dismissed=0 live
+  local e=$1 grace end scr st fs b escaped=0 dismissed=0 live
   trap reg_unlock EXIT
   T_TTY=$(printf '%s' "$e" | jq -r .tty); T_TAB=$(printf '%s' "$e" | jq -r .tab)
   T_PID=$(printf '%s' "$e" | jq -r .pid); T_SID=$(printf '%s' "$e" | jq -r .session_id)
@@ -222,15 +233,14 @@ freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints th
         continue ;;
       draft|idle|bg)
         b=$(box_text "$scr") || { echo "kept:no-box"; return 3; }
-        if [ -n "$b" ]; then
-          [ "$probes" -lt 2 ] || { echo "kept:draft"; return 3; }
-          probes=$((probes + 1))
-          ghost_probe "$b" && continue
-          echo "kept:draft"; return 3   # drafts=skip: a real draft keeps the tab
+        if [ -n "$b" ]; then   # one probe: a suggestion or a placeholder hint counts as empty, as for send and close
+          ghost_probe "$b" || { echo "kept:draft"; return 3; }   # drafts=skip: a real draft keeps the tab
         fi
         break ;;
     esac
   done
+  # the identity once more, right before the exit: the session file must still name the recorded id
+  [ "$(session_of_pid "$T_PID" | cut -d"$US" -f1)" = "$T_SID" ] || { echo "kept:changed"; return 3; }
   submit /exit
   wait_pid_gone "$T_PID" "$T_MATCH" "$EXIT_WAIT" || { echo "kept:linger"; return 5; }
   exit_shell
@@ -265,7 +275,10 @@ freeze_tab_soft() { # freeze_tab_soft <entry json> <checkpoint path> <nonce>: in
     fi
     if [ "$st" = draft ] && [ "$fs" = idle ]; then
       b=$(box_text "$scr")
-      if [ "$b" != "$probed" ]; then probed=$b; ghost_probe "$b" && continue; fi
+      if [ "$b" != "$probed" ]; then
+        probed=$b
+        if ghost_probe "$b"; then submit "$(soft_prompt "$cp" "$nonce")"; sent=1; break; fi   # a suggestion or a hint: empty
+      fi
     fi
     if [ "$st" = idle ] && [ "$fs" = idle ]; then submit "$(soft_prompt "$cp" "$nonce")"; sent=1; break; fi
     be_sleep "$POLL"
@@ -415,6 +428,7 @@ EOF
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     tty=$(printf '%s' "$e" | jq -r .tty)
+    follow_moved "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
     park_own_issue "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
     record_adopted "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
     sid=$(printf '%s' "$e" | jq -r .session_id)

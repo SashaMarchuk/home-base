@@ -617,11 +617,45 @@ check "registry: the plan keeps a reused tab as kept:changed" grep -q " -> kept:
 check "registry: freezing only that tab -> exit 3" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ]
 check "registry: a new session in a reused tab is not closed under the old entry" nokeys "$otty"
 check "registry: the old resume line is in no issue" no_leak test/home "--resume $osid"
-reset "${FKEYS[@]}"
-o=$(ts open "$W1"); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
-sess_file work "$opid" "$S4" idle "$W1"
-check "registry: a session file naming another id than the registry -> kept:changed" grep -q " -> kept:changed$" <(ts freeze "$otty" --hard --dry-run)
-check "registry: and nothing is typed" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ] && nokeys "$otty"
+# 3b. the same process, tty and tab, a new session id in its session file (as after /clear): the entry follows it
+moved() { # a worker tab this home opened whose session file now names S4; sets osid otty opid
+  reset "${FKEYS[@]}"
+  o=$(ts open "$W1"); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2 }'); opid=${o##* }
+  sess_file work "$opid" "$S4" idle "$W1"; transcript work "$S4"
+}
+regf() { jq -r --arg t "$otty" "[.[] | select(.tty == \$t or .session_id == \"$S4\")] | last | $1" "$REG"; }
+moved
+out=$(sj "$otty")
+check "moved: survey takes the id from the session file" [ "$(printf '%s' "$out" | jq -r '.session_id + " " + .id_from')" = "$S4 file" ]
+check "moved: survey names the registry's id and keeps the registration" [ "$(printf '%s' "$out" | jq -r '"\(.moved_from) \(.registered) \(.registry_stale)"')" = "$osid true false" ]
+check "moved: the resume line is for the new id" [ "$(printf '%s' "$out" | jq -r .resume)" = "cd '$W1' && 'claude' -p 'work' --resume $S4" ]
+check "moved: survey alone does not write the registry" [ "$(regf .session_id)" = "$osid" ]
+check "moved: the plan is to close it" grep -q " -> hard close$" <(ts freeze "$otty" --hard --dry-run)
+check "moved: freeze --hard exits 0" [ "$(rc_of ts freeze "$otty" --hard)" = 0 ]
+check "moved: the tab is closed" [ "$(outcome "$otty")" = exited ]
+check "moved: /exit was typed" [ "$(sent "$otty" | head -1)" = /exit ]
+check "moved: the entry names the new id, keeps the first and is closed" [ "$(regf '"\(.session_id) \(.moved_from) \(.closed != null)"')" = "$S4 $osid true" ]
+check "moved: the entry's resume line is for the new id" [ "$(regf .resume)" = "cd '$W1' && 'claude' -p 'work' --resume $S4" ]
+check "moved: the freeze issue lists the new id" issue_text test/home | grep -qF -- "--resume $S4"
+check "moved: the cleared session's resume line is in no issue" no_leak test/home "--resume $osid"
+check "moved: thaw reopens the new id" [ "$(ts thaw latest | grep -c "^REOPENED $S4 ")" = 1 ]
+check "moved: with its resume line" launch_of "$S4" | grep -qF "&& 'claude' -p 'work' --resume $S4 "
+moved; mkdir "$HOME_ROOT/.local/registry.lock"
+ts freeze "$otty" --hard >/dev/null 2>&1
+rmdir "$HOME_ROOT/.local/registry.lock"
+check "moved: an entry that cannot be updated -> kept:no-record" [ "$(outcome "$otty")" = kept:no-record ]
+check "moved: and that tab gets no key" nokeys "$otty"
+moved
+cat > "$(tabdir "$otty")/on-screen" <<EOF
+#!/bin/bash
+n=\$(cat "$T/reads" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$T/reads"
+[ \$n -lt 2 ] && exit 0
+f="$TERM_FAKE_DIR/profiles/work/sessions/$opid.json"; jq '.sessionId = "$S3"' "\$f" > "\$f.x" && mv "\$f.x" "\$f"
+EOF
+rm -f "$T/reads"
+ts freeze "$otty" --hard >/dev/null 2>&1
+check "moved: the id changed again after the snapshot -> kept:changed" [ "$(outcome "$otty")" = kept:changed ]
+check "moved: and no /exit is typed" nokeys "$otty"
 
 # 4. thaw --issue never types the resume text of the issue
 fissue() { # fissue <n> <profile> <resume text>: a freeze issue whose data block holds that text
@@ -681,6 +715,29 @@ jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: n
   opened: "x", closed: "y", role: "worker", tab: null, match: $s}]' > "$REG"
 check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ] && [ ! -f "$TERM_FAKE_DIR/launches" ]
 
+# ---------------------------------------------------------------- faults of the first real-tab check
+# 1. a placeholder hint in an empty box is not a draft
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; printf 'Try "fix the tests"' > "$(tabdir ttyw1)/placeholder"
+check "placeholder: the state reads it as text" [ "$(ts state ttyw1)" = draft ]
+check "placeholder: freeze --hard closes the tab" [ "$(rc_of ts freeze ttyw1 --hard)" = 0 ]
+check "placeholder: freeze --hard closes the tab (second half)" [ "$(outcome ttyw1)" = exited ]
+check "placeholder: one probe, taken back, then /exit" [ "$(keys ttyw1 | tr '\n' ' ')" = "type:x key:bs type:/exit key:cr type:exit key:cr " ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; printf 'typed by the owner' > "$(tabdir ttyw1)/box"; printf 'a hint' > "$(tabdir ttyw1)/placeholder"
+ts freeze ttyw1 --hard >/dev/null 2>&1
+check "placeholder: a real draft is still kept" [ "$(outcome ttyw1)" = kept:draft ]
+check "placeholder: a real draft is still kept (second half)" alive 801
+check "placeholder: the draft is intact and no /exit was typed" [ "$(cat "$(tabdir ttyw1)/box")" = "typed by the owner" ]
+check "placeholder: the draft is intact and no /exit was typed (second half)" [ -z "$(sent ttyw1)" ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; printf 'a hint' > "$(tabdir ttyw1)/placeholder"; answers ttyw1
+ts freeze ttyw1 --soft >/dev/null 2>&1
+check "placeholder: freeze --soft types its prompt after one probe" [ "$(keys ttyw1 | sed -n '1,2p' | tr '\n' ' ')" = "type:x key:bs " ]
+check "placeholder: freeze --soft types its prompt after one probe (second half)" [ "$(sent ttyw1 | head -1 | cut -c1-7)" = "Freeze " ]
+check "placeholder: and closes the tab after its checkpoint" [ "$(outcome ttyw1)" = exited ]
+reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; printf 'typed by the owner' > "$(tabdir ttyw1)/box"
+ts freeze ttyw1 --soft >/dev/null 2>&1
+check "placeholder: freeze --soft never types its prompt over a real draft" [ -z "$(sent ttyw1)" ]
+check "placeholder: freeze --soft never types its prompt over a real draft (second half)" [ "$(outcome ttyw1)" = kept:soft-timeout ]
+
 # ---------------------------------------------------------------- open: the resume line names the real profile
 on_open() { # on_open <profile> [session id]: the new session writes its session file under that profile
   cat > "$TERM_FAKE_DIR/on-open" <<EOF
@@ -705,7 +762,8 @@ out=$(ts open "$W1"); OS=${out%% *}
 check "profile: no profile flag -> the line as before" [ "$(reg_resume)" = "cd '$W1' && claude --resume $OS" ]
 reset launch.profile_flag=-p
 out=$(ts open "$W1" 2>"$T/err"); OS=${out%% *}
-check "profile: no session file -> open still prints the session" [ ${#OS} = 36 ] && grep -q "no session file" "$T/err"
+check "profile: no session file -> open still prints the session" [ ${#OS} = 36 ]
+check "profile: no session file -> open still prints the session (second half)" grep -q "no session file" "$T/err"
 check "profile: no session file -> the line without a profile" [ "$(reg_resume)" = "cd '$W1' && claude --resume $OS" ]
 reset launch.profile_flag=-p; on_open work "$S4"
 out=$(ts open "$W1"); OS=${out%% *}
@@ -779,10 +837,12 @@ check "codex: park --adopt of a mapped tab" ts park ttyx1 --adopt --issue 31
 check "codex: the issue holds the codex resume line" \
   grep -qF "Parked by term.sh. Resume: cd '$W1' && codex resume $C1" "$GH_STUB_DIR/test__home/issues/31.json"
 check "codex: the session was ended with its exit command, then the shell" [ "$(sent ttyx1 | tr '\n' ' ')" = "/quit exit " ]
-check "codex: the process is gone and nothing was signalled" [ ! -d "$TERM_FAKE_DIR/proc/901" ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
+check "codex: the process is gone and nothing was signalled" [ ! -d "$TERM_FAKE_DIR/proc/901" ]
+check "codex: the process is gone and nothing was signalled (second half)" [ ! -f "$TERM_FAKE_DIR/kills" ]
 check "codex: the registry entry is a parked codex entry" [ "$(jq -r '.[0] | "\(.kind) \(.parked) \(.adopted) \(.session_id)"' "$REG")" = "codex true true $C1" ]
 out=$(ts resume "$C1" 2>"$T/err"); NT=$(printf '%s' "$out" | awk '{ print $2 }'); NP=$(printf '%s' "$out" | awk '{ print $3 }')
-check "codex: resume reopens it" [ -n "$NT" ] && [ "$(printf '%s' "$out" | awk '{ print $1 }')" = "$C1" ]
+check "codex: resume reopens it" [ -n "$NT" ]
+check "codex: resume reopens it (second half)" [ "$(printf '%s' "$out" | awk '{ print $1 }')" = "$C1" ]
 check "codex: resume starts codex resume <id> with one message" \
   [ "$(tail -1 "$TERM_FAKE_DIR/launches")" = "cd '$W1' && codex resume $C1 'You were resumed. Continue where you stopped.'" ]
 check "codex: the reopened tab has no id until its record is written" unmapped "$NT"
@@ -792,7 +852,8 @@ issue_final() { # issue_final <n> <run id>: the issue ends with a final home-log
       closed_at: null, author: "owner", comments: [{id: 1, body: $body}]}' > "$GH_STUB_DIR/test__home/issues/$1.json"
 }
 issue_final 31 "$C1"
-check "codex: close before the record matches -> exit 3, nothing typed" [ "$(rc_of ts close "$NT")" = 3 ] && [ -z "$(keys "$NT")" ]
+check "codex: close before the record matches -> exit 3, nothing typed" [ "$(rc_of ts close "$NT")" = 3 ]
+check "codex: close before the record matches -> exit 3, nothing typed (second half)" [ -z "$(keys "$NT")" ]
 codex_rec "$NT" "$C1" "$NP" "$W1"
 check "codex: with its record the reopened tab is mapped again" [ "$(sj "$NT" | jq -r '.session_id + " " + (.registered | tostring)')" = "$C1 true" ]
 check "codex: close of the finished, mapped tab" ts close "$NT"
@@ -800,25 +861,32 @@ check "codex: close typed the exit command" [ "$(sent "$NT" | head -1)" = /quit 
 creset; hand_tab ttyx1 901 "/opt/bin/codex" "$W1" w1 codex; claim 31 "$C1"
 check "codex: park of a tab without a thread id -> exit 3" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
 check "codex: close of a tab without a thread id -> exit 3" [ "$(rc_of ts close ttyx1 --adopt)" = 3 ]
-check "codex: nothing typed and nothing recorded for it" [ -z "$(keys ttyx1)" ] && [ ! -f "$REG" ]
+check "codex: nothing typed and nothing recorded for it" [ -z "$(keys ttyx1)" ]
+check "codex: nothing typed and nothing recorded for it (second half)" [ ! -f "$REG" ]
 creset; codex_tab ttyx1 901; claim 31 "$C1"; printf 'half a thought' > "$(tabdir ttyx1)/box"
 check "codex: park refuses an unsent draft" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
-check "codex: the draft is kept and the session runs" [ "$(cat "$(tabdir ttyx1)/box")" = "half a thought" ] && alive 901
+check "codex: the draft is kept and the session runs" [ "$(cat "$(tabdir ttyx1)/box")" = "half a thought" ]
+check "codex: the draft is kept and the session runs (second half)" alive 901
 creset; codex_tab ttyx1 901; claim 31 "$C1"; : > "$(tabdir ttyx1)/busy"
-check "codex: park refuses a running turn, no key" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+check "codex: park refuses a running turn, no key" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: park refuses a running turn, no key (second half)" [ -z "$(keys ttyx1)" ]
 creset; codex_tab ttyx1 901; claim 31 "$C1"
 printf 'Allow this?\n  1. Yes\n  2. No\nEnter to select · Esc to cancel\n' > "$(tabdir ttyx1)/dialog"
-check "codex: park refuses a dialog and presses no Esc" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+check "codex: park refuses a dialog and presses no Esc" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: park refuses a dialog and presses no Esc (second half)" [ -z "$(keys ttyx1)" ]
 creset; codex_tab ttyx1 901; claim 31 "$C1"; printf 'shell' > "$(tabdir ttyx1)/mode"
-check "codex: no input box found -> park refused, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+check "codex: no input box found -> park refused, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: no input box found -> park refused, nothing typed (second half)" [ -z "$(keys ttyx1)" ]
 creset term.codex_exit=/exit; codex_tab ttyx1 901; claim 31 "$C1"; printf '/exit' > "$(tabdir ttyx1)/exit-word"
 check "codex: term.codex_exit names the exit command" ts park ttyx1 --adopt --issue 31
 creset "term.codex_exit=rm -rf x"; codex_tab ttyx1 901; claim 31 "$C1"
-check "codex: an exit command of another shape -> exit 3, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+check "codex: an exit command of another shape -> exit 3, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: an exit command of another shape -> exit 3, nothing typed (second half)" [ -z "$(keys ttyx1)" ]
 creset; codex_tab ttyx1 901; claim 31 "$C1"
 ts park ttyx1 --adopt --issue 31 >/dev/null 2>&1; out=$(ts resume "$C1" 2>/dev/null); NT=$(printf '%s' "$out" | awk '{ print $2 }'); NP=$(printf '%s' "$out" | awk '{ print $3 }')
 codex_rec "$NT" "$C1" "$NP" "$W1"; threads "$C1|900|0|cli|$W1" "$C2|2000|0|cli|$W1"
-check "codex: after a new thread in the tab, park -> exit 3, nothing typed" [ "$(rc_of ts park "$NT")" = 3 ] && [ -z "$(keys "$NT")" ]
+check "codex: after a new thread in the tab, park -> exit 3, nothing typed" [ "$(rc_of ts park "$NT")" = 3 ]
+check "codex: after a new thread in the tab, park -> exit 3, nothing typed (second half)" [ -z "$(keys "$NT")" ]
 
 # the real reader of Codex's thread list (read only; skipped without sqlite3)
 if command -v sqlite3 >/dev/null 2>&1; then

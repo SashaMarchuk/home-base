@@ -406,7 +406,7 @@ freetext_row() { # freetext_row <screen> -> number of the dialog row that takes 
 # ------------------------------------------------------------------ resolving a target (rule 1)
 
 T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""; T_KIND=claude
+T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""; T_KIND=claude; T_MOVED=""
 
 load_entry() { # load_entry <json object>
   T_SID=$(printf '%s' "$1" | jq -r '.session_id // ""')
@@ -418,13 +418,14 @@ load_entry() { # load_entry <json object>
   T_CLOSED=$(printf '%s' "$1" | jq -r '.closed // ""')
   T_ADOPTED=$(printf '%s' "$1" | jq -r 'if .adopted == true then 1 else 0 end')
   T_KIND=$(printf '%s' "$1" | jq -r '.kind // "claude"')
+  T_MOVED=$(printf '%s' "$1" | jq -r '.moved_from // ""')
   T_REG=1
 }
 
 resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed registry entry
   local target=$1 mode=${2:-open} entry n live
   T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-  T_ADOPTED=0; T_KIND=claude
+  T_ADOPTED=0; T_KIND=claude; T_MOVED=""
   case "$target" in
     /dev/tty*|tty*)
       T_TTY=${target#/dev/}
@@ -530,6 +531,30 @@ bind_issue() { # bind_issue <issue>: record the issue on an adopted entry once i
   [ "$T_ADOPTED" = 1 ] && [ -n "$1" ] && [ -z "$T_ISSUE" ] || return 0
   reg_set "$T_SID" '{issue: ($n | tonumber)}' --arg n "$1" || note "registry not updated with issue #$1"
   T_ISSUE=$1
+}
+
+run_id() { printf '%s\n' "${T_MOVED:-$T_SID}"; }   # the id of the session's run on its issue: the id it started with
+
+follow_session() { # follow_session <tty> <old id> <new id> <resume line>: the open entry of that tab takes the new id; rc 1 = not written
+  reg_update --arg t "$1" --arg o "$2" --arg n "$3" --arg r "$4" '
+    if any(.[]; .tty == $t and .closed == null and .session_id == $o)
+    then map(if .tty == $t and .closed == null and .session_id == $o
+             then . + {session_id: $n, resume: $r, moved_from: (.moved_from // $o)} else . end)
+    else error("no open entry") end'
+}
+
+follow_live() { # after resolve: the recorded process still runs here and its session file names another id (as after /clear)
+  local sf s_sid cwd line
+  [ "$T_REG" = 1 ] && [ "$T_ALIVE" = 1 ] && [ "$T_KIND" = claude ] && [ "$ADOPT_NEW" = 0 ] || return 0
+  sf=$(session_of_pid "$T_PID") || return 0
+  s_sid=$(printf '%s' "$sf" | cut -d"$US" -f1)
+  is_uuid "$s_sid" && [ "$s_sid" != "$T_SID" ] || return 0
+  cwd=$(be_pid_cwd "$T_PID"); [ -n "$cwd" ] || cwd=$(printf '%s' "$sf" | cut -d"$US" -f3)
+  line=$(resume_line "$cwd" "$(be_pid_cmd "$T_PID" | head -1)" "$(printf '%s' "$sf" | cut -d"$US" -f5)" "$s_sid" \
+    "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .role // "worker"')") ||
+    die 3 "the session on $T_TTY moved to a new id and no resume line can be built for it; nothing is typed"
+  follow_session "$T_TTY" "$T_SID" "$s_sid" "$line" || die 3 "the registry could not be updated for the new session id on $T_TTY; nothing is typed"
+  T_MOVED=$(run_id); T_SID=$s_sid
 }
 
 run_has_comment() { # run_has_comment <repo> <n> <run id>: 0 when the run has a home-log comment on the issue; 2 when unreadable
@@ -996,7 +1021,7 @@ has_resume() { # the session can be reopened: a resume line was built at adopt, 
 
 exit_word() { # the line that ends the session: /exit for Claude Code, term.codex_exit for Codex, exit for a plain command
   if [ "$T_KIND" = codex ]; then codex_exit_word
-  elif [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ]; then echo /exit; else echo exit; fi
+  elif [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ] || [ -n "$T_MOVED" ]; then echo /exit; else echo exit; fi
 }
 
 codex_exit_word() {
@@ -1082,16 +1107,17 @@ cmd_park() {
   [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] || die 3 "park works only on tabs this home opened (the owner's own tab needs --adopt)"
   has_resume || die 3 "park needs a session whose id is known (launched with one, or named in its session file)"
   [ "$T_ALIVE" = 1 ] || die 4 "session $T_SID is not running"
+  follow_live
   issue=$(pick_issue "$issue") || exit $?
   [ -n "$issue" ] || die 2 "park needs the issue number"
   codex_same_thread
   word=$(exit_word) || exit $?
   if [ "$adopt" = 1 ]; then
-    run_has_comment "$HOME_REPO" "$issue" "$T_SID"
+    run_has_comment "$HOME_REPO" "$issue" "$(run_id)"
     case $? in
       0) ;;
       2) die 3 "cannot read the comments of issue #$issue; nothing was recorded" ;;
-      *) die 3 "run 'scripts/home-log start $issue --run-id $T_SID' first; nothing was recorded" ;;
+      *) die 3 "run 'scripts/home-log start $issue --run-id $(run_id)' first; nothing was recorded" ;;
     esac
   fi
   scr=$(screen_now)
@@ -1112,7 +1138,7 @@ cmd_park() {
   adopt_record
   text="Parked by term.sh. Resume: $(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume')"
   qa=(); [ -n "$q" ] && qa=(--question "$q")
-  "$HOME_LOG" checkpoint "$issue" --run-id "$T_SID" --park ${qa[@]+"${qa[@]}"} --text "$text" >/dev/null ||
+  "$HOME_LOG" checkpoint "$issue" --run-id "$(run_id)" --park ${qa[@]+"${qa[@]}"} --text "$text" >/dev/null ||
     die 3 "home-log failed; the session is left running"
   bind_issue "$issue"
   if [ "$dialog" = 1 ]; then
@@ -1152,14 +1178,14 @@ cmd_resume() {
   [ -n "$T_CLOSED" ] || die 3 "session $T_SID is still open on $T_TTY"
   sid=$T_SID
   role=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .role // "worker"')
-  [ "$T_MATCH" = "$T_SID" ] || [ "$T_KIND" = codex ] || die 3 "session $T_SID was not a resumable session"
+  [ "$T_MATCH" = "$T_SID" ] || [ "$T_KIND" = codex ] || [ -n "$T_MOVED" ] || die 3 "session $T_SID was not a resumable session"
   line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume // empty')
   [ -n "$line" ] || die 3 "no resume command recorded for $sid"
   check_memory
   if [ "$silent" = 0 ] && [ -z "$msg" ]; then
     issue=$T_ISSUE; msg="You were resumed. Continue where you stopped."
     if [ -n "$issue" ] && [ -n "$HOME_REPO" ]; then
-      run_has_question "$HOME_REPO" "$issue" "$sid"
+      run_has_question "$HOME_REPO" "$issue" "$(run_id)"
       case $? in
         0) msg="You were parked and are resumed now. Re-ask your open question with the ask tool, then continue." ;;
         2) note "cannot read issue #$issue; sending the continue message" ;;

@@ -92,7 +92,8 @@ check "r0 open types nothing into the new tab" [ -z "$(keys)" ]
 check "r0 the tab's command is the login-shell wrapper" grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval .*; exec /[A-Za-z0-9_./-]+ -l'$" "$TERM_FAKE_DIR/commands"
 check "r0 the command holds no character of the launch line" not grep -q -e "$SID" -e session-id -e "work dir" "$TERM_FAKE_DIR/commands"
 check "r0 the shell decodes the launch line" [ "$(cat "$TERM_FAKE_DIR/launches")" = "cd '$WORK' && claude --session-id $SID" ]
-check "r0 the focus is given back to the tab that had it" [ "$(cat "$TERM_FAKE_DIR/focus")" = "ttyowner -> $TTY -> ttyowner" ] && [ "$(cat "$TERM_FAKE_DIR/front-tab")" = ttyowner ]
+check "r0 the focus is given back to the tab that had it" [ "$(cat "$TERM_FAKE_DIR/focus")" = "ttyowner -> $TTY -> ttyowner" ]
+check "r0 the focus is given back to the tab that had it (second half)" [ "$(cat "$TERM_FAKE_DIR/front-tab")" = ttyowner ]
 check "r0 the recorded process is the session, not the shell around it" [ "$(cat "$TERM_FAKE_DIR/proc/$PID/cmd")" = "claude --session-id $SID" ]
 QDIR="$T/it's a \"dir\""; mkdir -p "$QDIR"
 BRIEF="say 'hi' to \"them\" for \$5 \\ back\`tick"
@@ -110,18 +111,22 @@ check "r0 a bare launch line opens nothing" not raw_open "cd '$WORK' && claude"
 check "r0 no tab for either" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
 reset; : > "$TERM_FAKE_DIR/open-fail"
 check "r0 the tab cannot be created -> exit 4" [ "$(rc_of ts open "$WORK")" = 4 ]
-check "r0 failed create: the entry is closed and nothing was typed" [ "$(jq -r '.[0].closed != null' "$REG")" = true ] && [ -z "$(ls "$TERM_FAKE_DIR/tabs" 2>/dev/null)" ]
+check "r0 failed create: the entry is closed and nothing was typed" [ "$(jq -r '.[0].closed != null' "$REG")" = true ]
+check "r0 failed create: the entry is closed and nothing was typed (second half)" [ -z "$(ls "$TERM_FAKE_DIR/tabs" 2>/dev/null)" ]
 reset; : > "$TERM_FAKE_DIR/wrapper-holds-line"; new_tab
-check "r0 a shell with a higher pid that holds the session id is not recorded" [ "$PID" = 60001 ] && [ "$(jq -r '.[0].pid' "$REG")" = 60001 ]
+check "r0 a shell with a higher pid that holds the session id is not recorded" [ "$PID" = 60001 ]
+check "r0 a shell with a higher pid that holds the session id is not recorded (second half)" [ "$(jq -r '.[0].pid' "$REG")" = 60001 ]
 reset; : > "$TERM_FAKE_DIR/wrapper-holds-line"; : > "$TERM_FAKE_DIR/no-agent"
 check "r0 only the shell started -> exit 5, never recorded as the session" [ "$(rc_of ts open "$WORK")" = 5 ]
 check "r0 that entry is closed with no pid" [ "$(jq -r '.[0] | (.closed != null and .pid == null)' "$REG")" = true ]
 mkdir -p "$T/noxxd"; printf '#!/bin/bash\nexit 1\n' > "$T/noxxd/xxd"; chmod +x "$T/noxxd/xxd"
 reset
 check "r0 the launch line cannot be encoded -> exit 3" [ "$(rc_of env PATH="$T/noxxd:$PATH" /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
-check "r0 nothing opened without the encoding" [ ! -f "$TERM_FAKE_DIR/commands" ] && [ "$(jq -r '.[0].closed != null' "$REG")" = true ]
+check "r0 nothing opened without the encoding" [ ! -f "$TERM_FAKE_DIR/commands" ]
+check "r0 nothing opened without the encoding (second half)" [ "$(jq -r '.[0].closed != null' "$REG")" = true ]
 reset; new_tab --issue 21; ts park "$TTY" >/dev/null 2>&1; out=$(ts resume "$SID" 2>/dev/null); TTY=$(echo "$out" | awk '{ print $2 }')
-check "r0 resume starts its tab with a command too" [ "$(grep -c -- "-lic 'eval " "$TERM_FAKE_DIR/commands")" = 2 ] && [ -z "$(keys)" ]
+check "r0 resume starts its tab with a command too" [ "$(grep -c -- "-lic 'eval " "$TERM_FAKE_DIR/commands")" = 2 ]
+check "r0 resume starts its tab with a command too (second half)" [ -z "$(keys)" ]
 check "r0 SHELL of another kind falls back to /bin/zsh" [ "$(SHELL=/usr/local/bin/fish /bin/bash -c 'TERM_SH_LIB=1; . "$0"; login_shell' "$TERM_SH")" = /bin/zsh ]
 check "r0 a bash login shell is used as it is" [ "$(SHELL=/bin/bash /bin/bash -c 'TERM_SH_LIB=1; . "$0"; login_shell' "$TERM_SH")" = /bin/bash ]
 
@@ -357,6 +362,29 @@ reset; new_tab --issue 22
 check "r9 idle session parked without a question" ts park "$TTY"
 check "r9 park without a question" grep -q "^checkpoint 22 --run-id $SID --park --text Parked by term.sh" "$T/home-log.calls"
 check "r9 idle session exited" not alive "$PID"
+
+# park follows a session that moved to a new id in its own process (as after /clear)
+NSID="0a1b2c3d-9999-4222-8333-444455556666"
+sfile() { # sfile <pid> <session id>: the session file of that process, under the profile folder "work"
+  mkdir -p "$TERM_FAKE_DIR/profiles/work/sessions"
+  jq -n --argjson pid "$1" --arg sid "$2" '{pid: $pid, sessionId: $sid, status: "idle"}' > "$TERM_FAKE_DIR/profiles/work/sessions/$1.json"
+}
+reset launch.profile_flag=-p launch.profile.worker=work; new_tab --issue 21; sfile "$PID" "$NSID"
+check "r9 park of a session that moved to a new id" ts park "$TTY"
+check "r9 the run on the issue keeps its first id, the resume line names the new one" \
+  grep -q "^checkpoint 21 --run-id $SID --park --text Parked by term.sh. Resume: cd .* -p 'work' --resume $NSID$" "$T/home-log.calls"
+check "r9 the entry follows the session" [ "$(jq -r '.[0] | "\(.session_id) \(.moved_from) \(.parked)"' "$REG")" = "$NSID $SID true" ]
+check "r9 it was ended with /exit" [ "$(sent | head -1)" = /exit ]
+out=$(ts resume "$NSID" 2>"$T/err")
+check "r9 resume by the new id reopens it" [ "$(echo "$out" | awk '{ print $1 }')" = "$NSID" ]
+check "r9 the old id is no longer a target" [ "$(rc_of ts resume "$SID")" = 4 ]
+reset; new_tab --issue 21; sfile "$PID" "$NSID"
+check "r9 moved, but its profile cannot be passed -> refused" [ "$(rc_of ts park "$TTY")" = 3 ]
+check "r9 nothing typed and nothing recorded on that refusal" [ -z "$(keys)" ]
+check "r9 the entry keeps its id on that refusal" [ "$(jq -r '.[0].session_id' "$REG")" = "$SID" ]
+reset launch.profile_flag=-p launch.profile.worker=work; new_tab --issue 21; sfile "$PID" "$SID"
+ts park "$TTY" >/dev/null 2>&1
+check "r9 a session file naming the same id changes nothing" [ "$(jq -r '.[0] | "\(.session_id) \(.moved_from)"' "$REG")" = "$SID null" ]
 
 # ---------------------------------------------------------------- rule 10: resume
 reset; new_tab --issue 21; dialog 1
