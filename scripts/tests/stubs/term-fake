@@ -128,8 +128,19 @@ fake_key() { # the effect of one key on the tab
   esac
 }
 
-be_open() { # mirrors the real launch: "cd '<dir>' && <command>" [<window id>|new|current]
-  local n=1 tty pid cmd cwd d w=${2:-current} m=1
+be_open() { # mirrors the real launch: the tab starts with "<shell> -lic '<wrapper>'" [<window id>|new|current]; no key is typed
+  # A command of another shape opens nothing. The wrapper's own decode pipeline is run to get the launch line
+  # "cd '<dir>' && <command>". The focus: the new tab is in front for a moment, then the old front tab is again
+  # (logged to $TERM_FAKE_DIR/focus; $TERM_FAKE_DIR/front-tab holds the front tab).
+  # Fixtures: open-fail (the create fails), wrapper-holds-line (the shell's command line holds the launch line
+  # and gets a higher pid), no-agent (only the shell starts), on-open (a script run with the tty, the pid and
+  # the launch line once the session's process exists: stands in for the session writing its session file).
+  local n=1 tty pid cmd cwd d w=${2:-current} m=1 hex xxd line front
+  [ -f "$TERM_FAKE_DIR/open-fail" ] && return 1
+  printf '%s\n' "$1" | grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval \"\\\$\(printf %s ([0-9a-f][0-9a-f])+ \| /[A-Za-z0-9_./-]+ -r -p\)\"; exec /[A-Za-z0-9_./-]+ -l'\$" || return 1
+  hex=$(printf '%s\n' "$1" | sed -n 's/.*printf %s \([0-9a-f]*\) | .*/\1/p')
+  xxd=$(printf '%s\n' "$1" | sed -n 's/.* | \([^ ]*\) -r -p).*/\1/p')
+  line=$(printf %s "$hex" | "$xxd" -r -p) || return 1
   while ! mkdir "$TERM_FAKE_DIR/tabs/ttyf$n" 2>/dev/null; do n=$((n + 1)); done
   tty=ttyf$n; d=$(fake_tab "$tty"); pid=$((60000 + n))
   case "$w" in
@@ -139,17 +150,29 @@ be_open() { # mirrors the real launch: "cd '<dir>' && <command>" [<window id>|ne
     *) fake_window_live "$w" || { rmdir "$d"; return 1; } ;;
   esac
   printf 'fake-%s' "$n" > "$d/tab"; printf 'claude' > "$d/mode"; : > "$d/box"; printf '%s' "$w" > "$d/window"
-  printf '%s\n' "$1" >> "$TERM_FAKE_DIR/launches"
+  front=$(cat "$TERM_FAKE_DIR/front-tab" 2>/dev/null)
+  printf '%s' "$tty" > "$TERM_FAKE_DIR/front-tab"; printf '%s -> %s' "${front:-none}" "$tty" >> "$TERM_FAKE_DIR/focus"   # the new tab takes the focus
+  printf '%s' "$front" > "$TERM_FAKE_DIR/front-tab"; printf ' -> %s\n' "${front:-none}" >> "$TERM_FAKE_DIR/focus"       # and it is given back
+  printf '%s\n' "$1" >> "$TERM_FAKE_DIR/commands"
+  printf '%s\n' "$line" >> "$TERM_FAKE_DIR/launches"
   printf '%s %s\n' "$tty" "$w" >> "$TERM_FAKE_DIR/placed"
-  printf '%s' "$1" > "$d/launch"
-  cmd=$(printf '%s' "${1#* && }" | tr -d "'")   # the shell removes the quotes before the process starts
-  cwd=$(printf '%s' "$1" | sed -n "s/^cd '\\([^']*\\)' && .*/\\1/p")
+  printf '%s' "$line" > "$d/launch"
+  cmd=$(printf '%s' "${line#* && }" | tr -d "'")   # the shell removes the quotes before the process starts
+  cwd=$(printf '%s' "$line" | sed -n "s/^cd '\\([^']*\\)' && .*/\\1/p")
   case "$cmd" in codex|codex\ *) printf 'codex' > "$d/mode" ;; esac
   printf '%s' "$pid" > "$d/pid"
-  mkdir -p "$TERM_FAKE_DIR/proc/$pid"
-  printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
-  printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$pid/tty"
-  printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$pid/cwd"
+  mkdir -p "$TERM_FAKE_DIR/proc/$((pid + 5000))"   # the shell around the session
+  if [ -f "$TERM_FAKE_DIR/wrapper-holds-line" ]; then printf '/bin/zsh -lic %s' "$cmd" > "$TERM_FAKE_DIR/proc/$((pid + 5000))/cmd"
+  else printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$((pid + 5000))/cmd"; fi
+  printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$((pid + 5000))/tty"
+  printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$((pid + 5000))/cwd"
+  if [ ! -f "$TERM_FAKE_DIR/no-agent" ]; then
+    mkdir -p "$TERM_FAKE_DIR/proc/$pid"
+    printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
+    printf '%s' "$tty" > "$TERM_FAKE_DIR/proc/$pid/tty"
+    printf '%s' "$cwd" > "$TERM_FAKE_DIR/proc/$pid/cwd"
+  fi
+  [ -f "$TERM_FAKE_DIR/on-open" ] && /bin/bash "$TERM_FAKE_DIR/on-open" "$tty" "$pid" "$line" >/dev/null 2>&1
   echo "fake-$n $tty $w"
 }
 

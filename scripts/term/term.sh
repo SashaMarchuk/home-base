@@ -41,6 +41,8 @@
 # finished-issue check succeeded, so a failed call leaves the tab bound to no issue.
 #
 # Rules this file enforces (see openspec/specs/terminal-helpers in the base):
+#  0 a new tab is created with its launch line as the tab's command (the login shell runs it and stays
+#    as a shell afterwards); nothing is typed into a new tab, and the focus is given back at once
 #  1 tabs are addressed by tty and verified against the recorded tab id and pid
 #  2 every file it writes is under <home>/.local/
 #  3 send waits for no dialog, no running turn and an empty input box
@@ -91,7 +93,7 @@
 #   TERM_SH_SETTLE, TERM_SH_OPEN_WAIT, TERM_SH_EXIT_WAIT, TERM_SH_LOCK_TIMEOUT, TERM_SH_HOME_LOG.
 # Exit: 0 ok, 2 usage, 3 refused by a rule, 4 tab or session not found, 5 timed out.
 #
-# bash 3.2 compatible. Needs jq and gh; the real backend needs osascript, ps, lsof, memory_pressure.
+# bash 3.2 compatible. Needs jq, gh and xxd; the real backend needs osascript, ps, lsof, memory_pressure.
 
 set -u
 TERM_SH_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -158,14 +160,28 @@ be_screen() { # be_screen <tty> <tab> -> screen text; rc 4 when the tab is gone
 be_type() { [ "$(osa_session type "$1" "$2" "$3")" = "TERM-SH-OK" ] || return 4; }
 be_key() { [ "$(osa_session "$3" "$1" "$2")" = "TERM-SH-OK" ] || return 4; }   # be_key <tty> <tab> cr|esc|bs
 
-be_open() { # be_open <command line> [<window id>|new|current] -> "<tab id> <tty> <window id>"; types the command into the new tab only
+be_open() { # be_open <tab command> [<window id>|new|current] -> "<tab id> <tty> <window id>"
+  # The tab is created with its command (see launch_command): nothing is typed into it. In the same script
+  # the tab that was shown in that window and the tab, session and window that were in front are selected
+  # again; the app is never activated.
   local out
   out=$(osascript - "$1" "${2:-current}" <<'OSA'
 on run argv
+  set launchCmd to item 1 of argv
   set placeAt to item 2 of argv
   tell application "iTerm2"
+    -- what is in front now, to give the focus back after the new tab exists
+    set hadFront to false
+    if (count of windows) > 0 then
+      try
+        set frontW to current window
+        set frontT to current tab of frontW
+        set frontS to current session of frontT
+        set hadFront to true
+      end try
+    end if
     if (count of windows) = 0 or placeAt is "new" then
-      set w to (create window with default profile)
+      set w to (create window with default profile command launchCmd)
       set s to current session of current tab of w
     else
       if placeAt is "current" then
@@ -173,12 +189,23 @@ on run argv
       else
         set w to window id (placeAt as integer)
       end if
+      set shownT to current tab of w
       tell w
-        set t to (create tab with default profile)
+        set t to (create tab with default profile command launchCmd)
       end tell
       set s to current session of t
+      try
+        tell shownT to select
+      end try
     end if
-    -- the session of a new window can be unready for a moment: wait until it answers, then type
+    if hadFront then
+      try
+        tell frontT to select
+        tell frontS to select
+        if (id of current window) is not (id of frontW) then tell frontW to select
+      end try
+    end if
+    -- the session of a new window can be unready for a moment: wait until it answers
     set ready to false
     repeat 50 times
       try
@@ -190,7 +217,6 @@ on run argv
       end try
     end repeat
     if not ready then error "the new session did not become ready"
-    tell s to write text (item 1 of argv)
     return (id of s) & " " & (tty of s) & " " & (id of w)
   end tell
 end run
@@ -722,10 +748,29 @@ find_pid() { # find_pid <tty> <match> <name> -> newest PID on that tty that runs
   done
 }
 
+login_shell() { # the shell a new tab runs its launch line in: $SHELL when it is zsh, bash, ksh or sh by an absolute path, else /bin/zsh
+  local sh=${SHELL:-}
+  printf '%s' "$sh" | grep -Eq '^/[A-Za-z0-9_./-]*/(zsh|bash|ksh|sh)$' || sh=/bin/zsh
+  printf '%s\n' "$sh"
+}
+
+launch_command() { # launch_command <launch line> -> the command a new tab starts with
+  # The login shell loads the user's environment (-l -i), runs the line and then becomes a plain login shell, so
+  # the tab keeps a shell when the session ends. The line travels as hex: the terminal splits a tab's command
+  # into words by its own quote and backslash rules, and no character of the line meets them.
+  local sh hex xxd
+  sh=$(login_shell)
+  xxd=$(command -v xxd) && printf '%s' "$xxd" | grep -Eq '^/[A-Za-z0-9_./-]+$' || { note "xxd is required to open a tab"; return 1; }
+  hex=$(printf '%s' "$1" | "$xxd" -p | tr -d '\n')
+  printf '%s' "$hex" | grep -Eq '^([0-9a-f][0-9a-f])+$' || { note "the launch line could not be encoded"; return 1; }
+  printf "%s -lic 'eval \"\$(printf %%s %s | %s -r -p)\"; exec %s -l'\n" "$sh" "$hex" "$xxd" "$sh"
+}
+
 launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current] [process name]: open, record tty/tab/window/pid, print the triple
-  local sid=$1 out tab tty pid win name=${5:-}
+  local sid=$1 out tab tty pid win name=${5:-} tabcmd
   [ -n "$name" ] || name=$(launch_name)
-  out=$(be_open "$2" "${4:-current}") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
+  tabcmd=$(launch_command "$2") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 3 "no tab was opened"; }
+  out=$(be_open "$tabcmd" "${4:-current}") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
   read -r tab tty win <<EOF
 $out
 EOF
@@ -738,6 +783,23 @@ EOF
   reg_set "$sid" '{pid: ($p | tonumber)}' --arg p "$pid" ||
     die 3 "tab $tty (PID $pid) opened but the registry could not be updated"
   echo "$sid $tty $pid"
+}
+
+record_profile() { # record_profile <sid> <pid> <role> <dir>: the resume line names the profile the session really runs under
+  # Only with a profile flag and no launch.profile.<role>: the machine picked the profile itself, and the session
+  # file of the new process says which (as for an adopted tab). No file in time, another id or no profile: the
+  # line stays as recorded, without a profile.
+  local sf="" end line s_sid prof
+  [ -n "$(local_cfg launch.profile_flag)" ] && [ -z "$(local_cfg "launch.profile.$3")" ] || return 0
+  end=$((SECONDS + OPEN_WAIT))
+  until sf=$(session_of_pid "$2"); do
+    [ $SECONDS -ge $end ] && { note "no session file for PID $2 yet; the resume line is recorded without a profile"; return 0; }
+    be_sleep "$POLL"
+  done
+  s_sid=$(printf '%s' "$sf" | cut -d"$US" -f1); prof=$(printf '%s' "$sf" | cut -d"$US" -f5)
+  [ "$s_sid" = "$1" ] && [ -n "$prof" ] || return 0
+  line=$(resume_line "$4" "" "$prof" "$1") || return 0
+  reg_set "$1" '{resume: $r}' --arg r "$line" || note "registry not updated with the profile of $1"
 }
 
 # ------------------------------------------------------------------ verbs
@@ -789,6 +851,7 @@ EOF
       group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}')
   reserve "$entry" "$role"
   out=$(launch_tab "$sid" "$line" "$match" "$win") || exit $?
+  record_profile "$sid" "${out##* }" "$role" "$dir"
   [ -n "$group" ] && [ "$win" = new ] && { cache_window "$group" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"; }
   echo "$out"
 }

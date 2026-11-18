@@ -86,6 +86,45 @@ TMPWORD="tm""p"; USERS="Use""rs"; SCRATCH="scratch""pad"
 lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|$SCRATCH|/private/" "$1" >/dev/null; }
 lint_underscore() { ! grep -nE '^[[:space:]]*(function[[:space:]]+)?_[A-Za-z0-9_]*[[:space:]]*\(\)' "$1" >/dev/null; }
 
+# ---------------------------------------------------------------- rule 0: a new tab starts with its command
+reset; printf 'ttyowner' > "$TERM_FAKE_DIR/front-tab"; new_tab
+check "r0 open types nothing into the new tab" [ -z "$(keys)" ]
+check "r0 the tab's command is the login-shell wrapper" grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval .*; exec /[A-Za-z0-9_./-]+ -l'$" "$TERM_FAKE_DIR/commands"
+check "r0 the command holds no character of the launch line" not grep -q -e "$SID" -e session-id -e "work dir" "$TERM_FAKE_DIR/commands"
+check "r0 the shell decodes the launch line" [ "$(cat "$TERM_FAKE_DIR/launches")" = "cd '$WORK' && claude --session-id $SID" ]
+check "r0 the focus is given back to the tab that had it" [ "$(cat "$TERM_FAKE_DIR/focus")" = "ttyowner -> $TTY -> ttyowner" ] && [ "$(cat "$TERM_FAKE_DIR/front-tab")" = ttyowner ]
+check "r0 the recorded process is the session, not the shell around it" [ "$(cat "$TERM_FAKE_DIR/proc/$PID/cmd")" = "claude --session-id $SID" ]
+QDIR="$T/it's a \"dir\""; mkdir -p "$QDIR"
+BRIEF="say 'hi' to \"them\" for \$5 \\ back\`tick"
+reset; out=$(ts open "$QDIR" --brief "$BRIEF"); SID=${out%% *}
+got=$(claude() { pwd -P; printf '%s\n' "$@"; }; eval "$(cat "$TERM_FAKE_DIR/launches")")   # run the line as the tab's shell would
+check "r0 quotes: the session starts in that folder with the brief as one argument" [ "$got" = "$(cd "$QDIR" && pwd -P)
+--session-id
+$SID
+$BRIEF" ]
+check "r0 quotes: none of them is in the tab's command" not grep -q -e '"them"' -e "hi" -e 'tick' "$TERM_FAKE_DIR/commands"
+raw_open() { /bin/bash -c 'TERM_SH_LIB=1; . "$0"; be_open "$1" current' "$TERM_SH" "$1"; }
+reset
+check "r0 a command of another shape (the line in quotes) opens nothing" not raw_open "/bin/zsh -lic 'cd '\\''$QDIR'\\'' && claude'"
+check "r0 a bare launch line opens nothing" not raw_open "cd '$WORK' && claude"
+check "r0 no tab for either" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
+reset; : > "$TERM_FAKE_DIR/open-fail"
+check "r0 the tab cannot be created -> exit 4" [ "$(rc_of ts open "$WORK")" = 4 ]
+check "r0 failed create: the entry is closed and nothing was typed" [ "$(jq -r '.[0].closed != null' "$REG")" = true ] && [ -z "$(ls "$TERM_FAKE_DIR/tabs" 2>/dev/null)" ]
+reset; : > "$TERM_FAKE_DIR/wrapper-holds-line"; new_tab
+check "r0 a shell with a higher pid that holds the session id is not recorded" [ "$PID" = 60001 ] && [ "$(jq -r '.[0].pid' "$REG")" = 60001 ]
+reset; : > "$TERM_FAKE_DIR/wrapper-holds-line"; : > "$TERM_FAKE_DIR/no-agent"
+check "r0 only the shell started -> exit 5, never recorded as the session" [ "$(rc_of ts open "$WORK")" = 5 ]
+check "r0 that entry is closed with no pid" [ "$(jq -r '.[0] | (.closed != null and .pid == null)' "$REG")" = true ]
+mkdir -p "$T/noxxd"; printf '#!/bin/bash\nexit 1\n' > "$T/noxxd/xxd"; chmod +x "$T/noxxd/xxd"
+reset
+check "r0 the launch line cannot be encoded -> exit 3" [ "$(rc_of env PATH="$T/noxxd:$PATH" /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
+check "r0 nothing opened without the encoding" [ ! -f "$TERM_FAKE_DIR/commands" ] && [ "$(jq -r '.[0].closed != null' "$REG")" = true ]
+reset; new_tab --issue 21; ts park "$TTY" >/dev/null 2>&1; out=$(ts resume "$SID" 2>/dev/null); TTY=$(echo "$out" | awk '{ print $2 }')
+check "r0 resume starts its tab with a command too" [ "$(grep -c -- "-lic 'eval " "$TERM_FAKE_DIR/commands")" = 2 ] && [ -z "$(keys)" ]
+check "r0 SHELL of another kind falls back to /bin/zsh" [ "$(SHELL=/usr/local/bin/fish /bin/bash -c 'TERM_SH_LIB=1; . "$0"; login_shell' "$TERM_SH")" = /bin/zsh ]
+check "r0 a bash login shell is used as it is" [ "$(SHELL=/bin/bash /bin/bash -c 'TERM_SH_LIB=1; . "$0"; login_shell' "$TERM_SH")" = /bin/bash ]
+
 # ---------------------------------------------------------------- rule 1: tty + id
 reset
 new_tab

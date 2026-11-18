@@ -423,6 +423,7 @@ check "thaw: an open question is re-asked" launch_of "$S2" | grep -qF "Re-ask yo
 check "thaw: the g1 and g2 sessions open in different windows" [ "$(win_of "$(tty_of "$S1")")" != "$(win_of "$(tty_of "$S2")")" ]
 check "thaw: windows cached per group" [ "$(jq -r '[.[].group] | sort | join(" ")' "$HOME_ROOT/.local/windows.json")" = "g1 g2 general" ]
 check "thaw: nothing typed after the launch line" nokeys "$(tty_of "$S1")" "$(tty_of "$S2")"
+check "thaw: every reopened tab started with its command" [ "$(grep -c -- "-lic 'eval " "$TERM_FAKE_DIR/commands")" = 3 ]
 check "thaw: the peer freeze issue is finished" [ "$(cat "$GH_STUB_DIR"/test__peer/issues/*.json | jq -r .state)" = closed ]
 check "thaw: a second thaw reopens nothing" [ "$(ts thaw latest | grep -c REOPENED)" = 0 ]
 frozen_main
@@ -679,6 +680,36 @@ check "resume: nothing launched" [ ! -f "$TERM_FAKE_DIR/launches" ]
 jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: null, resume: null,
   opened: "x", closed: "y", role: "worker", tab: null, match: $s}]' > "$REG"
 check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ] && [ ! -f "$TERM_FAKE_DIR/launches" ]
+
+# ---------------------------------------------------------------- open: the resume line names the real profile
+on_open() { # on_open <profile> [session id]: the new session writes its session file under that profile
+  cat > "$TERM_FAKE_DIR/on-open" <<EOF
+sid=\$(printf '%s\n' "\$3" | sed -n 's/.*--session-id \([0-9a-f-]*\).*/\1/p')
+mkdir -p "$TERM_FAKE_DIR/profiles/$1/sessions"
+jq -n --argjson pid "\$2" --arg sid "${2:-\$sid}" '{pid: \$pid, sessionId: \$sid, status: "idle"}' > "$TERM_FAKE_DIR/profiles/$1/sessions/\$2.json"
+EOF
+}
+reg_resume() { jq -r '.[0].resume' "$REG"; }
+reset launch.profile_flag=-p; on_open work
+out=$(ts open "$W1"); OS=${out%% *}
+check "profile: open records the profile of the session file" [ "$(reg_resume)" = "cd '$W1' && 'claude' -p 'work' --resume $OS" ]
+check "profile: survey shows that resume line" [ "$(sj ttyf1 | jq -r .resume)" = "cd '$W1' && 'claude' -p 'work' --resume $OS" ]
+reset launch.profile_flag=-p launch.model=opus; on_open work
+out=$(ts open "$W1"); OS=${out%% *}
+check "profile: the model alias stays in the line" [ "$(reg_resume)" = "cd '$W1' && 'claude' -p 'work' --model 'opus' --resume $OS" ]
+reset launch.profile_flag=-p launch.profile.worker=team; on_open work
+out=$(ts open "$W1"); OS=${out%% *}
+check "profile: a set launch.profile.worker is kept" [ "$(reg_resume)" = "cd '$W1' && claude -p 'team' --resume $OS" ]
+reset; on_open work
+out=$(ts open "$W1"); OS=${out%% *}
+check "profile: no profile flag -> the line as before" [ "$(reg_resume)" = "cd '$W1' && claude --resume $OS" ]
+reset launch.profile_flag=-p
+out=$(ts open "$W1" 2>"$T/err"); OS=${out%% *}
+check "profile: no session file -> open still prints the session" [ ${#OS} = 36 ] && grep -q "no session file" "$T/err"
+check "profile: no session file -> the line without a profile" [ "$(reg_resume)" = "cd '$W1' && claude --resume $OS" ]
+reset launch.profile_flag=-p; on_open work "$S4"
+out=$(ts open "$W1"); OS=${out%% *}
+check "profile: a session file naming another id -> the line without a profile" [ "$(reg_resume)" = "cd '$W1' && claude --resume $OS" ]
 
 # ---------------------------------------------------------------- Codex tabs (the fake draws them with the same box)
 export CODEX_HOME="$T/codex"
