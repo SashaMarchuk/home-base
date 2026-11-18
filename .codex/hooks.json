@@ -1,7 +1,7 @@
 {
   "hooks": {
     "SessionStart": [
-      { "matcher": "startup|resume", "hooks": [ { "type": "command", "command": "\"$(git rev-parse --show-toplevel)\"/scripts/hooks/session-start" } ] }
+      { "matcher": "startup|resume", "hooks": [ { "type": "command", "command": "\"$(git rev-parse --show-toplevel)\"/scripts/hooks/session-start --surface codex" } ] }
     ],
     "PreToolUse": [
       { "matcher": ".*", "hooks": [ { "type": "command", "command": "\"$(git rev-parse --show-toplevel)\"/scripts/hooks/codex-pre-tool" } ] }

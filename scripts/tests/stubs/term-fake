@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Fake terminal backend for scripts/term/term.sh. Sourced when TERM_SH_BACKEND=fake.
 # Every tab is a folder $TERM_FAKE_DIR/tabs/<tty>/ holding small files:
-#   tab     tab id                     mode    claude | shell | closed
+#   tab     tab id                     mode    claude | codex | shell | closed
+#           (a codex tab is drawn with the same box: the real Codex screen is not modelled; it ends on /quit)
 #   body    text above the input box   box     what is typed in the box
 #   ghost   a suggestion shown while the box is empty (typing replaces it)
 #   dialog  an open dialog (rows "N. label"); free-text focus in "freetext", typed text in "answer"
@@ -69,6 +70,7 @@ be_type() {
   fake_first_key
   printf 'type:%s\n' "$3" >> "$d/keys"
   [ -f "$d/drop-typing" ] && return 0
+  [ "$mode" = codex ] && mode=claude
   if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
     if [ -f "$d/freetext" ]; then fake_put "$1" answer "$(fake_get "$1" answer)$3"; return 0; fi
     case "$3" in
@@ -105,7 +107,7 @@ fake_key() { # the effect of one key on the tab
       elif [ -f "$d/dialog" ]; then rm -f "$d/dialog" "$d/freetext" "$d/answer"
       else rm -f "$d/busy"; fi ;;
     cr)
-      if [ "$mode" = claude ] && [ -f "$d/dialog" ]; then
+      if { [ "$mode" = claude ] || [ "$mode" = codex ]; } && [ -f "$d/dialog" ]; then
         if [ -f "$d/freetext" ]; then fake_get "$1" answer >> "$d/answered"; echo >> "$d/answered"
         else echo "option-1" >> "$d/answered"; fi
         rm -f "$d/dialog" "$d/freetext" "$d/answer"; return 0
@@ -116,7 +118,7 @@ fake_key() { # the effect of one key on the tab
       printf '%s\n' "$line" >> "$d/sent"
       fake_put "$1" box ""; rm -f "$d/ghost"
       [ -f "$d/on-submit" ] && /bin/bash "$d/on-submit" "$line" >/dev/null 2>&1
-      if [ "$mode" = claude ] && [ "$line" = /exit ]; then
+      if { [ "$mode" = claude ] && [ "$line" = /exit ]; } || { [ "$mode" = codex ] && [ "$line" = "$(cat "$d/exit-word" 2>/dev/null || echo /quit)" ]; }; then
         fake_put "$1" mode shell
         pid=$(fake_get "$1" pid)
         [ -f "$d/linger" ] || rm -rf "$TERM_FAKE_DIR/proc/$pid"
@@ -142,6 +144,7 @@ be_open() { # mirrors the real launch: "cd '<dir>' && <command>" [<window id>|ne
   printf '%s' "$1" > "$d/launch"
   cmd=$(printf '%s' "${1#* && }" | tr -d "'")   # the shell removes the quotes before the process starts
   cwd=$(printf '%s' "$1" | sed -n "s/^cd '\\([^']*\\)' && .*/\\1/p")
+  case "$cmd" in codex|codex\ *) printf 'codex' > "$d/mode" ;; esac
   printf '%s' "$pid" > "$d/pid"
   mkdir -p "$TERM_FAKE_DIR/proc/$pid"
   printf '%s' "$cmd" > "$TERM_FAKE_DIR/proc/$pid/cmd"
@@ -179,3 +182,7 @@ be_front_window() { cat "$TERM_FAKE_DIR/front-window" 2>/dev/null || echo w1; }
 be_kill() { echo "$1" >> "$TERM_FAKE_DIR/kills"; rm -rf "$TERM_FAKE_DIR/proc/$1"; }
 be_mem_free() { cat "$TERM_FAKE_DIR/mem_free" 2>/dev/null || echo 80; }
 be_uuid() { uuidgen | tr 'A-Z' 'a-z'; }
+be_codex_threads() { # the thread list as lines "id|created_at|archived|source|cwd" in $TERM_FAKE_DIR/codex-threads; unreadable when absent
+  [ -f "$TERM_FAKE_DIR/codex-threads" ] || return 1
+  tr '|' "$US" < "$TERM_FAKE_DIR/codex-threads"
+}

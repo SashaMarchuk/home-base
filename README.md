@@ -34,7 +34,7 @@ In your home, the `base-update` skill fetches `base`, merges, removes base-only 
 | `base.manifest` | which paths the base owns and which stay in the base only |
 | `openspec/` | the base's requirements |
 
-The terminal helpers drive Claude Code tabs only. The hooks and the session-end stub support Claude Code and Codex; Codex runs them once you trust the folder and, with `/hooks`, the home's hooks. Known limit: a Claude Code session started from a Codex shell inherits `CODEX_THREAD_ID`, so `home-log` records it as a Codex run and the terminal helpers refuse to run in it.
+The terminal helpers (`scripts/term/term.sh`) open, freeze and thaw Claude Code tabs only. `survey`, `state`, `send`, `park`, `resume` and `close` also run from a Codex session, and park, resume and close drive a Codex tab once its SessionStart hook has recorded its thread id. The hooks and the session-end stub support Claude Code and Codex; Codex runs them once you trust the folder and, with `/hooks`, the home's hooks. Known limit: a Claude Code session started from a Codex shell inherits `CODEX_THREAD_ID`, so `home-log` records it as a Codex run and `term.sh open`, `freeze` and `thaw` refuse to run in it.
 
 Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git; no network; a full run takes a few minutes).
 

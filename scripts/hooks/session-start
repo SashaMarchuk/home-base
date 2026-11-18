@@ -4,9 +4,38 @@
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$HERE/lib/config"
-cat >/dev/null 2>&1 || true   # the surface's JSON on stdin is not needed
+#   session-start --surface codex   Codex (.codex/hooks.json): also records the thread id of this tab
+#                                    in .local/codex-threads/<tty> for scripts/term/term.sh
+SURFACE=""
+[ "${1:-}" = --surface ] && SURFACE=${2:-}
+IN=$(cat 2>/dev/null) || IN=""
+START_DIR=$PWD
 cfg_has_home || exit 0
 cd "$HOME_ROOT" || exit 0
+
+codex_record() { # the thread id of the Codex session on this tty, with the codex pid, the cwd and the time
+  # Written only with a UUID id, a codex process above this hook and that process's tty; else nothing.
+  local id pid=$$ n=0 cmd cpid="" tty cwd f
+  id=$(printf '%s' "$IN" | jq -r '.session_id // empty' 2>/dev/null)
+  printf '%s' "$id" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' || return 0
+  while [ $n -lt 64 ]; do   # the nearest codex process above this hook
+    case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$pid" -gt 1 ] || return 0
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 0
+    if [ "$(printf '%s\n' "$cmd" | awk '{ n = split($1, p, "/"); print p[n]; exit }')" = codex ]; then cpid=$pid; break; fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '); n=$((n + 1))
+  done
+  [ -n "$cpid" ] || return 0
+  tty=$(ps -o tty= -p "$cpid" 2>/dev/null | tr -d ' ')
+  case "$tty" in ''|*[!A-Za-z0-9]*) return 0 ;; esac   # "?" and "??" mean no tty
+  cwd=$(printf '%s' "$IN" | jq -r '.cwd // empty' 2>/dev/null); [ -n "$cwd" ] || cwd=$START_DIR
+  mkdir -p .local/codex-threads || return 0
+  f=.local/codex-threads/$tty
+  ( umask 077; jq -n --arg id "$id" --argjson pid "$cpid" --arg cwd "$cwd" --argjson time "$(date +%s)" \
+      '{id: $id, pid: $pid, cwd: $cwd, time: $time}' > "$f.new" ) 2>/dev/null && mv "$f.new" "$f" || rm -f "$f.new"
+  return 0
+}
+[ "$SURFACE" = codex ] && codex_record   # before the slow parts below
 [ "$(git config --local core.hooksPath 2>/dev/null)" = .githooks ] || git config --local core.hooksPath .githooks 2>/dev/null
 NEEDS=$(cfg labels.needs_owner needs-owner)
 echo "== home: ${HOME_REPO:-?} =="

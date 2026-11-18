@@ -393,6 +393,9 @@ check "r11 launch.command=claude -> open works" ts open "$WORK"
 reset
 check "r11 called from a Codex session (CODEX_THREAD_ID) -> refused" [ "$(rc_of env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
 check "r11 called from a Codex session: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
+reset; new_tab
+check "r11 called from a Codex session: survey works" [ -n "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" survey)" ]
+check "r11 called from a Codex session: state works" [ "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" state "$TTY")" = idle ]
 
 # ---------------------------------------------------------------- rule 12: kill exact PID after checking it
 check "r12 no verb signals a PID (pid_kill is never called)" not grep -n 'pid_kill "' "$TERM_SH"

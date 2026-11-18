@@ -304,7 +304,7 @@ cmd_freeze() {
          sel=targets; vals=$(printf '%s' "$vals" | jq -c --arg v "$(target_tty "$1")" '. + [$v]'); shift ;;
     esac
   done
-  need_helpers
+  need_helpers claude
   if [ -n "$cont" ]; then freeze_continue "$cont"; return $?; fi
   [ -n "$sel" ] || die 2 "freeze needs a selector: --all, --group G, --window W or targets"
   [ -n "$mode" ] || mode=$(cfg term.freeze.default_mode soft-then-hard)

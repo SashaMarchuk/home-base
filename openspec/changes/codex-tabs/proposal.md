@@ -1,6 +1,4 @@
 ## Why
-HELD: waits for the owner's yes. Do not apply or archive this change until the owner approves it.
-
 Codex is meant to work a home the way Claude Code does, but the terminal helpers drive Claude Code tabs only: HOME-055 makes every verb exit 3 in a Codex session, and HOME-321 lists a Codex tab with no session id, so a Codex worker cannot be parked or resumed and a Codex orchestrator cannot read or park tabs.
 
 Facts seen so far (read only, codex-cli 0.164; earlier Codex hook runs):
@@ -8,7 +6,9 @@ Facts seen so far (read only, codex-cli 0.164; earlier Codex hook runs):
 - A Codex hook does not get `CODEX_THREAD_ID` in its environment, but its JSON input's `session_id` equals the thread id; the commands Codex runs do get `CODEX_THREAD_ID`.
 - The thread's rollout file is `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`, and `~/.codex/state_5.sqlite` (table `threads`: id, cwd, source, rollout_path, created_at, updated_at, archived) maps ids to folders.
 
-Not seen yet, so the real-tab check proves them first (task 1.5): that the SessionStart hook of a terminal session runs with that session's tty above it; whether `/new` keeps the process and starts a new thread; which process holds a terminal session's rollout file open; and whether `codex resume <id>` keeps the same id.
+Not seen yet, so the real-tab check proves them (tasks 1.0 and 1.5): that the SessionStart hook of a terminal session runs with that session's tty above it; whether `/new` keeps the process and starts a new thread; which process holds a terminal session's rollout file open; and whether `codex resume <id>` keeps the same id.
+
+Also not seen: the screen of a Codex tab. The helpers read a Codex tab with the readers they have (built for Claude Code's screen) and refuse when they find no input box; the real-tab check names the Codex markers and the exit command (`term.codex_exit` in `.local/config`, default `/quit`).
 
 So the id comes from inside the session: the Codex SessionStart hook records it per tty, and the helpers trust that record only when it still matches the live tab. Known limit: when two Codex tabs work in one folder, the newer-thread rule leaves the older one unmapped (listed only, never closed); that fails safe.
 
@@ -22,5 +22,5 @@ So the id comes from inside the session: the Codex SessionStart hook records it 
 - Freeze and thaw stay Claude-only (HOME-309 unchanged); `open` of a Codex tab is a later change.
 
 ## Impact
-- `scripts/hooks/session-start` (Codex surface only), `scripts/term/sessions.sh`, `scripts/term/term.sh`, tests on the fake backend (must-pass and must-fail), the `orchestrate` skill section 9 and the README tool table.
+- `scripts/hooks/session-start` (Codex surface only, called with `--surface codex` from `.codex/hooks.json`), `scripts/term/sessions.sh`, `scripts/term/term.sh`, tests on the fake backend (must-pass and must-fail), the `orchestrate` skill section 9 and the README tool table.
 - No change to `~/.codex` or any global setting.

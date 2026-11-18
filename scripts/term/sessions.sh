@@ -7,8 +7,16 @@
 # The session id comes from the registry (a tab this home opened), then the session file, then the
 # command line. A session with no id gets no resume line ("resume: manual") and is never closed by freeze.
 #
-# The calling session (the one running this script) is found by two signals: the first claude process
-# above this script's own process, and CLAUDE_CODE_SESSION_ID matched against the session files.
+# A Codex tab: the Codex SessionStart hook (scripts/hooks/session-start --surface codex) writes
+# .local/codex-threads/<tty> (thread id, pid of the codex process, cwd, time). The tab has that thread id
+# only while the record names the pid of the one live codex process on the tab, the id's rollout file
+# exists under ${CODEX_HOME:-~/.codex}/sessions, the thread is not archived and no "cli" thread for the
+# same cwd was created at or after the record's time (as after /new); the thread list is read only from
+# Codex's state database. Anything else, a database that cannot be read included: no id, listed only.
+#
+# The calling session (the one running this script) is found by two signals: the first claude (or codex)
+# process above this script's own process, and CLAUDE_CODE_SESSION_ID matched against the session files
+# (CODEX_THREAD_ID against the thread records).
 #
 # Groups and windows (keys read from .local/config only, never from home.config):
 #   term.groups=g1,g2                 the groups, in thaw order; "general" always exists and catches the rest
@@ -24,7 +32,15 @@ US=$'\x1f'   # field separator that keeps empty fields
 
 is_uuid() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; }
 first_base() { printf '%s\n' "$1" | awk '{ n = split($1, p, "/"); print p[n] }'; }
-launch_name() { local c; c=$(local_cfg launch.command claude); printf '%s\n' "${c##*/}"; }
+launch_name() { # the process name of a Claude Code session (launch.command=codex still means claude for these tabs)
+  local c; c=$(local_cfg launch.command claude); c=${c##*/}
+  [ "$c" = codex ] && c=claude
+  printf '%s\n' "$c"
+}
+tty_pids() { # tty_pids <tty> <name> [procs]: the PIDs on that tty whose command is <name>
+  { if [ $# -ge 3 ]; then printf '%s\n' "$3"; else be_procs; fi; } |
+    awk -v t="$1" -v c="$2" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }'
+}
 
 session_globs() { # one glob per line from term.sessions_dirs, "~/" expanded
   local v d
@@ -88,7 +104,7 @@ resume_line() { # resume_line <cwd> <command line> <profile> <session id> [role]
   # when the original had it, then --resume <id>. Everything else (prompt, --add-dir, MCP flags) is dropped.
   local cwd=$1 cmd=$2 prof=$3 sid=$4 role=${5:-} flag lcmd model line from_role=0
   is_uuid "$sid" || return 1
-  lcmd=$(local_cfg launch.command claude)
+  lcmd=$(local_cfg launch.command claude); [ "${lcmd##*/}" = codex ] && lcmd=claude
   flag=$(local_cfg launch.profile_flag)
   [ -n "$prof" ] || prof=$(cmdline_opt "$cmd" "$flag")
   if [ -z "$prof" ] && [ -n "$role" ]; then prof=$(local_cfg "launch.profile.$role"); from_role=1; fi
@@ -103,6 +119,29 @@ resume_line() { # resume_line <cwd> <command line> <profile> <session id> [role]
   [ -n "$model" ] && line="$line --model $(shq "$model")"
   case " $cmd " in *" --dangerously-skip-permissions "*) line="$line --dangerously-skip-permissions" ;; esac
   printf '%s --resume %s\n' "$line" "$sid"
+}
+
+# ------------------------------------------------------------------ Codex tabs
+
+codex_resume_line() { printf 'cd %s && codex resume %s\n' "$(shq "${1:-.}")" "$2"; }   # codex_resume_line <cwd> <thread id>
+
+codex_thread() { # codex_thread <tty> <pid of the one codex process on it> -> "thread id US cwd"; rc 1 = no id, listed only
+  local f="$LOCAL_DIR/codex-threads/$1" id rpid at cwd home r rows
+  [ -f "$f" ] || return 1
+  IFS=$US read -r id rpid at cwd <<EOF
+$(jq -r '[(.id // ""), (.pid // "" | tostring), (.time // "" | tostring), (.cwd // "")] | join("\u001f")' "$f" 2>/dev/null)
+EOF
+  is_uuid "$id" && [ -n "$2" ] && [ "$rpid" = "$2" ] || return 1
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  home=${CODEX_HOME:-$HOME/.codex}
+  r=""; for r in "$home"/sessions/*/*/*/rollout-*-"$id".jsonl; do [ -f "$r" ] && break; r=""; done
+  [ -n "$r" ] || return 1
+  rows=$(be_codex_threads "$home") || return 1
+  printf '%s\n' "$rows" | awk -F"$US" -v id="$id" -v at="$at" -v cwd="$cwd" '
+    $1 == id { if ($3 != 0) bad = 1; next }
+    $4 == "cli" && $5 == cwd && $2 + 0 >= at + 0 { bad = 1 }
+    END { exit bad }' || return 1
+  printf '%s%s%s\n' "$id" "$US" "$cwd"
 }
 
 # ------------------------------------------------------------------ groups and windows
@@ -183,13 +222,13 @@ find_caller() { # sets CALLER_TTYS (ttys found by either signal) and IN_SESSION
   local pid n=0 cmd name tty d f p
   CALLER_TTYS=""; IN_SESSION=0
   name=$(launch_name)
-  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && IN_SESSION=1
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}${CODEX_THREAD_ID:-}" ] && IN_SESSION=1
   pid=$(be_self_pid)
   while [ $n -lt 64 ]; do   # signal 1: the first claude process above this one
     case "$pid" in ''|*[!0-9]*) break ;; esac
     [ "$pid" -gt 1 ] || break
     cmd=$(be_pid_cmd "$pid") || break
-    if [ "$(first_base "$cmd")" = "$name" ]; then
+    if [ "$(first_base "$cmd")" = "$name" ] || [ "$(first_base "$cmd")" = codex ]; then
       IN_SESSION=1
       tty=$(be_pid_tty "$pid"); [ -n "$tty" ] && CALLER_TTYS="$CALLER_TTYS $tty"
       break
@@ -211,6 +250,16 @@ find_caller() { # sets CALLER_TTYS (ttys found by either signal) and IN_SESSION
 $(session_dirs)
 EOF
   fi
+  if [ -n "${CODEX_THREAD_ID:-}" ]; then   # signal 2 for Codex: the thread id named by the environment
+    for f in "$LOCAL_DIR"/codex-threads/*; do
+      [ -f "$f" ] || continue
+      p=$(jq -r --arg s "$CODEX_THREAD_ID" 'select(.id == $s) | .pid // empty' "$f" 2>/dev/null)
+      case "$p" in ''|*[!0-9]*) continue ;; esac
+      cmd=$(be_pid_cmd "$p") || continue
+      [ "$(first_base "$cmd")" = codex ] && [ "$(be_pid_tty "$p")" = "${f##*/}" ] || continue
+      CALLER_TTYS="$CALLER_TTYS ${f##*/}"
+    done
+  fi
   return 0
 }
 
@@ -221,14 +270,33 @@ is_caller() { case " $CALLER_TTYS " in *" $1 "*) return 0 ;; esac; return 1; }
 tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
   local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
-  local group="" gfrom="" stale=false
+  local group="" gfrom="" stale=false ct=""
   name=$(launch_name)
-  pids=$(printf '%s\n' "$procs" | awk -v t="$tty" -v c="$name" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }')
+  pids=$(tty_pids "$tty" "$name" "$procs")
   n=$(printf '%s\n' "$pids" | grep -c .)
   if [ "$n" -ge 1 ]; then
     kind=claude; pid=$(printf '%s\n' "$pids" | head -1)
-  elif printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t { n = split($3, p, "/"); if (p[n] == "codex") f = 1 } END { exit !f }'; then
-    kind=codex
+  else
+    pids=$(tty_pids "$tty" codex "$procs")
+    if [ -n "$pids" ]; then kind=codex; n=$(printf '%s\n' "$pids" | grep -c .); pid=$(printf '%s\n' "$pids" | head -1); fi
+  fi
+  if [ "$kind" = codex ] && [ "$n" = 1 ]; then   # a thread id only from a record that matches the live tab
+    cmd=$(be_pid_cmd "$pid" | head -1)
+    cwd=$(be_pid_cwd "$pid")
+    entry=$(reg_read -c --arg t "$tty" --arg tab "$tab" '[.[] | select(.tty == $t and .closed == null and (.tab == null or .tab == $tab))] | last // empty')
+    if ct=$(codex_thread "$tty" "$pid"); then
+      sid=${ct%%"$US"*}; src=codex-record
+      [ -n "$cwd" ] || cwd=${ct#*"$US"}
+      resume=$(codex_resume_line "${ct#*"$US"}" "$sid")
+    fi
+    if [ -n "$entry" ]; then
+      reg=true
+      issue=$(printf '%s' "$entry" | jq -r '.issue // ""')
+      role=$(printf '%s' "$entry" | jq -r '.role // "worker"')
+      printf '%s' "$entry" | jq -e '.adopted == true' >/dev/null && adopted=true
+      printf '%s' "$entry" | jq -e --arg p "$pid" --arg s "$sid" '(.pid | tostring) == $p and .session_id == $s' >/dev/null ||
+        { stale=true; sid=""; src=none; resume=""; }
+    fi
   fi
   if [ "$kind" = claude ] && [ "$n" = 1 ]; then
     cmd=$(be_pid_cmd "$pid" | head -1)

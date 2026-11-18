@@ -680,5 +680,161 @@ jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: n
   opened: "x", closed: "y", role: "worker", tab: null, match: $s}]' > "$REG"
 check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ] && [ ! -f "$TERM_FAKE_DIR/launches" ]
 
+# ---------------------------------------------------------------- Codex tabs (the fake draws them with the same box)
+export CODEX_HOME="$T/codex"
+C1="0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001"; C2="0199aaaa-bbbb-7ccc-8ddd-eeeeffff0002"
+creset() { reset "$@"; rm -rf "$HOME_ROOT/.local/codex-threads" "$CODEX_HOME"; }
+codex_rec() { # codex_rec <tty> <thread id> <pid> <cwd> [time]: what the Codex SessionStart hook writes
+  mkdir -p "$HOME_ROOT/.local/codex-threads"
+  jq -n --arg id "$2" --argjson pid "$3" --arg cwd "$4" --argjson time "${5:-1000}" \
+    '{id: $id, pid: $pid, cwd: $cwd, time: $time}' > "$HOME_ROOT/.local/codex-threads/$1"
+}
+rollout() { mkdir -p "$CODEX_HOME/sessions/2026/01/02"; : > "$CODEX_HOME/sessions/2026/01/02/rollout-2026-01-02T03-04-05-$1.jsonl"; }
+threads() { printf '%s\n' "$@" > "$TERM_FAKE_DIR/codex-threads"; }   # threads "id|created_at|archived|source|cwd"...
+codex_tab() { # codex_tab <tty> <pid>: a live, mapped Codex tab in W1 on thread C1
+  hand_tab "$1" "$2" "/opt/bin/codex" "$W1" w1 codex
+  codex_rec "$1" "$C1" "$2" "$W1"; rollout "$C1"; threads "$C1|900|0|cli|$W1"
+}
+creset; codex_tab ttyx1 901
+out=$(sj ttyx1)
+check "codex: a mapped tab shows its thread id from the record" [ "$(printf '%s' "$out" | jq -r '.kind + " " + .session_id + " " + .id_from')" = "codex $C1 codex-record" ]
+check "codex: its resume line is codex resume <id>" [ "$(printf '%s' "$out" | jq -r .resume)" = "cd '$W1' && codex resume $C1" ]
+unmapped() { [ "$(sj "$1" | jq -r '.kind + " " + (.session_id // "none") + " " + (.resume // "none")')" = "codex none none" ]; }
+creset; codex_tab ttyx1 901; rm -f "$HOME_ROOT/.local/codex-threads/ttyx1"
+check "codex: no record -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; codex_rec ttyx1 "$C1" 902 "$W1"
+check "codex: the record names a dead pid -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; codex_rec ttyx1 "$C1" 902 "$W1"
+mkdir -p "$TERM_FAKE_DIR/proc/902"; printf 'zsh' > "$TERM_FAKE_DIR/proc/902/cmd"; printf 'ttyx1' > "$TERM_FAKE_DIR/proc/902/tty"
+check "codex: the record names another pid on the tty -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; rm -rf "$CODEX_HOME/sessions"
+check "codex: no rollout file -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; threads "$C1|900|0|cli|$W1" "$C2|1500|0|cli|$W1"
+check "codex: a newer cli thread in the same cwd -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; threads "$C1|900|0|cli|$W1" "$C2|1500|0|cli|$W2" "$S4|1500|0|exec|$W1" "$S3|800|0|cli|$W1"
+check "codex: a newer thread elsewhere, of another source, or an older one does not unmap" [ "$(sj ttyx1 | jq -r .session_id)" = "$C1" ]
+creset; codex_tab ttyx1 901; threads "$C1|900|1|cli|$W1"
+check "codex: an archived thread -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; rm -f "$TERM_FAKE_DIR/codex-threads"
+check "codex: the thread list cannot be read -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901; codex_rec ttyx1 "not-a-uuid" 901 "$W1"
+check "codex: a record without a UUID -> no id" unmapped ttyx1
+creset; codex_tab ttyx1 901
+hand_tab ttyx1b 903 "/opt/bin/codex" "$W1" w1 codex; printf 'ttyx1' > "$TERM_FAKE_DIR/proc/903/tty"; rm -rf "$TERM_FAKE_DIR/tabs/ttyx1b"
+check "codex: two codex processes on the tab -> no id" unmapped ttyx1
+
+# verbs from a Codex session: survey, state, send, park, resume and close work; open, freeze and thaw refuse
+creset; codex_tab ttyx1 901
+hand_tab ttyx2 911 "claude --session-id $S1" "$W1"; sess_file work 911 "$S1" idle "$W1"
+cx() { env CODEX_THREAD_ID="$C1" /bin/bash "$TERM_SH" "$@"; }
+check "codex session: survey lists the tabs" [ "$(cx survey --json | jq -s length)" = 2 ]
+check "codex session: the calling Codex tab is found by its record" [ "$(cx survey --json | jq -r 'select(.tty == "ttyx1") | .caller')" = true ]
+check "codex session: another tab is not the caller" [ "$(cx survey --json | jq -r 'select(.tty == "ttyx2") | .caller')" = false ]
+check "codex session: state reads a tab" [ "$(cx state ttyx2)" = idle ]
+check "codex session: send types into an idle tab" cx send ttyx2 "look at issue 7" --timeout 2
+check "codex session: open -> exit 3" [ "$(rc_of cx open "$W1")" = 3 ]
+check "codex session: freeze -> exit 3" [ "$(rc_of cx freeze ttyx2 --hard)" = 3 ]
+check "codex session: thaw -> exit 3" [ "$(rc_of cx thaw latest)" = 3 ]
+check "codex session: the refused verbs typed nothing" [ "$(sent ttyx2)" = "look at issue 7" ]
+creset launch.command=codex; codex_tab ttyx1 901
+hand_tab ttyx2 911 "claude --session-id $S1" "$W1"
+check "launch.command=codex: survey still reads a claude tab as claude" [ "$(sj ttyx2 | jq -r .kind)" = claude ]
+check "launch.command=codex: its resume line still starts claude" [ "$(sj ttyx2 | jq -r .resume)" = "cd '$W1' && 'claude' --resume $S1" ]
+check "launch.command=codex: open -> exit 3" [ "$(rc_of ts open "$W1")" = 3 ]
+
+# park, resume and close of a mapped Codex tab
+creset; codex_tab ttyx1 901; claim 31 "$C1"
+check "codex: park --adopt of a mapped tab" ts park ttyx1 --adopt --issue 31
+check "codex: the issue holds the codex resume line" \
+  grep -qF "Parked by term.sh. Resume: cd '$W1' && codex resume $C1" "$GH_STUB_DIR/test__home/issues/31.json"
+check "codex: the session was ended with its exit command, then the shell" [ "$(sent ttyx1 | tr '\n' ' ')" = "/quit exit " ]
+check "codex: the process is gone and nothing was signalled" [ ! -d "$TERM_FAKE_DIR/proc/901" ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
+check "codex: the registry entry is a parked codex entry" [ "$(jq -r '.[0] | "\(.kind) \(.parked) \(.adopted) \(.session_id)"' "$REG")" = "codex true true $C1" ]
+out=$(ts resume "$C1" 2>"$T/err"); NT=$(printf '%s' "$out" | awk '{ print $2 }'); NP=$(printf '%s' "$out" | awk '{ print $3 }')
+check "codex: resume reopens it" [ -n "$NT" ] && [ "$(printf '%s' "$out" | awk '{ print $1 }')" = "$C1" ]
+check "codex: resume starts codex resume <id> with one message" \
+  [ "$(tail -1 "$TERM_FAKE_DIR/launches")" = "cd '$W1' && codex resume $C1 'You were resumed. Continue where you stopped.'" ]
+check "codex: the reopened tab has no id until its record is written" unmapped "$NT"
+issue_final() { # issue_final <n> <run id>: the issue ends with a final home-log comment
+  jq -n --argjson n "$1" --arg body "<!-- home-log run=$2 state=final -->" \
+    '{number: $n, title: "t", body: "", state: "open", state_reason: null, labels: [], created_at: "x", updated_at: "x",
+      closed_at: null, author: "owner", comments: [{id: 1, body: $body}]}' > "$GH_STUB_DIR/test__home/issues/$1.json"
+}
+issue_final 31 "$C1"
+check "codex: close before the record matches -> exit 3, nothing typed" [ "$(rc_of ts close "$NT")" = 3 ] && [ -z "$(keys "$NT")" ]
+codex_rec "$NT" "$C1" "$NP" "$W1"
+check "codex: with its record the reopened tab is mapped again" [ "$(sj "$NT" | jq -r '.session_id + " " + (.registered | tostring)')" = "$C1 true" ]
+check "codex: close of the finished, mapped tab" ts close "$NT"
+check "codex: close typed the exit command" [ "$(sent "$NT" | head -1)" = /quit ]
+creset; hand_tab ttyx1 901 "/opt/bin/codex" "$W1" w1 codex; claim 31 "$C1"
+check "codex: park of a tab without a thread id -> exit 3" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: close of a tab without a thread id -> exit 3" [ "$(rc_of ts close ttyx1 --adopt)" = 3 ]
+check "codex: nothing typed and nothing recorded for it" [ -z "$(keys ttyx1)" ] && [ ! -f "$REG" ]
+creset; codex_tab ttyx1 901; claim 31 "$C1"; printf 'half a thought' > "$(tabdir ttyx1)/box"
+check "codex: park refuses an unsent draft" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]
+check "codex: the draft is kept and the session runs" [ "$(cat "$(tabdir ttyx1)/box")" = "half a thought" ] && alive 901
+creset; codex_tab ttyx1 901; claim 31 "$C1"; : > "$(tabdir ttyx1)/busy"
+check "codex: park refuses a running turn, no key" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+creset; codex_tab ttyx1 901; claim 31 "$C1"
+printf 'Allow this?\n  1. Yes\n  2. No\nEnter to select · Esc to cancel\n' > "$(tabdir ttyx1)/dialog"
+check "codex: park refuses a dialog and presses no Esc" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+creset; codex_tab ttyx1 901; claim 31 "$C1"; printf 'shell' > "$(tabdir ttyx1)/mode"
+check "codex: no input box found -> park refused, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+creset term.codex_exit=/exit; codex_tab ttyx1 901; claim 31 "$C1"; printf '/exit' > "$(tabdir ttyx1)/exit-word"
+check "codex: term.codex_exit names the exit command" ts park ttyx1 --adopt --issue 31
+creset "term.codex_exit=rm -rf x"; codex_tab ttyx1 901; claim 31 "$C1"
+check "codex: an exit command of another shape -> exit 3, nothing typed" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ] && [ -z "$(keys ttyx1)" ]
+creset; codex_tab ttyx1 901; claim 31 "$C1"
+ts park ttyx1 --adopt --issue 31 >/dev/null 2>&1; out=$(ts resume "$C1" 2>/dev/null); NT=$(printf '%s' "$out" | awk '{ print $2 }'); NP=$(printf '%s' "$out" | awk '{ print $3 }')
+codex_rec "$NT" "$C1" "$NP" "$W1"; threads "$C1|900|0|cli|$W1" "$C2|2000|0|cli|$W1"
+check "codex: after a new thread in the tab, park -> exit 3, nothing typed" [ "$(rc_of ts park "$NT")" = 3 ] && [ -z "$(keys "$NT")" ]
+
+# the real reader of Codex's thread list (read only; skipped without sqlite3)
+if command -v sqlite3 >/dev/null 2>&1; then
+  mkdir -p "$T/cdb" "$T/nodb" "$T/baddb"; echo "not a database" > "$T/baddb/state_5.sqlite"
+  sqlite3 "$T/cdb/state_5.sqlite" "create table threads (id text, created_at integer, archived integer, source text, cwd text, title text);
+    insert into threads values ('$C1', 900, 0, 'cli', '/a b', 'x');"
+  real_threads() { /bin/bash -c 'TERM_SH_BACKEND=real TERM_SH_LIB=1; . "$0"; be_codex_threads "$1" | tr "\037" "|"; exit "${PIPESTATUS[0]}"' "$TERM_SH" "$1"; }
+  check "codex: the thread list is read from the state database" [ "$(real_threads "$T/cdb")" = "$C1|900|0|cli|/a b" ]
+  check "codex: the read leaves the database unchanged" [ -z "$(ls "$T/cdb" | grep -v '^state_5.sqlite$')" ]
+  check "codex: no state database -> unreadable" not real_threads "$T/nodb"
+  check "codex: a file that is not a database -> unreadable" not real_threads "$T/baddb"
+fi
+
+# the Codex SessionStart hook writes the record (ps is a stub that answers from a fixture folder)
+HOOK="$ROOT/scripts/hooks/session-start"
+mkdir -p "$T/psbin"
+cat > "$T/psbin/ps" <<'EOF'
+#!/bin/bash
+# ps -o <field>= -p <pid>, answered from $PS_FIXTURE/<pid>/<field>
+f=""; p=""
+while [ $# -gt 0 ]; do case "$1" in -o) f=${2%=}; shift 2 ;; -p) p=$2; shift 2 ;; *) shift ;; esac; done
+[ -f "$PS_FIXTURE/$p/$f" ] || exit 1
+cat "$PS_FIXTURE/$p/$f"; echo
+EOF
+chmod +x "$T/psbin/ps"
+export PS_FIXTURE="$T/psfix"
+psfix() { # psfix <pid> <ppid> <tty> <command>
+  mkdir -p "$PS_FIXTURE/$1"; printf '%s' "$2" > "$PS_FIXTURE/$1/ppid"; printf '%s' "$3" > "$PS_FIXTURE/$1/tty"; printf '%s' "$4" > "$PS_FIXTURE/$1/command"
+}
+hook() { # hook <json> [args]: run the hook as a child of the fixture chain; the slow parts are cut by a failing gh
+  local in=$1; shift
+  printf '%s' "$in" | PATH="$T/psbin:$PATH" GH_STUB_FAIL_MATCH=. /bin/bash -c 'mkdir -p "$PS_FIXTURE/$$"; printf 700 > "$PS_FIXTURE/$$/ppid"; printf "bash hook" > "$PS_FIXTURE/$$/command"; printf ttys004 > "$PS_FIXTURE/$$/tty"; exec /bin/bash "$0" "$@"' "$HOOK" "$@" >/dev/null 2>&1
+}
+REC="$HOME_ROOT/.local/codex-threads/ttys004"
+hfix() { rm -rf "$PS_FIXTURE" "$HOME_ROOT/.local/codex-threads"; psfix 700 701 ttys004 "/bin/sh -c hook"; psfix 701 702 ttys004 "/opt/lib/codex/bin/codex --model x"; psfix 702 1 ttys004 "-zsh"; }
+hfix; hook "{\"session_id\":\"$C1\",\"cwd\":\"$W1\"}" --surface codex
+check "hook: the record holds the id, the codex pid and the cwd" [ "$(jq -r '"\(.id) \(.pid) \(.cwd) \(.time | type)"' "$REC")" = "$C1 701 $W1 number" ]
+check "hook: the record is mode 600" [ "$(ls -l "$REC" | cut -c1-10)" = "-rw-------" ]
+hfix; hook "{\"session_id\":\"$C1\",\"cwd\":\"$W1\"}"
+check "hook: no record on another surface" [ ! -e "$REC" ]
+hfix; hook "{\"session_id\":\"thread-1\",\"cwd\":\"$W1\"}" --surface codex
+check "hook: an id that is not a UUID -> no record" [ ! -e "$REC" ]
+hfix; psfix 701 702 ttys004 "node /opt/bin/other"; hook "{\"session_id\":\"$C1\"}" --surface codex
+check "hook: no codex process above the hook -> no record" [ ! -e "$HOME_ROOT/.local/codex-threads" ]
+hfix; psfix 701 702 "??" "/opt/lib/codex/bin/codex"; hook "{\"session_id\":\"$C1\"}" --surface codex
+check "hook: no tty -> no record" [ ! -e "$HOME_ROOT/.local/codex-threads" ]
+unset CODEX_HOME
+
 echo "sessions.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -7,7 +7,7 @@ Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anyt
 - **WHEN** `term.sh open` runs with `terminal_helpers=off`
 - **THEN** it exits 3 and no tab is opened
 
-#### Scenario: Codex orchestrator opens a tab
+#### Scenario: Codex orchestrator
 - **WHEN** `term.sh open` runs with `terminal_helpers=on` from a Codex session or with `launch.command=codex`
 - **THEN** it exits 3 and no tab is opened
 
@@ -18,7 +18,7 @@ Every verb of `scripts/term/term.sh` SHALL exit 3 without opening or typing anyt
 ### Requirement: HOME-321 Survey in JSON
 `term.sh survey --json` SHALL print one JSON object per live tab with its tty, window, tab id, pid, kind (`claude`, `codex` or `shell`), session id and its source, profile, session-file status, cwd, group and its source, registration, issue, resume line and whether it is the calling session.
 
-#### Scenario: A Codex tab without a matching record
+#### Scenario: A Codex tab
 - **WHEN** a `codex` process runs on a tab and HOME-327 finds no thread id for it
 - **THEN** its kind is `codex` and it has no session id or resume line
 
@@ -54,11 +54,11 @@ On the Codex surface, the SessionStart hook SHALL write `.local/codex-threads/<t
 `term.sh park` and `term.sh resume` SHALL act on a Codex tab only when HOME-327 gives it a thread id, under the same draft, busy-turn and record rules as a Claude Code tab, writing `cd <cwd> && codex resume <id>` as its resume line, and `resume` SHALL reopen it with that line.
 
 #### Scenario: Park a mapped Codex worker
-- **WHEN** `term.sh park <tty> --issue 5` runs on an idle mapped Codex tab with an empty box
+- **WHEN** `term.sh park <tty> --adopt --issue 5` runs on an idle mapped Codex tab with an empty box
 - **THEN** issue 5 holds `cd <cwd> && codex resume <id>` and the session is ended with its exit command
 
 #### Scenario: Park an unmapped Codex tab
-- **WHEN** `term.sh park <tty> --issue 5` runs on a Codex tab without a thread id
+- **WHEN** `term.sh park <tty> --adopt --issue 5` runs on a Codex tab without a thread id
 - **THEN** it exits 3 and nothing is typed
 
 ### Requirement: HOME-329 Codex tabs pass a real-tab check first

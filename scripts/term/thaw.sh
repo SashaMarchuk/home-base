@@ -90,7 +90,7 @@ cmd_thaw() {
          sids=$(printf '%s' "$sids" | jq -c --arg v "$1" '. + [$v]'); shift ;;
     esac
   done
-  need_helpers
+  need_helpers claude
   for g in $(printf '%s' "$groups" | jq -r '.[]'); do group_known "$g" || die 2 "unknown group '$g'"; done
   case "$id" in ''|latest)
     id=$(ls "$FREEZE_DIR" 2>/dev/null | sed -n 's/^\([0-9]\{8\}T[0-9]\{6\}Z\)\.json$/\1/p' | sort | tail -1)

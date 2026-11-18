@@ -19,9 +19,12 @@
 #                                       codex or shell), session_id and where it came from, profile, status,
 #                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
 #
-# Supports Claude Code sessions only: a tab counts as a session when a claude process runs
-# on it; any other tool's tab reads as a shell. In a Codex session (CODEX_THREAD_ID set) or
-# with launch.command=codex every verb exits 3.
+# A tab counts as a session when a claude process runs on it. A Codex tab (a codex process) has a
+# thread id only while its record matches the live tab (see sessions.sh); then park, resume and
+# close work on it (park and close with --adopt: open never starts a Codex tab), and a tab without
+# one is listed only. Its screen is read with the same readers, built for Claude Code's screen: no
+# input box found means refused, nothing typed. open, freeze and thaw launch or reopen Claude Code
+# tabs only: in a Codex session (CODEX_THREAD_ID set) or with launch.command=codex they exit 3.
 #
 # <target> is a tty (ttys003 or /dev/ttys003) or a session id from .local/registry.json.
 # A tab title is never accepted: titles drift.
@@ -82,6 +85,7 @@
 #   launch.profile.orchestrator / launch.profile.worker   the profile value per role
 #   launch.model                   passed as "--model <alias>" when set
 #   term.sessions_dirs             where Claude Code writes <pid>.json per live session (see sessions.sh)
+#   term.codex_exit=/quit          the line that ends a Codex session (one slash word)
 # close reads the issue with gh (repo: --repo, else repo in home.config).
 # Test seams: TERM_SH_BACKEND=fake (sources ../tests/stubs/term-fake), TERM_SH_POLL,
 #   TERM_SH_SETTLE, TERM_SH_OPEN_WAIT, TERM_SH_EXIT_WAIT, TERM_SH_LOCK_TIMEOUT, TERM_SH_HOME_LOG.
@@ -227,6 +231,12 @@ be_kill() { kill -TERM "$1"; }
 be_mem_free() { memory_pressure -Q 2>/dev/null | awk -F': *' '/free percentage/ { gsub(/%/, "", $2); print $2 }'; }
 be_sleep() { sleep "$1"; }
 be_uuid() { uuidgen | tr 'A-Z' 'a-z'; }
+be_codex_threads() { # be_codex_threads <codex home> -> "id US created_at US archived US source US cwd" per thread; rc 1 when unreadable
+  local db
+  db=$(ls -t "$1"/state_*.sqlite 2>/dev/null | head -1)
+  [ -n "$db" ] || return 1
+  sqlite3 -readonly -separator "$US" "$db" 'select id, created_at, archived, source, cwd from threads' 2>/dev/null
+}
 
 if [ "${TERM_SH_BACKEND:-real}" = "fake" ]; then
   . "$TERM_SH_DIR/../tests/stubs/term-fake"
@@ -237,10 +247,10 @@ fi
 shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-need_helpers() {
+need_helpers() { # need_helpers [claude]: "claude" marks a verb that launches or reopens Claude Code tabs only
   [ "$(cfg terminal_helpers off)" = "on" ] || die 3 "terminal_helpers is not 'on' in .local/config; nothing is opened or typed"
-  { [ "$(cfg launch.command claude)" = codex ] || [ -n "${CODEX_THREAD_ID:-}" ]; } \
-    && die 3 "these helpers drive Claude Code tabs only, so a Codex orchestrator (a Codex session, or launch.command=codex) runs with terminal_helpers=off; nothing is opened or typed"
+  [ "${1:-}" = claude ] && { [ "$(cfg launch.command claude)" = codex ] || [ -n "${CODEX_THREAD_ID:-}" ]; } \
+    && die 3 "open, freeze and thaw launch or reopen Claude Code tabs only, so they do not run in a Codex session or with launch.command=codex; nothing is opened or typed"
   command -v jq >/dev/null 2>&1 || die 3 "jq is required"
 }
 
@@ -370,7 +380,7 @@ freetext_row() { # freetext_row <screen> -> number of the dialog row that takes 
 # ------------------------------------------------------------------ resolving a target (rule 1)
 
 T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""
+T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""; T_KIND=claude
 
 load_entry() { # load_entry <json object>
   T_SID=$(printf '%s' "$1" | jq -r '.session_id // ""')
@@ -381,13 +391,14 @@ load_entry() { # load_entry <json object>
   T_ISSUE=$(printf '%s' "$1" | jq -r '.issue // ""')
   T_CLOSED=$(printf '%s' "$1" | jq -r '.closed // ""')
   T_ADOPTED=$(printf '%s' "$1" | jq -r 'if .adopted == true then 1 else 0 end')
+  T_KIND=$(printf '%s' "$1" | jq -r '.kind // "claude"')
   T_REG=1
 }
 
 resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed registry entry
   local target=$1 mode=${2:-open} entry n live
   T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-  T_ADOPTED=0
+  T_ADOPTED=0; T_KIND=claude
   case "$target" in
     /dev/tty*|tty*)
       T_TTY=${target#/dev/}
@@ -428,15 +439,20 @@ resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed regi
 # ------------------------------------------------------------------ adopting the owner's own tab (rule 15)
 
 adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner opened by hand
-  local name pids n cmd sid cwd sf s_sid s_status s_cwd s_name prof s_pdir
+  local name pids n cmd sid cwd sf s_sid s_status s_cwd s_name prof s_pdir ct
   case "$1" in /dev/tty*|tty*) ;; *) die 2 "--adopt needs an explicit tty, not '$1'" ;; esac
   if [ "$T_REG" = 1 ]; then
     [ "$T_ADOPTED" = 1 ] || die 2 "the tab on $T_TTY is in this home's registry already; drop --adopt"
     return 0
   fi
-  name=$(local_cfg launch.command claude); name=${name##*/}
-  pids=$(be_procs | awk -v t="$T_TTY" -v c="$name" '$2 == t { n = split($3, p, "/"); if (p[n] == c) print $1 }')
+  name=$(launch_name)
+  pids=$(tty_pids "$T_TTY" "$name")
   n=$(printf '%s\n' "$pids" | grep -c .)
+  if [ "$n" = 0 ] && [ -n "$(tty_pids "$T_TTY" codex)" ]; then   # a Codex tab: adopted only with a thread id
+    name=codex; T_KIND=codex
+    pids=$(tty_pids "$T_TTY" codex)
+    n=$(printf '%s\n' "$pids" | grep -c .)
+  fi
   [ "$n" = 0 ] && die 4 "no $name process runs on $T_TTY; nothing to adopt"
   [ "$n" = 1 ] || die 3 "$n $name processes run on $T_TTY; not guessing which one"
   case "$pids" in *[!0-9]*) die 3 "not a PID: '$pids'" ;; esac
@@ -445,6 +461,13 @@ adopt_target() { # adopt_target <target>: after resolve; verify a tab the owner 
     die 3 "PID $pids does not run $name ('$cmd'); refusing"
   [ "$(be_pid_tty "$pids")" = "$T_TTY" ] || die 3 "PID $pids is not on $T_TTY; refusing"
   be_screen "$T_TTY" "$T_TAB" >/dev/null || die 4 "the screen of the tab on $T_TTY cannot be read"
+  if [ "$T_KIND" = codex ]; then
+    ct=$(codex_thread "$T_TTY" "$pids") ||
+      die 3 "the Codex tab on $T_TTY has no thread id (no record that matches the live tab); it is listed only and nothing is typed"
+    T_SID=${ct%%"$US"*}; T_MATCH=$cmd; T_PID=$pids; T_ALIVE=1; T_ADOPTED=1; ADOPT_NEW=1
+    ADOPT_RESUME=$(codex_resume_line "${ct#*"$US"}" "$T_SID")
+    return 0
+  fi
   sid=$(cmdline_sid "$cmd")
   cwd=$(be_pid_cwd "$pids")
   T_PID=$pids; T_ALIVE=1; T_ADOPTED=1; ADOPT_NEW=1
@@ -468,10 +491,11 @@ adopt_record() { # adopt_record: add the adopted tab to the registry with no iss
   [ "$ADOPT_NEW" = 1 ] || return 0
   entry=$(jq -nc --arg sid "$T_SID" --arg tty "$T_TTY" --arg tab "$T_TAB" --arg pid "$T_PID" \
     --arg cwd "$(be_pid_cwd "$T_PID")" --arg resume "$ADOPT_RESUME" --arg opened "$(now_utc)" \
-    --arg match "$T_MATCH" \
+    --arg match "$T_MATCH" --arg kind "$T_KIND" \
     '{session_id: $sid, tty: $tty, pid: ($pid | tonumber), cwd: $cwd, issue: null,
       resume: (if $resume == "" then null else $resume end), opened: $opened, closed: null,
-      role: "owner", tab: $tab, match: $match, adopted: true}') || die 3 "could not build the registry entry; nothing was typed"
+      role: "owner", tab: $tab, match: $match, adopted: true}
+     + (if $kind == "codex" then {kind: "codex"} else {} end)') || die 3 "could not build the registry entry; nothing was typed"
   reg_update --argjson e "$entry" '. + [$e]' || die 3 "registry write failed; nothing was typed"
   ADOPT_NEW=0
 }
@@ -607,7 +631,7 @@ wait_quiet() { # wait_quiet <seconds>: until no dialog, no running turn and an e
 exit_shell() { # after the session's process is gone: leave the plain shell so the tab closes
   local scr
   scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
-  if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY"; then
+  if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ]; then
     note "something still runs in the tab on $T_TTY; the shell is left open"
     return 0
   fi
@@ -688,25 +712,26 @@ reserve() { # reserve <json entry> <role>: add the entry unless the worker cap i
   reg_unlock
 }
 
-find_pid() { # find_pid <tty> <match> -> newest PID on that tty whose command line holds <match>
+find_pid() { # find_pid <tty> <match> <name> -> newest PID on that tty that runs <name> and whose command line holds <match>
   local end=$((SECONDS + OPEN_WAIT)) pid
   while :; do
-    pid=$(be_procs | awk -v t="$1" -v m="$2" '$2 == t && index($0, m) > 0 { print $1 }' | sort -n | tail -1)
+    pid=$(be_procs | awk -v t="$1" -v m="$2" -v c="$3" '$2 == t && index($0, m) > 0 { n = split($3, p, "/"); if (p[n] == c) print $1 }' | sort -n | tail -1)
     [ -n "$pid" ] && { echo "$pid"; return 0; }
     [ $SECONDS -ge $end ] && return 1
     be_sleep "$POLL"
   done
 }
 
-launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current]: open, record tty/tab/window/pid, print the triple
-  local sid=$1 out tab tty pid win
+launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current] [process name]: open, record tty/tab/window/pid, print the triple
+  local sid=$1 out tab tty pid win name=${5:-}
+  [ -n "$name" ] || name=$(launch_name)
   out=$(be_open "$2" "${4:-current}") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
   read -r tab tty win <<EOF
 $out
 EOF
   reg_set "$sid" '{tab: $tab, tty: $tty, window: (if $w == "" then null else $w end)}' --arg tab "$tab" --arg tty "$tty" --arg w "${win:-}" ||
     die 3 "tab $tty opened but the registry could not be updated; close it by hand"
-  pid=$(find_pid "$tty" "$3") || {
+  pid=$(find_pid "$tty" "$3" "$name") || {
     reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"
     die 5 "tab $tty opened but no process matching the launch appeared; marked closed"
   }
@@ -731,7 +756,7 @@ cmd_open() {
       *) die 2 "open: unknown option '$1'" ;;
     esac
   done
-  need_helpers
+  need_helpers claude
   case "$role" in worker|orchestrator) ;; *) die 2 "role must be worker or orchestrator" ;; esac
   case "$issue" in *[!0-9]*) die 2 "issue must be a number" ;; esac
   case "$brief" in *"
@@ -906,10 +931,27 @@ has_resume() { # the session can be reopened: a resume line was built at adopt, 
   [ -n "$(reg_read -r --arg s "$T_SID" '.[] | select(.session_id == $s) | .resume // empty')" ]
 }
 
-exit_word() { if [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ]; then echo /exit; else echo exit; fi; }
+exit_word() { # the line that ends the session: /exit for Claude Code, term.codex_exit for Codex, exit for a plain command
+  if [ "$T_KIND" = codex ]; then codex_exit_word
+  elif [ "$T_MATCH" = "$T_SID" ] || [ "$T_ADOPTED" = 1 ]; then echo /exit; else echo exit; fi
+}
+
+codex_exit_word() {
+  local w
+  w=$(local_cfg term.codex_exit /quit)
+  printf '%s' "$w" | grep -Eq '^/[a-z]+$' || die 3 "term.codex_exit must be one slash word such as /quit, not '$w'"
+  printf '%s\n' "$w"
+}
+
+codex_same_thread() { # a Codex tab is acted on only while its record still names the recorded thread
+  local ct
+  [ "$T_KIND" = codex ] || return 0
+  ct=$(codex_thread "$T_TTY" "$T_PID") && [ "${ct%%"$US"*}" = "$T_SID" ] ||
+    die 3 "the Codex tab on $T_TTY no longer matches its thread record; it is listed only and nothing is typed"
+}
 
 cmd_close() {
-  local target issue="" repo=$HOME_REPO timeout=$EXIT_WAIT scr b n adopt=0
+  local target issue="" repo=$HOME_REPO timeout=$EXIT_WAIT scr b n adopt=0 word
   [ $# -ge 1 ] || die 2 "usage: close <target> [--issue N] [--adopt] [--repo OWNER/REPO] [--timeout S]"
   target=$1; shift
   while [ $# -gt 0 ]; do
@@ -935,6 +977,8 @@ cmd_close() {
     die 2 "close needs the issue number (--issue N, or one recorded at open)"
   fi
   if [ "$T_ALIVE" = 1 ]; then
+    codex_same_thread
+    word=$(exit_word) || exit $?
     scr=$(screen_now)
     if has_headsup "$scr"; then
       adopt_record
@@ -945,12 +989,12 @@ cmd_close() {
     is_busy "$scr" && die 3 "a turn is running on $T_TTY; not closing"
     n=$(bg_count "$scr")
     [ -n "$n" ] && [ "$n" -gt 0 ] && die 3 "$n background job(s) on $T_TTY; not closing"
-    if [ "$(exit_word)" = /exit ]; then
+    if [ "$word" != exit ]; then
       b=$(box_text "$scr") || die 3 "no input box on $T_TTY; not closing"
       if [ -n "$b" ]; then adopt_record; ghost_probe "$b" || die 3 "an unsent draft is in the box on $T_TTY; not closing"; fi
     fi
     adopt_record
-    exit_session "$(exit_word)" "$timeout"
+    exit_session "$word" "$timeout"
   fi
   bind_issue "$issue"   # set only now: the finished-issue check passed and the session exited
   exit_shell
@@ -959,7 +1003,7 @@ cmd_close() {
 }
 
 cmd_park() {
-  local target issue="" timeout=$EXIT_WAIT scr b q="" qa text dialog=0 adopt=0
+  local target issue="" timeout=$EXIT_WAIT scr b q="" qa text dialog=0 adopt=0 word
   [ $# -ge 1 ] || die 2 "usage: park <target> [--issue N] [--adopt] [--timeout S]"
   target=$1; shift
   while [ $# -gt 0 ]; do
@@ -977,6 +1021,8 @@ cmd_park() {
   [ "$T_ALIVE" = 1 ] || die 4 "session $T_SID is not running"
   issue=$(pick_issue "$issue") || exit $?
   [ -n "$issue" ] || die 2 "park needs the issue number"
+  codex_same_thread
+  word=$(exit_word) || exit $?
   if [ "$adopt" = 1 ]; then
     run_has_comment "$HOME_REPO" "$issue" "$T_SID"
     case $? in
@@ -992,6 +1038,7 @@ cmd_park() {
     scr=$(screen_now)
   fi
   if has_dialog "$scr"; then
+    [ "$T_KIND" = codex ] && die 3 "a dialog is open on the Codex tab $T_TTY; not parking (Esc could answer it)"
     dialog=1
     q=$(dialog_question "$scr") || q="(open question on screen; see the session)"
   else
@@ -1009,7 +1056,7 @@ cmd_park() {
     be_key "$T_TTY" "$T_TAB" esc; settle   # Esc cancels the dialog; it never answers it
     wait_quiet "$timeout" || die 5 "the session on $T_TTY did not settle after the dialog was cancelled"
   fi
-  exit_session /exit "$timeout"
+  exit_session "$word" "$timeout"
   exit_shell
   reg_set "$T_SID" '{closed: $c, parked: true}' --arg c "$(now_utc)" || note "registry not updated"
   echo "PARKED $T_SID issue #$issue"
@@ -1042,7 +1089,7 @@ cmd_resume() {
   [ -n "$T_CLOSED" ] || die 3 "session $T_SID is still open on $T_TTY"
   sid=$T_SID
   role=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .role // "worker"')
-  [ "$T_MATCH" = "$T_SID" ] || die 3 "session $T_SID was not a resumable session"
+  [ "$T_MATCH" = "$T_SID" ] || [ "$T_KIND" = codex ] || die 3 "session $T_SID was not a resumable session"
   line=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .resume // empty')
   [ -n "$line" ] || die 3 "no resume command recorded for $sid"
   check_memory
@@ -1065,7 +1112,7 @@ cmd_resume() {
     'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null, match: $s} else . end)' ||
     { reg_unlock; die 3 "registry write failed"; }
   reg_unlock
-  launch_tab "$sid" "$line" "$sid"
+  if [ "$T_KIND" = codex ]; then launch_tab "$sid" "$line" "$sid" current codex; else launch_tab "$sid" "$line" "$sid"; fi
 }
 
 cmd_survey() {
