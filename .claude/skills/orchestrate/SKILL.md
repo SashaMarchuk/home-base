@@ -11,7 +11,7 @@ You are this home's orchestrator. You dispatch and relay; workers do the work. A
 
 ## 1. Look first
 1. Run the `status` skill. Read the session-start report (owner questions, `SWEEP` lines, limits, dreams).
-2. Run `scripts/limits`. Output `ok|soft|hard <reset>` decides step 5.
+2. Run `scripts/limits`. Output `ok|soft|hard <reset>` decides section 5.
 3. If the sweep printed `SWEEP base-ahead <N>`: run the `base-update` skill now, before the queue.
 4. If `dreams: due` was printed and `dreams.mode=daily`: run the `dreams` skill in the background (it asks before saving any fact).
 5. With terminal helpers on: run `scripts/term/term.sh finished` and handle its verdicts (section 6, Finished tabs).
