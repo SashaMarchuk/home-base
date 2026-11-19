@@ -57,7 +57,8 @@
 #    and only a login dialog (term.login_dialog_re) that still has a free-text row is answered there.
 #    The check must prove the login, e.g. a CLI identity call: an empty check, true, :, exit 0,
 #    echo ... and test 1 are refused
-#  8 close only on a finished session: the issue has a final home-log comment and no owner label
+#  8 close only on a finished session: the issue has a final home-log comment of this session's own run
+#    (the id it started with; any run's for the owner's own tab) and no owner label
 #    (checked on GitHub), no dialog, no running turn, no background work, an empty box; it types
 #    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed
 #  9 park writes the open question and the resume command to the issue, then exits; it refuses
@@ -996,23 +997,29 @@ send_cancel() { # send_cancel <target>: one Esc on an open dialog, then check it
   echo "CANCELLED $T_TTY"
 }
 
-issue_state() { # issue_state <repo> <n> -> final | no-final | owner-label | unreadable-comments | unreadable-labels (rule 8; read only)
+issue_state() { # issue_state <repo> <n> [run id] -> final | no-final | other-final | owner-label | unreadable-comments | unreadable-labels (rule 8; read only)
+  # With a run id only that run's final comment counts: another run's final alone is other-final.
   local raw comments labels
   raw=$(gh api --paginate "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null) &&
     comments=$(printf '%s' "$raw" | jq -s 'add // []' 2>/dev/null) || { echo unreadable-comments; return 0; }
-  printf '%s' "$comments" | jq -e 'any(.[]; .body | test("^<!-- home-log run=[^ ]+ state=final -->"))' >/dev/null ||
-    { echo no-final; return 0; }
+  if ! printf '%s' "$comments" | jq -e --arg r "${3:-}" 'any(.[]; .body | if $r == "" then test("^<!-- home-log run=[^ ]+ state=final -->")
+      else startswith("<!-- home-log run=" + $r + " state=final -->") end)' >/dev/null; then
+    [ -n "${3:-}" ] && printf '%s' "$comments" | jq -e 'any(.[]; .body | test("^<!-- home-log run=[^ ]+ state=final -->"))' >/dev/null &&
+      { echo other-final; return 0; }
+    echo no-final; return 0
+  fi
   labels=$(gh api "repos/$1/issues/$2" --jq '.labels[].name' 2>/dev/null) || { echo unreadable-labels; return 0; }
   printf '%s\n' "$labels" | grep -qxF -- "$(cfg labels.needs_owner needs-owner)" && { echo owner-label; return 0; }
   echo final
 }
 
-issue_finished() { # issue_finished <repo> <n>: a final home-log comment exists and no owner label (rule 8)
+issue_finished() { # issue_finished <repo> <n> [run id]: a final home-log comment (of that run) exists and no owner label (rule 8)
   local repo=$1 n=$2
-  case "$(issue_state "$repo" "$n")" in
+  case "$(issue_state "$repo" "$n" "${3:-}")" in
     final) return 0 ;;
     unreadable-comments) die 3 "cannot read the comments of $repo#$n; not closing" ;;
     no-final) die 3 "issue $repo#$n has no final home-log comment; not closing" ;;
+    other-final) die 3 "the final home-log comment on $repo#$n is of another run, not of this session ($3); not closing" ;;
     owner-label) die 3 "issue $repo#$n carries '$(cfg labels.needs_owner needs-owner)' (a question waits on the owner); not closing" ;;
     *) die 3 "cannot read the labels of $repo#$n; not closing" ;;
   esac
@@ -1067,7 +1074,8 @@ cmd_close() {
     die 3 "close works only on tabs this home opened (none recorded on $T_TTY; the owner's own tab needs --adopt)"
   issue=$(pick_issue "$issue") || exit $?
   if [ -n "$issue" ]; then
-    issue_finished "$repo" "$issue"
+    # a tab this home opened: only the final comment of its own run counts; the owner's own tab: any final
+    if [ "$T_ADOPTED" = 1 ]; then issue_finished "$repo" "$issue"; else issue_finished "$repo" "$issue" "$(run_id)"; fi
   elif [ "$adopt" = 0 ] || [ "$T_ADOPTED" = 0 ]; then
     die 2 "close needs the issue number (--issue N, or one recorded at open)"
   fi
@@ -1163,11 +1171,11 @@ F_VERDICT=""; F_REPO=""
 finished_verdict() { # finished_verdict <registry entry json> <live tabs>: sets F_VERDICT and F_REPO; reads only
   # The checks of close, in its order: the tab and the process, the issue, the screen. keep:<reason> = close
   # would refuse and the reason is known; unsure:<what> = it could not be read here (close decides itself).
-  local e=$1 tty tab sid pid match issue role kind cwd live alive=0 scr n b ct
+  local e=$1 tty tab sid pid match issue role kind cwd run live alive=0 scr n b ct
   F_VERDICT=""; F_REPO=""
-  IFS=$US read -r tty tab sid pid match issue role kind cwd <<EOF
+  IFS=$US read -r tty tab sid pid match issue role kind cwd run <<EOF
 $(printf '%s' "$e" | jq -r '[.tty, (.tab // ""), .session_id, (.pid // "" | tostring), (.match // ""), (.issue // "" | tostring),
-    (.role // "worker"), (.kind // "claude"), (.cwd // "")] | join("\u001f")')
+    (.role // "worker"), (.kind // "claude"), (.cwd // ""), (if .adopted == true then "" else .moved_from // .session_id end)] | join("\u001f")')
 EOF
   live=$(printf '%s\n' "$2" | awk -v t="$tty" '$2 == t && !f { print $1; f = 1 }')
   if [ -z "$live" ] || { [ -n "$tab" ] && [ "$live" != "$tab" ]; }; then F_VERDICT=keep:tab-gone; return 0; fi
@@ -1180,9 +1188,10 @@ EOF
   F_REPO=$HOME_REPO   # an orchestrator tab was opened for an issue of the home it runs in
   if [ "$role" = orchestrator ]; then F_REPO=$(cfg_read_file "$cwd/home.config" repo) || F_REPO=""; fi
   printf '%s' "$F_REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || { F_REPO=""; F_VERDICT=unsure:issue-repo; return 0; }
-  case "$(issue_state "$F_REPO" "$issue")" in
+  case "$(issue_state "$F_REPO" "$issue" "$run")" in
     final) ;;
     no-final) F_VERDICT=keep:no-final; return 0 ;;
+    other-final) F_VERDICT=keep:other-run; return 0 ;;
     owner-label) F_VERDICT=keep:owner-question; return 0 ;;
     *) F_VERDICT=unsure:issue-unreadable; return 0 ;;
   esac

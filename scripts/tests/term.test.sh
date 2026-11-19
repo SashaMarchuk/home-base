@@ -48,10 +48,11 @@ config() { # config <lines...>: write .local/config
 }
 reset() { rm -rf "$TERM_FAKE_DIR" "$REG" "$T/home-log.calls" "$T/home-log.fail" "$GH_STUB_DIR"; mkdir -p "$TERM_FAKE_DIR" "$GH_STUB_DIR"; config "$@"; }
 issue() { # issue <n> <last marker state|-> [label...] [--repo O/R]: write one issue into the gh stub
+  # The comment is of the run ISSUE_RUN, else of the session new_tab opened last (a worker's run id is its session id).
   local n=$1 st=$2 repo=test/home labels="[]" body; shift 2
   if [ "${1:-}" = --repo ]; then repo=$2; shift 2; fi
   [ $# -gt 0 ] && labels=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
-  body="<!-- home-log run=run-$n state=$st -->"
+  body="<!-- home-log run=${ISSUE_RUN:-${SID:-run-$n}} state=$st -->"
   mkdir -p "$GH_STUB_DIR/${repo%%/*}__${repo#*/}/issues"
   jq -n --argjson n "$n" --arg st "$st" --arg body "$body" --argjson labels "$labels" \
     '{number: $n, title: "t", body: "", state: "open", state_reason: null, labels: $labels, created_at: "x", updated_at: "x",
@@ -311,6 +312,11 @@ reset; new_tab --issue 12; issue 12 final --repo other/place
 check "r8 --repo picks the repo to check" ts close "$TTY" --repo other/place
 reset; new_tab --issue 12; issue 12 final; issue 12 active --repo other/place
 check "r8 --repo with an unfinished issue -> refused" [ "$(rc_of ts close "$TTY" --repo other/place)" = 3 ]
+reset; new_tab --issue 12; ISSUE_RUN=run-of-an-earlier-worker issue 12 final
+check "r8 only another run's final comment on the issue -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+check "r8 the refusal names the other run's final" grep -q "of another run" "$T/err"
+check "r8 nothing typed for another run's final" [ -z "$(keys)" ]
+check "r8 that session is left running" alive "$PID"
 reset; new_tab --issue 12; issue 12 final; dialog 1
 check "r8 open question -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
 reset; new_tab --issue 12; issue 12 final; put box "unsent note"
@@ -354,6 +360,10 @@ reset; new_tab --issue 12; issue 12 active
 check "finished: no final comment -> keep:no-final" untouched_by_finished keep:no-final
 reset; new_tab --issue 12; issue 12 -
 check "finished: no home-log comment -> keep:no-final" untouched_by_finished keep:no-final
+reset; new_tab --issue 12; ISSUE_RUN=run-of-an-earlier-worker issue 12 final
+check "finished: only another run's final comment -> keep:other-run" untouched_by_finished keep:other-run
+jq --arg b "<!-- home-log run=$SID state=final -->" '.comments += [{id: 3, body: $b}]' "$GH_STUB_DIR/test__home/issues/12.json" > "$T/i.json" && mv "$T/i.json" "$GH_STUB_DIR/test__home/issues/12.json"
+check "finished: this run's final beside another run's -> closable" untouched_by_finished closable
 reset; new_tab --issue 12; issue 12 final needs-test
 check "finished: owner label -> keep:owner-question" untouched_by_finished keep:owner-question
 reset; new_tab --issue 12
