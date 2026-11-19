@@ -61,6 +61,21 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **WHEN** a second worker's tab is open on an issue whose only final `home-log` comment is of the first worker's run, and that tab is idle with an empty box
 - **THEN** the verdict is `keep:other-run`
 
+### Requirement: HOME-420 A recorded adopted tab stays the owner's own
+`term.sh finished` SHALL say `keep:owner-tab` for a tab recorded with `adopted: true` (the owner's own tab; every Codex tab is one), and `term.sh close` SHALL refuse such a tab with exit 3, typing nothing, unless `--adopt` is given again.
+
+#### Scenario: An adopted tab with a finished issue
+- **WHEN** a tab recorded with `adopted: true` is idle with an empty box and its issue has a final `home-log` comment and no owner label
+- **THEN** `finished` prints `keep:owner-tab` for it
+
+#### Scenario: Close without the flag
+- **WHEN** `term.sh close <tty>` runs on that tab without `--adopt`
+- **THEN** it exits 3 and nothing is typed
+
+#### Scenario: Close with the flag
+- **WHEN** the owner named that tab and `term.sh close <tty> --adopt` runs on it
+- **THEN** the checks of close run as before and the session exits
+
 ### Requirement: HOME-418 What finished cannot decide
 `term.sh finished` SHALL say `unsure:<what>` when another program runs under the recorded process id, the issue or its repo cannot be read, the screen cannot be read or shows no input box, a notice is shown, or the box holds text, and SHALL read the issue of an orchestrator tab in the repo named by the `home.config` of that tab's folder.
 

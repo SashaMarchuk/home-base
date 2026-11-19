@@ -33,7 +33,8 @@
 # A tab title is never accepted: titles drift.
 #
 # --adopt (close and park): the owner's own tab, opened by hand and not in the registry. Use it
-# only when the owner named this tab or asked to close it. The target must be a tty; exactly one
+# only when the owner named this tab or asked to close it. A tab recorded this way stays the owner's:
+# close needs --adopt on it every time, and finished keeps it (keep:owner-tab). The target must be a tty; exactly one
 # claude process must run on it (its exact PID, command line checked) and its screen must read.
 # Every other check stays. Close with --adopt checks the issue when one is given and needs none
 # otherwise; park with --adopt needs the session's id (from its command line, --session-id or --resume,
@@ -1072,6 +1073,8 @@ cmd_close() {
   [ "$adopt" = 1 ] && adopt_target "$target"
   [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] ||
     die 3 "close works only on tabs this home opened (none recorded on $T_TTY; the owner's own tab needs --adopt)"
+  [ "$T_ADOPTED" = 0 ] || [ "$adopt" = 1 ] ||
+    die 3 "the tab on $T_TTY is the owner's own (recorded with --adopt); close it only when the owner named it, with --adopt"
   issue=$(pick_issue "$issue") || exit $?
   if [ -n "$issue" ]; then
     # a tab this home opened: only the final comment of its own run counts; the owner's own tab: any final
@@ -1171,15 +1174,16 @@ F_VERDICT=""; F_REPO=""
 finished_verdict() { # finished_verdict <registry entry json> <live tabs>: sets F_VERDICT and F_REPO; reads only
   # The checks of close, in its order: the tab and the process, the issue, the screen. keep:<reason> = close
   # would refuse and the reason is known; unsure:<what> = it could not be read here (close decides itself).
-  local e=$1 tty tab sid pid match issue role kind cwd run live alive=0 scr n b ct
+  local e=$1 tty tab sid pid match issue role kind cwd run adopted live alive=0 scr n b ct
   F_VERDICT=""; F_REPO=""
-  IFS=$US read -r tty tab sid pid match issue role kind cwd run <<EOF
+  IFS=$US read -r tty tab sid pid match issue role kind cwd run adopted <<EOF
 $(printf '%s' "$e" | jq -r '[.tty, (.tab // ""), .session_id, (.pid // "" | tostring), (.match // ""), (.issue // "" | tostring),
-    (.role // "worker"), (.kind // "claude"), (.cwd // ""), (if .adopted == true then "" else .moved_from // .session_id end)] | join("\u001f")')
+    (.role // "worker"), (.kind // "claude"), (.cwd // ""), (.moved_from // .session_id), (if .adopted == true then "1" else "0" end)] | join("\u001f")')
 EOF
   live=$(printf '%s\n' "$2" | awk -v t="$tty" '$2 == t && !f { print $1; f = 1 }')
   if [ -z "$live" ] || { [ -n "$tab" ] && [ "$live" != "$tab" ]; }; then F_VERDICT=keep:tab-gone; return 0; fi
   if is_caller "$tty" || [ "$sid" = "${CLAUDE_CODE_SESSION_ID:-}" ] || [ "$sid" = "${CODEX_THREAD_ID:-}" ]; then F_VERDICT=keep:caller; return 0; fi
+  [ "$adopted" = 0 ] || { F_VERDICT=keep:owner-tab; return 0; }   # the owner's own tab (every Codex tab is one): closed only on the owner's word, with --adopt
   if [ -n "$pid" ] && be_pid_cmd "$pid" >/dev/null; then
     { [ "$(be_pid_tty "$pid")" = "$tty" ] && pid_alive_as "$pid" "$match"; } || { F_VERDICT=unsure:process; return 0; }
     alive=1

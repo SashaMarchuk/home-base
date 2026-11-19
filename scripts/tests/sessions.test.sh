@@ -863,11 +863,13 @@ issue_final() { # issue_final <n> <run id>: the issue ends with a final home-log
       closed_at: null, author: "owner", comments: [{id: 1, body: $body}]}' > "$GH_STUB_DIR/test__home/issues/$1.json"
 }
 issue_final 31 "$C1"
-check "codex: close before the record matches -> exit 3, nothing typed" [ "$(rc_of ts close "$NT")" = 3 ]
+check "codex: close before the record matches -> exit 3, nothing typed" [ "$(rc_of ts close "$NT" --adopt)" = 3 ]
 check "codex: close before the record matches -> exit 3, nothing typed (second half)" [ -z "$(keys "$NT")" ]
 codex_rec "$NT" "$C1" "$NP" "$W1"
 check "codex: with its record the reopened tab is mapped again" [ "$(sj "$NT" | jq -r '.session_id + " " + (.registered | tostring)')" = "$C1 true" ]
-check "codex: close of the finished, mapped tab" ts close "$NT"
+check "codex: close of the reopened tab without --adopt -> exit 3 (it stays the owner's own)" [ "$(rc_of ts close "$NT")" = 3 ]
+check "codex: finished keeps it" [ "$(ts finished | awk -v t="$NT" '$1 == t { print $4 }')" = keep:owner-tab ]
+check "codex: close of the finished, mapped tab" ts close "$NT" --adopt
 check "codex: close typed the exit command" [ "$(sent "$NT" | head -1)" = /quit ]
 creset; hand_tab ttyx1 901 "/opt/bin/codex" "$W1" w1 codex; claim 31 "$C1"
 check "codex: park of a tab without a thread id -> exit 3" [ "$(rc_of ts park ttyx1 --adopt --issue 31)" = 3 ]

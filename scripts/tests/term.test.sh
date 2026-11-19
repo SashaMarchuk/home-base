@@ -364,6 +364,11 @@ reset; new_tab --issue 12; ISSUE_RUN=run-of-an-earlier-worker issue 12 final
 check "finished: only another run's final comment -> keep:other-run" untouched_by_finished keep:other-run
 jq --arg b "<!-- home-log run=$SID state=final -->" '.comments += [{id: 3, body: $b}]' "$GH_STUB_DIR/test__home/issues/12.json" > "$T/i.json" && mv "$T/i.json" "$GH_STUB_DIR/test__home/issues/12.json"
 check "finished: this run's final beside another run's -> closable" untouched_by_finished closable
+reset; new_tab --issue 12; issue 12 final; jq 'map(.adopted = true)' "$REG" > "$T/r.json" && mv "$T/r.json" "$REG"
+check "finished: the owner's own tab (adopted) -> keep:owner-tab" untouched_by_finished keep:owner-tab
+check "r15 close of a recorded adopted tab without --adopt -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+check "r15 nothing typed into it" [ -z "$(keys)" ]
+check "r15 the same tab closes with --adopt" ts close "$TTY" --adopt
 reset; new_tab --issue 12; issue 12 final needs-test
 check "finished: owner label -> keep:owner-question" untouched_by_finished keep:owner-question
 reset; new_tab --issue 12
