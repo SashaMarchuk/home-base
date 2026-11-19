@@ -182,6 +182,8 @@ on run argv
     if (count of windows) > 0 then
       try
         set frontW to current window
+        -- with no key window (the last one in front was closed) there is no current window: take the first
+        if frontW is missing value then set frontW to window 1
         set frontT to current tab of frontW
         set frontS to current session of frontT
         set hadFront to true
@@ -193,6 +195,7 @@ on run argv
     else
       if placeAt is "current" then
         set w to current window
+        if w is missing value then set w to window 1
       else
         set w to window id (placeAt as integer)
       end if
@@ -206,10 +209,15 @@ on run argv
       end try
     end if
     if hadFront then
+      -- each step on its own: one that fails must not skip the others
+      try
+        tell frontW to select
+      end try
       try
         tell frontT to select
+      end try
+      try
         tell frontS to select
-        if (id of current window) is not (id of frontW) then tell frontW to select
       end try
     end if
     -- the session of a new window can be unready for a moment: wait until it answers
@@ -592,13 +600,14 @@ norm() { printf '%s' "$1" | LC_ALL=C sed "s/$NBSP//g" | tr -d ' \t\r\n'; }
 
 ghost_probe() { # ghost_probe <current box>: rc 0 = suggestion (box now empty), rc 1 = real draft (kept)
   local b2 b3
+  local i
   be_type "$T_TTY" "$T_TAB" "x" || return 1
-  settle
-  b2=$(box_text "$(screen_now)")
+  # a real terminal can redraw the box seconds after the key: wait until it shows something new
+  for i in 1 2 3 4 5; do settle; b2=$(box_text "$(screen_now)"); [ "$b2" != "$1" ] && break; done
   be_key "$T_TTY" "$T_TAB" bs
-  settle
+  # and until the probe character is gone again, so nothing of the probe is left behind
+  for i in 1 2 3 4 5; do settle; b3=$(box_text "$(screen_now)"); [ "$b3" != "$b2" ] && break; done
   [ "$b2" = "x" ] && return 0
-  b3=$(box_text "$(screen_now)")
   [ "$b3" = "$1" ] || note "box on $T_TTY changed during the probe; leaving it as it is"
   return 1
 }
@@ -606,14 +615,23 @@ ghost_probe() { # ghost_probe <current box>: rc 0 = suggestion (box now empty), 
 submit() { # submit <text>: type into an empty box, press Enter, re-check once (rule 6)
   local want scr b
   want=$(norm "$1"); want=${want:0:30}
+  local i
   type_text "$1"
-  scr=$(screen_now)
-  has_dialog "$scr" && die 3 "a dialog opened while typing on $T_TTY; Enter not pressed"
-  b=$(box_text "$scr") || die 3 "the input box on $T_TTY disappeared while typing; Enter not pressed"
+  # a real terminal can redraw the box seconds after the keys: look a few times before deciding
+  for i in 1 2 3 4 5; do
+    scr=$(screen_now)
+    has_dialog "$scr" && die 3 "a dialog opened while typing on $T_TTY; Enter not pressed"
+    b=$(box_text "$scr") || die 3 "the input box on $T_TTY disappeared while typing; Enter not pressed"
+    case "$b" in *"$want"*) break ;; esac
+    settle
+  done
   case "$b" in *"$want"*) ;; *) die 5 "the typed text did not reach the box on $T_TTY; Enter not pressed" ;; esac
-  be_key "$T_TTY" "$T_TAB" cr; settle
-  b=$(box_text "$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null)") || return 0
-  case "$b" in *"$want"*) ;; *) return 0 ;; esac
+  be_key "$T_TTY" "$T_TAB" cr
+  for i in 1 2 3 4 5; do
+    settle
+    b=$(box_text "$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null)") || return 0
+    case "$b" in *"$want"*) ;; *) return 0 ;; esac
+  done
   note "Enter was swallowed on $T_TTY; pressing it once more"
   be_key "$T_TTY" "$T_TAB" cr; settle
   b=$(box_text "$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null)") || return 0
@@ -691,7 +709,7 @@ wait_quiet() { # wait_quiet <seconds>: until no dialog, no running turn and an e
 
 shell_idle() { # shell_idle <tty> [screen]: only the tab's own shell is left on that tty, and (with a screen) it shows an empty prompt
   # The processes on the tty: exactly one shell (zsh, bash, ksh or sh) beside login, nothing else (an editor, ssh, a REPL,
-  # a second shell). The screen: no dialog, no input box, and a last line that ends like an empty prompt ($ % # >).
+  # a second shell). The screen: a last line that ends like an empty prompt ($ % # >).
   # A prompt of another shape is not proven empty: the caller leaves the tab open.
   local n
   n=$(be_procs | awk -v t="$1" '$2 == t { c = $3; k = split(c, p, "/"); c = p[k]; sub(/^-/, "", c)
@@ -700,8 +718,8 @@ shell_idle() { # shell_idle <tty> [screen]: only the tab's own shell is left on 
       o++ } END { print (o ? "other" : s + 0) }')
   [ "$n" = 1 ] || return 1
   [ $# -ge 2 ] || return 0
-  has_dialog "$2" && return 1
-  box_text "$2" >/dev/null && return 1
+  # A box or a dialog still drawn above the prompt belongs to the session that has gone (no agent process is
+  # left on the tty): only the last line counts.
   printf '%s\n' "$2" | nonblank | tail -n 1 | LC_ALL=C sed "s/$NBSP/ /g; s/[[:space:]]*\$//" | grep -q '[$%#>]$'
 }
 
@@ -709,7 +727,7 @@ exit_shell() { # after the session's process is gone: leave the plain shell so t
   local scr n=0
   until shell_idle "$T_TTY" || [ $n -ge 5 ]; do be_sleep "$POLL"; n=$((n + 1)); done   # the session's own helpers may take a moment to go
   scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
-  if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ] || ! shell_idle "$T_TTY"; then
+  if claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ] || ! shell_idle "$T_TTY" "$scr"; then
     note "something still runs in the tab on $T_TTY; the shell is left open"
     return 0
   fi
@@ -1282,7 +1300,7 @@ run_has_question() { # run_has_question <repo> <n> <run id>: 0 when the run's la
 }
 
 cmd_resume() {
-  local sid line role issue msg="" silent=0 nopt=0
+  local sid line role issue msg="" silent=0 nopt=0 rgroup rwin
   [ $# -ge 1 ] || die 2 "usage: resume <session_id> [--message TEXT | --silent]"
   sid=$1; shift
   while [ $# -gt 0 ]; do
@@ -1315,6 +1333,10 @@ cmd_resume() {
     fi
   fi
   [ "$silent" = 1 ] || line="$line $(shq "$msg")"
+  # a session that was opened in a group comes back in that group's window, as open places it
+  rgroup=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .group // empty')
+  rwin=current
+  if [ -n "$rgroup" ] && group_known "$rgroup"; then rwin=$(window_for_group "$rgroup" "$(survey_json)"); fi
   reg_lock || die 3 "could not lock the registry"
   if [ "$role" = worker ] && [ "$(count_live_workers)" -ge "$(cfg term.max_workers 4)" ]; then
     reg_unlock; die 3 "worker cap reached; not resuming"
@@ -1323,7 +1345,7 @@ cmd_resume() {
     'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null, match: $s} else . end)' ||
     { reg_unlock; die 3 "registry write failed"; }
   reg_unlock
-  if [ "$T_KIND" = codex ]; then launch_tab "$sid" "$line" "$sid" current codex; else launch_tab "$sid" "$line" "$sid"; fi
+  if [ "$T_KIND" = codex ]; then launch_tab "$sid" "$line" "$sid" current codex; else launch_tab "$sid" "$line" "$sid" "$rwin"; fi
 }
 
 cmd_survey() {
