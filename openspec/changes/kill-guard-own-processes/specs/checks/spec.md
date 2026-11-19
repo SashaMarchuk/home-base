@@ -27,6 +27,14 @@ The pre-tool hook for shell commands SHALL block with exit 2 and a reason any co
 - **WHEN** a session runs `sh -c "kill -9 -1"` or `true & kill 0`
 - **THEN** the hook blocks it with exit 2
 
+#### Scenario: The same kill behind a prefix
+- **WHEN** a session runs `/bin/sh -c "kill -9 -1"`, `bash -c -- 'kill -9 -1'`, `FOO=1 kill -9 -1`, `"kill" -9 -1`, `\kill 0`, `>/dev/null kill 0`, `/usr/bin/env kill 0`, `if kill 0; then :; fi` or `a & b & kill 0`
+- **THEN** the hook blocks it with exit 2, and the same forms with an exact process id go to the ownership check
+
+#### Scenario: A kill through xargs with options
+- **WHEN** a session runs `echo 5 | xargs -n 1 kill`
+- **THEN** the hook blocks it with exit 2
+
 #### Scenario: An option after a process id
 - **WHEN** a session runs `kill 1234 -0`, `kill 1234 -l` or `kill 1234 -5678`
 - **THEN** the hook blocks it with exit 2, because the shell reads options only before the first process id
@@ -93,6 +101,25 @@ The bash guard SHALL refuse a kill of an exact process id with exit 2 on every s
 #### Scenario: The target is gone
 - **WHEN** no process has the target id
 - **THEN** the hook exits 2 and the reason says there is nothing to kill
+
+### Requirement: HOME-354 A kill the guard cannot read
+When the word `kill` stands in a command where the bash guard cannot read it as `kill`, one optional signal and exact process ids, the guard SHALL answer as HOME-351 does (Claude Code: `ask`; Codex, or no agent process found: exit 2), except after `echo`, `printf`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `gh`, `cat`, `man`, `which`, `type`, `ls`, `cd` and `home-log`, and where a plain word follows `kill` and no bare number or variable comes after it.
+
+#### Scenario: A kill behind another command
+- **WHEN** a Claude Code session runs `timeout 5 kill 1234`, `nice kill 1234`, `trap 'kill 1234' EXIT`, `case x in x) kill 1234;; esac`, `f() { kill 1234; }; f` or `sudo -u x kill 1234`, whoever owns process 1234
+- **THEN** the hook exits 0 and prints the decision `ask` with a reason that quotes the command it could not read
+
+#### Scenario: The same on Codex
+- **WHEN** `timeout 5 kill 1234` reaches the guard through the Codex pre-tool hook
+- **THEN** the hook exits 2 and prints no decision
+
+#### Scenario: The word in text
+- **WHEN** a session runs `git commit -m "kill the bug"`, `grep kill file`, `echo kill me` or `mytool --note "kill it softly"`
+- **THEN** the hook exits 0 and prints nothing
+
+#### Scenario: Text with a number after the word
+- **WHEN** a session runs `mytool --note "we kill 12 of them"`
+- **THEN** the guard cannot tell it from a kill and answers as for a kill behind another command
 
 ### Requirement: HOME-353 Liveness probe
 The bash guard SHALL let signal 0 (`kill -0`, `kill -s 0`, `kill -n 0`) and a signal listing (`kill -l`) pass for exact process ids without the ownership check, because they end no process.

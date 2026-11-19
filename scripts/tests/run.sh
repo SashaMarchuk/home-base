@@ -254,6 +254,16 @@ if sel guards; then
            'sh -c "kill -9 -1"' 'eval "kill 0"' 'true & kill 0' 'kill -0 -1' 'kill 4242 & kill -- -1'; do
     expect "bash-guard must block: $c" 2 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
+  # the same kills behind a path, "--", a variable, quotes, a backslash, a redirection, a wrapper, a keyword or two "&"
+  for c in '/bin/sh -c "kill -9 -1"' "/bin/bash -lc 'kill 0'" "bash -c -- 'kill -9 -1'" 'a & b & kill 0' 'true&kill 0' 'x&y&kill 0' 'FOO=1 kill -9 -1' '"kill" -9 -1' "'kill' 0" '\kill 0' \
+           'sudo -n kill -9 -1' '>/dev/null kill 0' '/usr/bin/env kill 0' 'command -p kill 0' 'if kill 0; then :; fi' 'until kill 0; do :; done' 'echo 5 | xargs -n 1 kill' 'echo 5 | xargs -I {} /bin/kill {}'; do
+    expect "bash-guard must block: $c" 2 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
+  done
+  # the word in text stays allowed, as before
+  for c in 'git commit -m "kill the bug"' 'grep kill file' 'man kill' 'cat notes/kill.md' 'git checkout kill-switch' 'echo "please kill 4242 now"' 'mytool --note "kill it softly"' \
+           'scripts/home-log finish 3 --text "a kill of 12 processes"' 'while kill -0 4242; do sleep 1; done' 'skill 4242' './kill.sh 4242' 'python3 -c "os.kill(4242, 9)"'; do
+    expect "bash-guard must allow: $c" 0 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
+  done
   for c in 'echo kill -1' 'kill -l' 'git push origin main' 'git push --force origin feature-x' 'gh issue list' 'echo kill me' 'git push origin base-fix' 'echo a 2>&1 &'; do
     expect "bash-guard must allow: $c" 0 sh -c 'jq -n --arg c "$1" "{tool_input:{command:\$c}}" | "$2"' _ "$c" "$BG"
   done
@@ -280,6 +290,7 @@ EOS
     case "$1" in
       allow) [ "$rc" = 0 ] && [ -z "$out" ] ;;
       ask) [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | test("PID [0-9]+ \\("))' >/dev/null ;;
+      unread) [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | test("cannot read"))' >/dev/null ;;
       block) [ "$rc" = 2 ] && [ -z "$out" ] && grep -q '^bash-guard: blocked: ' "$T/err" ;;
     esac && ok || bad "kill guard must $1 under $2: $c (exit $rc, stdout '$out', stderr '$(head -1 "$T/err")')"
   }
@@ -292,6 +303,17 @@ EOS
     GUARD="$H/scripts/hooks/codex-pre-tool" kg block claude "$c"
   done
   CODEX_THREAD_ID=t-1 kg block claude 'kill @FOR@'
+  # the same kill behind a variable, a wrapper word, quotes, a backslash, a redirection, a keyword or two "&" is read as a kill
+  for c in 'FOO=1 kill @FOR@' 'env FOO=1 kill @FOR@' 'command -p kill @FOR@' '\kill @FOR@' '"kill" @FOR@' '/usr/bin/env kill @FOR@' '>/dev/null kill @FOR@' 'x&y&kill @FOR@' 'if kill @FOR@; then :; fi'; do
+    kg ask claude "$c"; kg block codex "$c"
+  done
+  for c in 'FOO=1 kill @OWN@' '"kill" @OWN@' 'if kill @OWN@; then :; fi' 'x&y&kill @OWN@'; do kg allow claude "$c"; kg allow codex "$c"; done
+  # a kill the guard cannot read (another command in front, a trap, a case arm, a function body): asked or refused, own process or not
+  for c in 'timeout 5 kill @FOR@' 'nice kill -9 @FOR@' "trap 'kill @FOR@' EXIT" 'case x in x) kill @FOR@;; esac' 'f() { kill @FOR@; }; f' 'sudo -u x kill @FOR@' 'timeout 5 kill @OWN@' 'mytool --note "we kill 12 of them"' 'ls | xargs grep kill'; do
+    kg unread claude "$c"; kg block codex "$c"
+    GUARD="$H/scripts/hooks/codex-pre-tool" kg block claude "$c"
+  done
+  kg block claude 'timeout 5 kill @FOR@; gh auth switch'
   out=$(bash -c 'exec -a claude bash "$@"' _ "$T/agent.sh" "$BG" "kill $FOR" 2>/dev/null)
   printf '%s' "$out" | jq -e --arg p "PID $FOR (sleep 300)" '.hookSpecificOutput.permissionDecisionReason | contains($p)' >/dev/null && ok || bad "the ask reason must name the PID and its command: $out"
   kg block claude 'kill @FOR@; gh auth switch'; kg block claude 'kill @FOR@ && docker restart web'

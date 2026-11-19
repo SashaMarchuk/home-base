@@ -8,7 +8,13 @@
 # .local/registry.json (not an adopted tab; same tty; command line still holds its match).
 # Any other PID: Claude Code is answered "ask" (JSON on stdout, exit 0; the user confirms),
 # Codex is refused (exit 2). Ownership that cannot be determined is refused. Signal 0 only
-# probes and always passes. Not seen: a kill inside a script file or another interpreter.
+# probes and always passes. A command that holds the word kill where the guard cannot read it
+# as "kill [signal] <PIDs>" (behind a wrapper such as timeout, nice, trap or a function body)
+# gets the same answer: ask in Claude Code, refused on Codex. Text is let through: after
+# echo, printf, grep, egrep, fgrep, rg, git, gh, cat, man, which, type, ls, cd and home-log,
+# and where a plain word follows kill and no bare number or variable comes after it.
+# Not seen: a kill inside a script file or another interpreter. The agent session is the
+# nearest process above the hook whose command is named exactly claude or codex.
 # The command is .tool_input.command (Claude Code, Codex Bash) or .tool_input.cmd
 # (a string or a list of words; Codex exec_command).
 # Usage outside a hook: echo '{"tool_input":{"command":"..."}}' | bash-guard
@@ -20,7 +26,7 @@ CMD=$(jq -r '.tool_input.command // .tool_input.cmd // empty
   | if type == "array" then
       (. as $a | (if length >= 3 and (.[0] | test("(^|/)(ba|z|k|da)?sh$"))
         then (first(range(1; length) | select($a[.] | test("^-[A-Za-z]*c$"))) // null) else null end) as $i
-      | if $i != null and ($a[1:$i] | all(startswith("-"))) then $a[$i + 1:] else $a end | join(" "))
+      | if $i != null and ($a[1:$i] | all(startswith("-"))) then $a[$i + 1 + (if $a[$i + 1] == "--" then 1 else 0 end):] else $a end | join(" "))
     else . end' 2>/dev/null)
 [ -n "$CMD" ] || exit 0
 block() { echo "bash-guard: blocked: $1. $2" >&2; exit 2; }
@@ -28,15 +34,25 @@ block() { echo "bash-guard: blocked: $1. $2" >&2; exit 2; }
 printf '%s\n' "$CMD" | grep -qE '(^|[^A-Za-z0-9_.-])(pkill|killall)([^A-Za-z0-9_-]|$)' && block "kill by pattern" "Kill exact PIDs only (rule 9)."
 # Kill with a computed PID list is a kill by pattern.
 printf '%s\n' "$CMD" | grep -qE '(^|[;&|([:space:]])kill([[:space:]]+-[^[:space:]]+)*[[:space:]]+[^;&|]*(\$\(|`|pgrep|pidof)' && block "kill with a computed PID list" "Kill exact numeric PIDs only (rule 9)."
-printf '%s\n' "$CMD" | grep -qE 'xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+kill([[:space:]]|$)' && block "kill through xargs" "Kill exact numeric PIDs only (rule 9)."
+printf '%s\n' "$CMD" | grep -qE 'xargs([[:space:]]+(-[^[:space:]]+|[0-9]+|\{\}))*[[:space:]]+([^[:space:]]*/)?kill([[:space:]]|$)' && block "kill through xargs" "Kill exact numeric PIDs only (rule 9)."
 # Look at each simple command separately.
-# A single & outside a redirection ends a command too; sh -c "..." and eval "..." are read as their script.
-segs=$(printf '%s\n' "$CMD" | sed -E 's/(\|\||&&|;|\||\$\(|`)/\n/g' | sed -E 's/(^|[^<>&])&([^>&]|$)/\1\n\2/g')
-PIDS=""
+# A single & outside a redirection ends a command too (one at a time, so "a&b&c" is three commands);
+# sh -c "..." and eval "..." are read as their script, with a path before the shell and "--" after -c.
+# Skipped before the command word: ( ! {, a redirection, VAR=value, a backslash, the wrappers and
+# keywords below (with a path), and quotes around the word kill.
+segs=$(printf '%s\n' "$CMD" | sed -E 's/(\|\||&&|;|\||\$\(|`)/\n/g' | sed -E -e ':a' -e 's/(^|[^<>&])&([^>&]|$)/\1\n\2/' -e 'ta')
+PIDS=""; UNREAD=""
 while IFS= read -r s; do
-  s=$(printf '%s' "$s" | sed -E 's/^[[:space:](!{]*//; :k
-    s/^(sudo|command|builtin|exec|env|nohup|time|do|then|else|elif)[[:space:]]+//; tk
-    s/^((ba|z|k|da)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c|eval)[[:space:]]+["'"'"']?//; tk
+  s=$(printf '%s' "$s" | sed -E 's/^[[:space:]]*//; :k
+    s/^[(!{]+[[:space:]]*//; tk
+    s/^[0-9]*[<>]{1,2}&?[[:space:]]*[^[:space:]]+[[:space:]]+//; tk
+    s/^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+//; tk
+    s#^([^[:space:]]*/)?(sudo([[:space:]]+-[A-Za-z]+)*|command([[:space:]]+-p)?|builtin|exec|env|nohup|time)[[:space:]]+##; tk
+    s/^(do|then|else|elif|if|while|until)[[:space:]]+//; tk
+    s#^(([^[:space:]]*/)?(ba|z|k|da)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*c([[:space:]]+--)?|eval)[[:space:]]+["'"'"']?##; tk
+    s/^\\//; tk
+    s#^"(([^[:space:]"]*/)?kill)"([[:space:]]|$)#\1\3#; tk
+    s#^'"'"'(([^[:space:]'"'"']*/)?kill)'"'"'([[:space:]]|$)#\1\3#; tk
     s#^[^[:space:]]*/(kill|pkill|killall)([[:space:]]|$)#\1\2#')
   [ -n "$s" ] || continue
   case "$s" in
@@ -65,6 +81,19 @@ while IFS= read -r s; do
       pids="$pids $a"; dd=1
     done
     [ "$probe" = 1 ] || PIDS="$PIDS$pids"
+  elif q=$(printf '%s' "$s" | tr -d "\"'") && printf '%s' "$q" | grep -qE '(^|[[:space:]])([^[:space:]]*/)?\\?kill([[:space:]]|$)'; then
+    # The word kill inside another command. Text passes: after a command of the list below, or when a
+    # plain word follows kill and no bare number or variable comes after it. Anything else is a kill
+    # the guard cannot read (timeout 5 kill N, trap, a function body, xargs): asked or refused below.
+    case "$(printf '%s\n' "$q" | awk '{ n = split($1, a, "/"); print a[n]; exit }')" in
+      echo|printf|grep|egrep|fgrep|rg|git|gh|cat|man|which|type|ls|cd|home-log) ;;
+      xargs) UNREAD="$UNREAD'$(printf '%s' "$s" | cut -c1-80)', " ;;
+      *) printf '%s\n' "$q" | awk '{ k = 0
+             for (i = 1; i <= NF; i++) { w = $i; sub(/^.*\//, "", w); sub(/^\\/, "", w); if (w == "kill") { k = i; break } }
+             if (!k || k == NF || $(k + 1) !~ /^[A-Za-z][A-Za-z,.:;!?-]*$/) exit 1
+             for (i = k + 1; i <= NF; i++) if ($i ~ /^[0-9]+$/ || index($i, "$") > 0) exit 1
+             exit 0 }' || UNREAD="$UNREAD'$(printf '%s' "$s" | cut -c1-80)', " ;;
+    esac
   fi
   printf '%s' "$s" | grep -qE '^gh[[:space:]]+auth[[:space:]]+switch' && block "gh auth switch" "Use the account this home's config names (rule 12)."
   printf '%s' "$s" | grep -qE '^gh[[:space:]]+repo[[:space:]]+delete' && block "gh repo delete" "Deleting a repository needs the owner."
@@ -81,9 +110,9 @@ while IFS= read -r re; do
   [ -n "$re" ] || continue
   printf '%s\n' "$CMD" | grep -qE -- "$re" && block "matches guard.extra '$re'" "This home blocks it; ask the owner."
 done < <(cfg_all guard.extra)
-[ -n "$PIDS" ] || exit 0
+[ -n "$PIDS$UNREAD" ] || exit 0
 
-# ---- a kill of exact PIDs: is every one of them this session's own process?
+# ---- a kill of exact PIDs: is every one of them this session's own process? (and a kill that could not be read)
 pcmd() { ps -o command= -p "$1" 2>/dev/null; }
 above() { # above <pid>: its ancestors, nearest first, one "<pid> <first word of the command, no path>" per line
   local p=$1 n=0 c
@@ -110,7 +139,7 @@ EOF
   return 1
 }
 REFUSE="Run nothing instead; ask the owner to run the kill (rule 9)."
-[ -n "$(pcmd $$)" ] || block "kill of exact PIDs while ps does not work" "Ownership cannot be checked. $REFUSE"
+[ -n "$(pcmd $$)" ] || block "kill while ps does not work" "Ownership cannot be checked. $REFUSE"
 agent=$(above $$ | awk '$2 == "claude" || $2 == "codex" { print; exit }')
 AGENT_PID=${agent%% *}; AGENT_NAME=${agent#* }
 foreign=""
@@ -125,11 +154,15 @@ for p in $PIDS; do
   [ -n "$AGENT_PID" ] || block "kill $p with no agent process above this hook" "Ownership cannot be checked. $REFUSE"
   foreign="$foreign$p ($(printf '%s' "$c" | cut -c1-80)), "
 done
-[ -n "$foreign" ] || exit 0
-foreign=${foreign%, }
+[ -n "$foreign$UNREAD" ] || exit 0
+foreign=${foreign%, }; UNREAD=${UNREAD%, }
+why=""
+[ -n "$foreign" ] && why="this session did not start PID $foreign"
+[ -n "$UNREAD" ] && why="${why:+$why; }the guard cannot read this as 'kill [signal] <PIDs>': $UNREAD"
 if [ "$AGENT_NAME" = claude ] && [ "${BASH_GUARD_SURFACE:-}" != codex ] && [ -z "${CODEX_THREAD_ID:-}" ]; then
-  jq -nc --arg r "bash-guard: this session did not start PID $foreign. Confirm only if exactly this process must end (rule 9)." \
+  jq -nc --arg r "bash-guard: $why. Confirm only if exactly this process must end (rule 9)." \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r}}'
   exit 0
 fi
-block "kill of a process this session did not start: PID $foreign" "$REFUSE"
+[ -n "$foreign" ] && block "kill of a process this session did not start: PID $foreign${UNREAD:+; and a kill the guard cannot read: $UNREAD}" "$REFUSE"
+block "a kill the guard cannot read: $UNREAD" "Write it as kill <PID> on its own, or ask the owner to run it (rule 9)."
