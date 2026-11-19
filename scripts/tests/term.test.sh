@@ -369,6 +369,17 @@ check "finished: the owner's own tab (adopted) -> keep:owner-tab" untouched_by_f
 check "r15 close of a recorded adopted tab without --adopt -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
 check "r15 nothing typed into it" [ -z "$(keys)" ]
 check "r15 the same tab closes with --adopt" ts close "$TTY" --adopt
+session_file() { # session_file <pid> <session id>: the session file Claude Code keeps for a live session
+  mkdir -p "$TERM_FAKE_DIR/profiles/p/sessions"
+  jq -n --argjson p "$1" --arg s "$2" '{pid: $p, sessionId: $s, cwd: "/x", status: "idle"}' > "$TERM_FAKE_DIR/profiles/p/sessions/$1.json"
+}
+reset; new_tab --issue 12; issue 12 final; session_file "$PID" "$SID"
+check "finished: the session file names the recorded id -> closable" untouched_by_finished closable
+session_file "$PID" abcdefab-cdef-4abc-8def-abcdefabcd09
+check "finished: the session moved to another id (as after /clear) -> keep:moved" untouched_by_finished keep:moved
+reset; new_tab --issue 12; issue 12 final
+jq --arg n abcdefab-cdef-4abc-8def-abcdefabcd09 'map(. + {moved_from: .session_id, session_id: $n})' "$REG" > "$T/r.json" && mv "$T/r.json" "$REG"
+check "finished: an entry that already followed a move -> keep:moved" [ "$(ts finished | awk '{ print $4 }')" = keep:moved ]
 reset; new_tab --issue 12; issue 12 final needs-test
 check "finished: owner label -> keep:owner-question" untouched_by_finished keep:owner-question
 reset; new_tab --issue 12

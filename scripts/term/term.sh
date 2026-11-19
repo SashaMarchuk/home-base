@@ -1174,7 +1174,7 @@ F_VERDICT=""; F_REPO=""
 finished_verdict() { # finished_verdict <registry entry json> <live tabs>: sets F_VERDICT and F_REPO; reads only
   # The checks of close, in its order: the tab and the process, the issue, the screen. keep:<reason> = close
   # would refuse and the reason is known; unsure:<what> = it could not be read here (close decides itself).
-  local e=$1 tty tab sid pid match issue role kind cwd run adopted live alive=0 scr n b ct
+  local e=$1 tty tab sid pid match issue role kind cwd run adopted live alive=0 scr n b ct sf
   F_VERDICT=""; F_REPO=""
   IFS=$US read -r tty tab sid pid match issue role kind cwd run adopted <<EOF
 $(printf '%s' "$e" | jq -r '[.tty, (.tab // ""), .session_id, (.pid // "" | tostring), (.match // ""), (.issue // "" | tostring),
@@ -1187,6 +1187,12 @@ EOF
   if [ -n "$pid" ] && be_pid_cmd "$pid" >/dev/null; then
     { [ "$(be_pid_tty "$pid")" = "$tty" ] && pid_alive_as "$pid" "$match"; } || { F_VERDICT=unsure:process; return 0; }
     alive=1
+  fi
+  # The session moved to another id (as after /clear or /resume): the tab may hold other work than its issue's run.
+  [ "$run" = "$sid" ] || { F_VERDICT=keep:moved; return 0; }
+  if [ "$alive" = 1 ] && [ "$kind" = claude ] && sf=$(session_of_pid "$pid"); then
+    sf=${sf%%"$US"*}
+    is_uuid "$sf" && [ "$sf" != "$sid" ] && { F_VERDICT=keep:moved; return 0; }
   fi
   [ -n "$issue" ] || { F_VERDICT=keep:no-issue; return 0; }
   F_REPO=$HOME_REPO   # an orchestrator tab was opened for an issue of the home it runs in

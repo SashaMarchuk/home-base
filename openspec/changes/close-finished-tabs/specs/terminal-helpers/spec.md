@@ -51,11 +51,15 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** the verdict is `closable`
 
 ### Requirement: HOME-419 Kept tabs
-`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only, an owner label, a dialog, a running turn, background work or a Codex tab without its thread id.
+`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only, an owner label, a dialog, a running turn, background work, a Codex tab without its thread id, or a session that moved to another id.
 
 #### Scenario: An open question
 - **WHEN** the tab's issue carries the owner label
 - **THEN** the verdict is `keep:owner-question`
+
+#### Scenario: The owner reused the tab
+- **WHEN** the session's own file names another id than the registry entry (as after `/clear` or `/resume`), or the entry records such a move, and the issue has a final comment of the first id's run
+- **THEN** the verdict is `keep:moved`, and only the owner's word closes that tab
 
 #### Scenario: A follow-up worker on a finished issue
 - **WHEN** a second worker's tab is open on an issue whose only final `home-log` comment is of the first worker's run, and that tab is idle with an empty box
