@@ -337,10 +337,42 @@ check "r8 shell left open" [ "$(mode)" = shell ]
 reset; new_tab --issue 12; issue 12 final
 check "r8 nothing typed for the removed option" [ -z "$(keys)" ]
 
+entry_open() { [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | .closed == null' "$REG")" = true ]; }
+gone() { rm -rf "$TERM_FAKE_DIR/proc/$PID"; put mode shell; }   # the session ended on its own: the tab shows its shell
 reset; new_tab --issue 12; issue 12 final; rm -rf "$TERM_FAKE_DIR/proc/$PID"; put box "typed by hand"
-check "r8 session gone on its own -> entry closed" ts close "$TTY"
+check "r8 session gone on its own, a box still on screen -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
 check "r8 nothing typed into a tab that still shows a box" [ -z "$(keys)" ]
 check "r8 that draft intact" [ "$(cat "$(tabdir "$TTY")/box")" = "typed by hand" ]
+check "r8 its entry stays open" entry_open
+reset; new_tab --issue 12; issue 12 final; gone
+check "r8 session gone on its own, a lone shell at an empty prompt -> closed" ts close "$TTY"
+check "r8 only exit was typed there" [ "$(sent | tr '\n' ' ')" = "exit " ]
+check "r8 that tab closed" [ "$(mode)" = closed ]
+reset; new_tab --issue 12; issue 12 final; gone; put box "git push --force"
+check "r8 session gone, a command half typed at the prompt -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+check "r8 nothing typed after the half-typed command" [ -z "$(keys)" ]
+check "r8 nothing submitted there" [ -z "$(sent)" ]
+check "r8 its entry stays open (half-typed command)" entry_open
+other_program() { mkdir -p "$TERM_FAKE_DIR/proc/777"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/777/cmd"; printf '%s' "$TTY" > "$TERM_FAKE_DIR/proc/777/tty"; }
+for prog in "vim notes.md" "ssh build-host" "python3" "/bin/bash"; do
+  reset; new_tab --issue 12; issue 12 final; gone; other_program "$prog"
+  check "r8 session gone, $prog runs in the tab -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+  check "r8 nothing typed into $prog" [ -z "$(keys)" ]
+  check "finished: session gone, $prog runs in the tab -> keep:shell" [ "$(ts finished | awk '{ print $4 }')" = keep:shell ]
+  check "finished: and types nothing into $prog" [ -z "$(keys)" ]
+done
+reset; new_tab --issue 12; issue 12 final; gone; rm -rf "$TERM_FAKE_DIR/proc/$((PID + 5000))"
+check "r8 session gone and no shell seen on the tty -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+reset; new_tab --issue 12; issue 12 final; other_program "vim notes.md"
+check "r8 a live session closes, but exit is not typed beside another program" ts close "$TTY"
+check "r8 only /exit was typed" [ "$(sent | tr '\n' ' ')" = "/exit " ]
+check "r8 that shell is left open" [ "$(mode)" = shell ]
+reset; new_tab --issue 12; issue 12 final; jq 'map(.pid = null)' "$REG" > "$T/r.json" && mv "$T/r.json" "$REG"
+check "r8 a tab still starting (no process recorded) -> refused" [ "$(rc_of ts close "$TTY")" = 3 ]
+check "r8 nothing typed into the starting tab" [ -z "$(keys)" ]
+check "r8 the starting session runs on" alive "$PID"
+check "r8 its entry stays open (starting)" entry_open
+check "finished: a tab still starting -> keep:starting" [ "$(ts finished | awk '{ print $4 }')" = keep:starting ]
 
 # ---------------------------------------------------------------- finished: which tabs close would accept (read only)
 verdict() { ts finished 2>/dev/null | awk -v t="$TTY" '$1 == t { print $4 }'; }
@@ -408,6 +440,9 @@ reset; new_tab --issue 12; issue 12 final; put mode shell
 check "finished: no input box on a live session -> unsure:no-box" untouched_by_finished unsure:no-box
 reset; new_tab --issue 12; issue 12 final; rm -rf "$TERM_FAKE_DIR/proc/$PID"; put mode shell
 check "finished: the session ended on its own -> closable" untouched_by_finished closable
+put box "git push --force"
+check "finished: ended on its own, a command half typed at the prompt -> keep:shell" untouched_by_finished keep:shell
+check "finished: that command is intact" [ "$(cat "$(tabdir "$TTY")/box")" = "git push --force" ]
 reset; new_tab --issue 12; issue 12 active; rm -rf "$TERM_FAKE_DIR/proc/$PID"
 check "finished: ended on its own but the issue is not final -> keep:no-final" untouched_by_finished keep:no-final
 reset; new_tab --issue 12; issue 12 final; printf 'other-program' > "$TERM_FAKE_DIR/proc/$PID/cmd"
@@ -667,6 +702,9 @@ hand_tab() { # hand_tab <tty> <pid> <command line> [mode]: a tab the owner opene
   printf 'hand-%s' "$1" > "$d/tab"; printf '%s' "${4:-claude}" > "$d/mode"; : > "$d/box"; printf '%s' "$2" > "$d/pid"
   printf '%s' "$3" > "$TERM_FAKE_DIR/proc/$2/cmd"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$2/tty"
   printf '%s' "$WORK" > "$TERM_FAKE_DIR/proc/$2/cwd"
+  mkdir -p "$TERM_FAKE_DIR/proc/$(($2 + 5000))"   # the tab's own login shell, as a real tab has
+  printf '%s' -zsh > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/cmd"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/tty"
+  printf '%s' "$WORK" > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/cwd"
   TTY=$1; PID=$2
 }
 reg_len() { if [ -f "$REG" ]; then jq length "$REG"; else echo 0; fi; }

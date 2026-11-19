@@ -50,6 +50,9 @@ hand_tab() { # hand_tab <tty> <pid> <command line> <cwd> [window] [mode]: a live
   printf '%s' "${5:-w1}" > "$d/window"
   printf '%s' "$3" > "$TERM_FAKE_DIR/proc/$2/cmd"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$2/tty"
   printf '%s' "$4" > "$TERM_FAKE_DIR/proc/$2/cwd"
+  mkdir -p "$TERM_FAKE_DIR/proc/$(($2 + 5000))"   # the tab's own login shell, as a real tab has
+  printf '%s' -zsh > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/cmd"; printf '%s' "$1" > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/tty"
+  printf '%s' "$4" > "$TERM_FAKE_DIR/proc/$(($2 + 5000))/cwd"
 }
 sess_file() { # sess_file <profile> <pid> <session id> <status> <cwd> [name]
   local d="$TERM_FAKE_DIR/profiles/$1/sessions"

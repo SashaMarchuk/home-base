@@ -40,10 +40,10 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** no tab receives a key and the registry is unchanged
 
 ### Requirement: HOME-415 Closable tabs
-`term.sh finished` SHALL say `closable` only when the issue has a final `home-log` comment of the run of the session in that tab (the id the session started with) and no owner label, and the session's process is gone or its screen shows no dialog, running turn or background job and an empty input box.
+`term.sh finished` SHALL say `closable` only when the issue has a final `home-log` comment of the run of the session in that tab (the id the session started with) and no owner label, and either its screen shows no dialog, running turn or background job and an empty input box, or the session's process is gone and HOME-421 finds the tab a lone shell at an empty prompt.
 
 #### Scenario: The session ended on its own
-- **WHEN** the issue is final and the session's process is gone while its tab is still open
+- **WHEN** the issue is final, the session's process is gone and its tab holds only its shell at an empty prompt
 - **THEN** the verdict is `closable`
 
 #### Scenario: This run's final beside another run's
@@ -51,7 +51,15 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** the verdict is `closable`
 
 ### Requirement: HOME-419 Kept tabs
-`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only, an owner label, a dialog, a running turn, background work, a Codex tab without its thread id, or a session that moved to another id.
+`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only, an owner label, a dialog, a running turn, background work, a Codex tab without its thread id, a session that moved to another id, a tab still starting, or a gone session whose tab is not a lone shell at an empty prompt.
+
+#### Scenario: A tab still starting
+- **WHEN** a registry entry has its tty and no process id yet, because its launch or resume is not over
+- **THEN** the verdict is `keep:starting`
+
+#### Scenario: Something else runs where the session was
+- **WHEN** the session's process is gone and an editor, `ssh`, a REPL or a second shell runs on that tty, or text is typed at the shell prompt
+- **THEN** the verdict is `keep:shell`
 
 #### Scenario: An open question
 - **WHEN** the tab's issue carries the owner label
@@ -79,6 +87,29 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 #### Scenario: Close with the flag
 - **WHEN** the owner named that tab and `term.sh close <tty> --adopt` runs on it
 - **THEN** the checks of close run as before and the session exits
+
+### Requirement: HOME-421 Typing exit only into a lone shell
+`term.sh` SHALL type `exit` into a tab only when the processes on its tty are one shell (`zsh`, `bash`, `ksh` or `sh`) beside `login`; `term.sh close` of a session that was gone before it ran SHALL also need a screen with no dialog, no input box and a last line that ends like an empty prompt (`$`, `%`, `#` or `>`), else exit 3 with nothing typed; and it SHALL refuse with exit 3 a tab with no process id recorded yet.
+
+#### Scenario: A half-typed command at the prompt
+- **WHEN** the session ended on its own, `git push --force` is typed at the shell prompt of its tab and `term.sh close` runs on it
+- **THEN** close exits 3, types nothing and the entry stays open
+
+#### Scenario: Another program in the tab
+- **WHEN** the session ended on its own and `vim`, `ssh`, a REPL or a second shell runs on that tty
+- **THEN** close exits 3 and types nothing
+
+#### Scenario: A live session beside another program
+- **WHEN** close ends a live session with `/exit` and another program still runs on that tty
+- **THEN** `exit` is not typed and the shell is left open
+
+#### Scenario: A tab still starting
+- **WHEN** `term.sh close` runs on an entry whose tty is recorded and whose process id is not
+- **THEN** it exits 3, types nothing and the entry stays open
+
+#### Scenario: A lone shell at an empty prompt
+- **WHEN** the session ended on its own and its tab holds only its shell at an empty prompt
+- **THEN** close types `exit` and marks the entry closed
 
 ### Requirement: HOME-418 What finished cannot decide
 `term.sh finished` SHALL say `unsure:<what>` when another program runs under the recorded process id, the issue or its repo cannot be read, the screen cannot be read or shows no input box, a notice is shown, or the box holds text, and SHALL read the issue of an orchestrator tab in the repo named by the `home.config` of that tab's folder.

@@ -61,7 +61,10 @@
 #  8 close only on a finished session: the issue has a final home-log comment of this session's own run
 #    (the id it started with; any run's for the owner's own tab) and no owner label
 #    (checked on GitHub), no dialog, no running turn, no background work, an empty box; it types
-#    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed
+#    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed.
+#    "exit" is typed only into a lone shell (one zsh, bash, ksh or sh beside login on the tty); when the
+#    session was gone before close ran, also only at an empty prompt, else close refuses. A tab whose
+#    launch is not over (no process recorded) is refused
 #  9 park writes the open question and the resume command to the issue, then exits; it refuses
 #    when a real unsent draft exists or a turn is running (a running turn is never interrupted)
 # 10 resume reopens the recorded session id with one message: --message TEXT replaces the default,
@@ -685,10 +688,26 @@ wait_quiet() { # wait_quiet <seconds>: until no dialog, no running turn and an e
   return 1
 }
 
+shell_idle() { # shell_idle <tty> [screen]: only the tab's own shell is left on that tty, and (with a screen) it shows an empty prompt
+  # The processes on the tty: exactly one shell (zsh, bash, ksh or sh) beside login, nothing else (an editor, ssh, a REPL,
+  # a second shell). The screen: no dialog, no input box, and a last line that ends like an empty prompt ($ % # >).
+  # A prompt of another shape is not proven empty: the caller leaves the tab open.
+  local n
+  n=$(be_procs | awk -v t="$1" '$2 == t { c = $3; k = split(c, p, "/"); c = p[k]; sub(/^-/, "", c)
+      if (c == "login") next
+      if (c == "zsh" || c == "bash" || c == "ksh" || c == "sh") { s++; next }
+      o++ } END { print (o ? "other" : s + 0) }')
+  [ "$n" = 1 ] || return 1
+  [ $# -ge 2 ] || return 0
+  has_dialog "$2" && return 1
+  box_text "$2" >/dev/null && return 1
+  printf '%s\n' "$2" | nonblank | tail -n 1 | LC_ALL=C sed "s/$NBSP/ /g; s/[[:space:]]*\$//" | grep -q '[$%#>]$'
+}
+
 exit_shell() { # after the session's process is gone: leave the plain shell so the tab closes
   local scr
   scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
-  if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ]; then
+  if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ] || ! shell_idle "$T_TTY"; then
     note "something still runs in the tab on $T_TTY; the shell is left open"
     return 0
   fi
@@ -1073,6 +1092,8 @@ cmd_close() {
   [ "$adopt" = 1 ] && adopt_target "$target"
   [ "$T_REG" = 1 ] || [ "$ADOPT_NEW" = 1 ] ||
     die 3 "close works only on tabs this home opened (none recorded on $T_TTY; the owner's own tab needs --adopt)"
+  [ "$T_REG" = 0 ] || [ -n "$T_PID" ] ||
+    die 3 "the session on $T_TTY is still starting (no process is recorded for it yet); not closing"
   [ "$T_ADOPTED" = 0 ] || [ "$adopt" = 1 ] ||
     die 3 "the tab on $T_TTY is the owner's own (recorded with --adopt); close it only when the owner named it, with --adopt"
   issue=$(pick_issue "$issue") || exit $?
@@ -1101,6 +1122,9 @@ cmd_close() {
     fi
     adopt_record
     exit_session "$word" "$timeout"
+  else   # the session ended before this call: what was typed or started in that tab since is unknown
+    shell_idle "$T_TTY" "$(screen_now)" ||
+      die 3 "the session on $T_TTY is gone, but its tab is not a lone shell at an empty prompt (another program runs there or text is typed); not closing"
   fi
   bind_issue "$issue"   # set only now: the finished-issue check passed and the session exited
   exit_shell
@@ -1188,6 +1212,7 @@ EOF
     { [ "$(be_pid_tty "$pid")" = "$tty" ] && pid_alive_as "$pid" "$match"; } || { F_VERDICT=unsure:process; return 0; }
     alive=1
   fi
+  [ -n "$pid" ] || { F_VERDICT=keep:starting; return 0; }   # the tab exists and no process is recorded yet: the launch is not over
   # The session moved to another id (as after /clear or /resume): the tab may hold other work than its issue's run.
   [ "$run" = "$sid" ] || { F_VERDICT=keep:moved; return 0; }
   if [ "$alive" = 1 ] && [ "$kind" = claude ] && sf=$(session_of_pid "$pid"); then
@@ -1205,7 +1230,11 @@ EOF
     owner-label) F_VERDICT=keep:owner-question; return 0 ;;
     *) F_VERDICT=unsure:issue-unreadable; return 0 ;;
   esac
-  [ "$alive" = 1 ] || { F_VERDICT=closable; return 0; }   # the session ended on its own; close ends the shell
+  if [ "$alive" = 0 ]; then   # the session ended on its own; close ends the shell, only a lone shell at an empty prompt
+    scr=$(be_screen "$tty" "$live" 2>/dev/null) || { F_VERDICT=unsure:screen; return 0; }
+    if shell_idle "$tty" "$scr"; then F_VERDICT=closable; else F_VERDICT=keep:shell; fi
+    return 0
+  fi
   if [ "$kind" = codex ]; then
     ct=$(codex_thread "$tty" "$pid") && [ "${ct%%"$US"*}" = "$sid" ] || { F_VERDICT=keep:codex-no-thread; return 0; }
   fi
