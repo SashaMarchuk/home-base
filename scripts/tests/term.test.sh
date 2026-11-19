@@ -457,6 +457,9 @@ CHILD="$T/child home"; mkdir -p "$CHILD"; printf 'repo=test/child\n' > "$CHILD/h
 child_tab() { local out; out=$(ts open "$CHILD" --role orchestrator --issue 5) || return 1; SID=${out%% *}; out=${out#* }; TTY=${out%% *}; PID=${out#* }; }
 reset; child_tab; issue 5 final --repo test/child
 check "finished: an orchestrator tab is judged in its own home's repo" [ "$(ts finished --json | jq -r '"\(.repo) \(.verdict)"')" = "test/child closable" ]
+reset; child_tab; ISSUE_RUN=run-of-its-worker issue 5 final --repo test/child
+check "finished: an orchestrator tab whose issue a worker's run finished -> unsure:other-run" untouched_by_finished unsure:other-run
+check "finished: close accepts that orchestrator tab on the owner's or a model's word" ts close "$TTY" --repo test/child
 reset; child_tab; issue 5 final; issue 5 active --repo test/child
 check "finished: never judged against this home's issue of the same number" untouched_by_finished keep:no-final
 reset; child_tab; issue 5 final

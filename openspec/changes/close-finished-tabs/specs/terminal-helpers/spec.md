@@ -8,7 +8,7 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** the orchestrator asks once before freezing them
 
 ### Requirement: HOME-061 Close only a finished session
-`term.sh close` SHALL close only a tab this home opened, for an issue given with `--issue` or recorded at open (exit 2 without one), whose issue on GitHub has a final `home-log` comment of that session's own run (the id the session started with; for the owner's own tab under HOME-106 a final comment of any run) and no owner label, and whose screen shows no dialog, no running turn, no background job and an empty input box, refusing with exit 3 otherwise or when the issue cannot be read, and then verify that the session's process is gone.
+`term.sh close` SHALL close only a tab this home opened, for an issue given with `--issue` or recorded at open (exit 2 without one), whose issue on GitHub has a final `home-log` comment of that session's own run (the id it started with; of any run for the owner's own tab and for an orchestrator tab, whose issue its workers finish) and no owner label, and whose screen shows no dialog, no running turn, no background job and an empty input box, refusing with exit 3 otherwise or when the issue cannot be read, and then verify that the session's process is gone.
 
 #### Scenario: No final comment
 - **WHEN** the tab's issue has no final `home-log` comment
@@ -29,7 +29,7 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 ## ADDED Requirements
 
 ### Requirement: HOME-414 Which tabs are finished
-`term.sh finished` SHALL print `<tty> <session id> <issue|-> <verdict>` for every open tab of this home's registry (`--json`: one object per tab, with the repo of its issue), the verdict being `closable`, `keep:<reason>` or `unsure:<what could not be read>` from the checks of `close` (HOME-061) in their order, and SHALL send no key, write no file and close nothing.
+`term.sh finished` SHALL print `<tty> <session id> <issue|-> <verdict>` for every open tab of this home's registry (`--json`: one object per tab, with the repo of its issue), the verdict being `closable`, `keep:<reason>` or `unsure:<what could not be read>` from the checks of `close` (HOME-061) in their order and the keep reasons of HOME-419, and SHALL send no key, write no file and close nothing.
 
 #### Scenario: A finished worker
 - **WHEN** a worker tab's issue has a final `home-log` comment of that worker's run and no owner label, and its screen shows an empty box and nothing running
@@ -51,7 +51,7 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** the verdict is `closable`
 
 ### Requirement: HOME-419 Kept tabs
-`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only, an owner label, a dialog, a running turn, background work, a Codex tab without its thread id, a session that moved to another id, a tab still starting, or a gone session whose tab is not a lone shell at an empty prompt.
+`term.sh finished` SHALL say `keep:<reason>` for a tab that is gone, the calling session, no issue, no final comment, a final comment of another run only (a worker tab), an owner label, a dialog, a running turn, background work, a Codex tab without its thread id, a session that moved to another id, a tab still starting, or a gone session whose tab is not a lone shell at an empty prompt.
 
 #### Scenario: A tab still starting
 - **WHEN** a registry entry has its tty and no process id yet, because its launch or resume is not over
@@ -112,7 +112,7 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** close types `exit` and marks the entry closed
 
 ### Requirement: HOME-418 What finished cannot decide
-`term.sh finished` SHALL say `unsure:<what>` when another program runs under the recorded process id, the issue or its repo cannot be read, the screen cannot be read or shows no input box, a notice is shown, or the box holds text, and SHALL read the issue of an orchestrator tab in the repo named by the `home.config` of that tab's folder.
+`term.sh finished` SHALL say `unsure:<what>` when another program runs under the recorded process id, the issue or its repo cannot be read, an orchestrator tab's issue was finished by another run only, the screen cannot be read or shows no input box, a notice is shown, or the box holds text, and SHALL read the issue of an orchestrator tab in the repo named by the `home.config` of that tab's folder.
 
 #### Scenario: Text in the box
 - **WHEN** the issue is final and the box holds text
@@ -121,6 +121,10 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 #### Scenario: The issue cannot be read
 - **WHEN** the issue's comments or labels cannot be read from GitHub
 - **THEN** the verdict is `unsure:issue-unreadable`
+
+#### Scenario: An orchestrator tab whose worker finished the issue
+- **WHEN** an orchestrator tab's issue has a final `home-log` comment of another run and none of the orchestrator's own
+- **THEN** the verdict is `unsure:other-run`, and `close` accepts the tab once it is called
 
 #### Scenario: A child orchestrator's tab
 - **WHEN** an orchestrator tab was opened for an issue of another home

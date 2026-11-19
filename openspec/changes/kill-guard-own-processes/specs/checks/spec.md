@@ -103,7 +103,7 @@ The bash guard SHALL refuse a kill of an exact process id with exit 2 on every s
 - **THEN** the hook exits 2 and the reason says there is nothing to kill
 
 ### Requirement: HOME-354 A kill the guard cannot read
-When the word `kill` stands in a command where the bash guard cannot read it as `kill`, one optional signal and exact process ids, the guard SHALL answer as HOME-351 does (Claude Code: `ask`; Codex, or no agent process found: exit 2), except after `echo`, `printf`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `gh`, `cat`, `man`, `which`, `type`, `ls`, `cd` and `home-log`, and where a plain word follows `kill` and no bare number or variable comes after it.
+When the word `kill` stands in a command where the bash guard cannot read it as `kill`, one optional signal and exact process ids, the guard SHALL answer as HOME-351 does (Claude Code: `ask`; Codex, or no agent process found: exit 2), except after `echo`, `printf`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `gh`, `cat`, `man`, `which`, `type`, `ls`, `cd` and `home-log`, and where a plain word follows `kill` and no bare number or variable comes after it (never after `xargs`).
 
 #### Scenario: A kill behind another command
 - **WHEN** a Claude Code session runs `timeout 5 kill 1234`, `nice kill 1234`, `trap 'kill 1234' EXIT`, `case x in x) kill 1234;; esac`, `f() { kill 1234; }; f` or `sudo -u x kill 1234`, whoever owns process 1234

@@ -59,7 +59,7 @@
 #    The check must prove the login, e.g. a CLI identity call: an empty check, true, :, exit 0,
 #    echo ... and test 1 are refused
 #  8 close only on a finished session: the issue has a final home-log comment of this session's own run
-#    (the id it started with; any run's for the owner's own tab) and no owner label
+#    (the id it started with; any run's for the owner's own tab and for an orchestrator tab) and no owner label
 #    (checked on GitHub), no dialog, no running turn, no background work, an empty box; it types
 #    /exit, verifies the PID is gone, exits the shell. A PID that lingers is reported, never killed.
 #    "exit" is typed only into a lone shell (one zsh, bash, ksh or sh beside login on the tty); when the
@@ -413,7 +413,7 @@ freetext_row() { # freetext_row <screen> -> number of the dialog row that takes 
 # ------------------------------------------------------------------ resolving a target (rule 1)
 
 T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""; T_KIND=claude; T_MOVED=""
+T_ADOPTED=0; ADOPT_NEW=0; ADOPT_RESUME=""; T_KIND=claude; T_MOVED=""; T_ROLE=worker
 
 load_entry() { # load_entry <json object>
   T_SID=$(printf '%s' "$1" | jq -r '.session_id // ""')
@@ -426,13 +426,14 @@ load_entry() { # load_entry <json object>
   T_ADOPTED=$(printf '%s' "$1" | jq -r 'if .adopted == true then 1 else 0 end')
   T_KIND=$(printf '%s' "$1" | jq -r '.kind // "claude"')
   T_MOVED=$(printf '%s' "$1" | jq -r '.moved_from // ""')
+  T_ROLE=$(printf '%s' "$1" | jq -r '.role // "worker"')
   T_REG=1
 }
 
 resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed registry entry
   local target=$1 mode=${2:-open} entry n live
   T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-  T_ADOPTED=0; T_KIND=claude; T_MOVED=""
+  T_ADOPTED=0; T_KIND=claude; T_MOVED=""; T_ROLE=worker
   case "$target" in
     /dev/tty*|tty*)
       T_TTY=${target#/dev/}
@@ -705,7 +706,8 @@ shell_idle() { # shell_idle <tty> [screen]: only the tab's own shell is left on 
 }
 
 exit_shell() { # after the session's process is gone: leave the plain shell so the tab closes
-  local scr
+  local scr n=0
+  until shell_idle "$T_TTY" || [ $n -ge 5 ]; do be_sleep "$POLL"; n=$((n + 1)); done   # the session's own helpers may take a moment to go
   scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
   if has_dialog "$scr" || box_text "$scr" >/dev/null || claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ] || ! shell_idle "$T_TTY"; then
     note "something still runs in the tab on $T_TTY; the shell is left open"
@@ -1098,8 +1100,9 @@ cmd_close() {
     die 3 "the tab on $T_TTY is the owner's own (recorded with --adopt); close it only when the owner named it, with --adopt"
   issue=$(pick_issue "$issue") || exit $?
   if [ -n "$issue" ]; then
-    # a tab this home opened: only the final comment of its own run counts; the owner's own tab: any final
-    if [ "$T_ADOPTED" = 1 ]; then issue_finished "$repo" "$issue"; else issue_finished "$repo" "$issue" "$(run_id)"; fi
+    # a worker tab this home opened: only the final comment of its own run counts. The owner's own tab and an
+    # orchestrator tab (it hands its issue to workers, so another run writes the final): a final of any run
+    if [ "$T_ADOPTED" = 1 ] || [ "$T_ROLE" = orchestrator ]; then issue_finished "$repo" "$issue"; else issue_finished "$repo" "$issue" "$(run_id)"; fi
   elif [ "$adopt" = 0 ] || [ "$T_ADOPTED" = 0 ]; then
     die 2 "close needs the issue number (--issue N, or one recorded at open)"
   fi
@@ -1226,7 +1229,7 @@ EOF
   case "$(issue_state "$F_REPO" "$issue" "$run")" in
     final) ;;
     no-final) F_VERDICT=keep:no-final; return 0 ;;
-    other-final) F_VERDICT=keep:other-run; return 0 ;;
+    other-final) if [ "$role" = orchestrator ]; then F_VERDICT=unsure:other-run; else F_VERDICT=keep:other-run; fi; return 0 ;;
     owner-label) F_VERDICT=keep:owner-question; return 0 ;;
     *) F_VERDICT=unsure:issue-unreadable; return 0 ;;
   esac

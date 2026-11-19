@@ -386,6 +386,7 @@ EOS
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -lc gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-lc\",\"gh auth switch -u a\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -e -c kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard blocks .cmd list: /bin/bash -c -- kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-c\",\"--\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -e -c kill -0 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -0 4242\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -lc gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-lc\",\"gh issue list\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
