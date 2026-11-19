@@ -184,6 +184,8 @@ on run argv
         set frontW to current window
         -- with no key window (the last one in front was closed) there is no current window: take the first
         if frontW is missing value then set frontW to window 1
+        -- by id: "current window" would name the new window once it exists
+        set frontW to window id (id of frontW)
         set frontT to current tab of frontW
         set frontS to current session of frontT
         set hadFront to true
@@ -208,18 +210,6 @@ on run argv
         tell shownT to select
       end try
     end if
-    if hadFront then
-      -- each step on its own: one that fails must not skip the others
-      try
-        tell frontW to select
-      end try
-      try
-        tell frontT to select
-      end try
-      try
-        tell frontS to select
-      end try
-    end if
     -- the session of a new window can be unready for a moment: wait until it answers
     set ready to false
     repeat 50 times
@@ -232,6 +222,21 @@ on run argv
       end try
     end repeat
     if not ready then error "the new session did not become ready"
+    -- give the focus back last: a new window takes the front a moment after it is created
+    if hadFront then
+      -- a new window becomes the front one only after its creation has settled: selecting sooner is undone
+      if (id of w) is not (id of frontW) then delay 1
+      -- each step on its own: one that fails must not skip the others
+      try
+        tell frontW to select
+      end try
+      try
+        tell frontT to select
+      end try
+      try
+        tell frontS to select
+      end try
+    end if
     return (id of s) & " " & (tty of s) & " " & (id of w)
   end tell
 end run
@@ -725,8 +730,13 @@ shell_idle() { # shell_idle <tty> [screen]: only the tab's own shell is left on 
 
 exit_shell() { # after the session's process is gone: leave the plain shell so the tab closes
   local scr n=0
-  until shell_idle "$T_TTY" || [ $n -ge 5 ]; do be_sleep "$POLL"; n=$((n + 1)); done   # the session's own helpers may take a moment to go
-  scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
+  # the session's own helpers may take a moment to go, and a real terminal can draw the prompt seconds later
+  while :; do
+    scr=$(be_screen "$T_TTY" "$T_TAB" 2>/dev/null) || return 0
+    shell_idle "$T_TTY" "$scr" && break
+    [ $n -ge 10 ] && break
+    be_sleep "$POLL"; n=$((n + 1))
+  done
   if claude_on_tty "$T_TTY" || [ -n "$(tty_pids "$T_TTY" codex)" ] || ! shell_idle "$T_TTY" "$scr"; then
     note "something still runs in the tab on $T_TTY; the shell is left open"
     return 0

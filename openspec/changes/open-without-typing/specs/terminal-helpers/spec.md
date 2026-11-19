@@ -41,6 +41,22 @@ After creating a tab or window, `term.sh` SHALL select again, in the same script
 - **WHEN** keys pressed during the creation landed in the new session's input box
 - **THEN** they are an unsent draft there, and `close` on that tab exits 3 and keeps them
 
+#### Scenario: A tab opens in a new window
+- **WHEN** `term.sh open` or `term.sh resume` has to create a new window
+- **THEN** the window that was in front before, held by its id, is selected again once the new window has settled; the new window is in front for about a second
+
+#### Scenario: No window is current
+- **WHEN** the terminal app reports no current window, as after the last window in front was closed
+- **THEN** the first window stands in for it: a tab meant for the current window is created there, and the helper does not fail
+
+#### Scenario: A resumed session of a group
+- **WHEN** `term.sh resume` reopens a session whose registry entry names a known group
+- **THEN** the tab is created in that group's window, or in a new window when the group has none, as `open` places it
+
+#### Scenario: The terminal redraws late
+- **WHEN** the input box shows a typed key or a pressed Enter only seconds later
+- **THEN** the suggestion probe, the check that typed text arrived and the check that Enter was taken each read the box again a few times before they decide, and a shell is judged idle by its last line only, read again a few times, because a box left on screen by a session that has gone proves nothing
+
 ### Requirement: HOME-412 The recorded resume line names the real profile
 When `launch.profile_flag` is set and `launch.profile.<role>` is not, `term.sh open` SHALL wait up to its open timeout for the new session's session file (HOME-301) and record the resume line with that file's profile, built as for an adopted tab (HOME-129), and SHALL keep the line without a profile when the file does not appear, names another session id or names no profile; no setting is added.
 
