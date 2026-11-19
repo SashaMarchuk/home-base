@@ -249,7 +249,8 @@ check "freeze: --all --hard exits 0" [ "$(rc_of ts freeze --all --hard)" = 0 ]
 check "freeze: the idle g1 tab exited" [ "$(outcome ttyw1)" = exited ]
 check "freeze: the dialog tabs exited after one Esc each" [ "$(outcome ttyw2) $(outcome ttyw3)" = "exited exited" ]
 check "freeze: one Esc on each dialog" [ "$(keys ttyw2 | grep -c key:esc) $(keys ttyw3 | grep -c key:esc)" = "1 1" ]
-check "freeze: no dialog answered" [ ! -f "$(tabdir ttyw2)/answered" ] && [ ! -f "$(tabdir ttyw3)/answered" ]
+check "freeze: no dialog answered" [ ! -f "$(tabdir ttyw2)/answered" ]
+check "freeze: no dialog answered (second half)" [ ! -f "$(tabdir ttyw3)/answered" ]
 check "freeze: /exit typed into the closed tabs" [ "$(sent ttyw1 | head -1)" = /exit ]
 check "freeze: their processes are gone" not alive 801
 check "freeze: codex and shell tabs listed, not touched" [ "$(outcome ttyw4) $(outcome ttyw5)" = "kept:not-claude kept:not-claude" ]
@@ -259,13 +260,13 @@ check "freeze: the snapshot keeps the dialog question and options" \
   [ "$(jq -r --arg t ttyw3 '.entries[] | select(.tty == $t) | .question + " | " + (.options | join(","))' "$(snapf)")" = "Header $QU | 1. Yes,2. No" ]
 check "freeze: one freeze issue in this home" [ "$(ls "$GH_STUB_DIR/test__home/issues" | wc -l | tr -d ' ')" = 1 ]
 check "freeze: one freeze issue in the peer home" [ "$(ls "$GH_STUB_DIR/test__peer/issues" | wc -l | tr -d ' ')" = 1 ]
-check "freeze: this home's issue lists the g1 session with its resume line" issue_text test/home | grep -qF "-p 'work' --model 'opus' --resume $S1"
+check "freeze: this home's issue lists the g1 session with its resume line" grep -qF -- "-p 'work' --model 'opus' --resume $S1" <(issue_text test/home)
 check "freeze: the freeze issues are parked" [ "$(cat "$GH_STUB_DIR"/test__*/issues/*.json | jq -r '.labels | index("status:parked") != null' | sort -u)" = true ]
-check "freeze: the peer question is in the peer home's issue" issue_text test/peer | grep -qF "$QP"
+check "freeze: the peer question is in the peer home's issue" grep -qF -- "$QP" <(issue_text test/peer)
 check "boundary: the peer question never enters this home's issue" no_leak test/home "$QP"
 check "boundary: an unmapped tab's question never enters this home's issue" no_leak test/home "$QU"
 check "boundary: an unmapped tab's folder never enters this home's issue" not grep -qF "name-ttyw3" <(issue_text test/home)
-check "boundary: the unmapped tab is a pointer line" issue_text test/home | grep -qF "$S3: unmapped tab"
+check "boundary: the unmapped tab is a pointer line" grep -qF -- "$S3: unmapped tab" <(issue_text test/home)
 cp -R "$GH_STUB_DIR/test__home" "$GH_STUB_DIR/test__leak"
 f=$(ls "$GH_STUB_DIR/test__leak/issues/"*.json | head -1)
 jq --arg q "$QU" '.comments += [{id: 99, body: ("open question: " + $q)}]' "$f" > "$f.x" && mv "$f.x" "$f"
@@ -305,7 +306,7 @@ printf '801' > "$TERM_FAKE_DIR/proc/850/ppid"; printf '850' > "$TERM_FAKE_DIR/se
 ts freeze --all --hard >/dev/null 2>&1
 check "caller: left open, no key" nokeys ttyw1
 check "caller: recorded as kept:caller" [ "$(outcome ttyw1)" = kept:caller ]
-check "caller: its row and resume line are in the issue" issue_text test/home | grep -qF "caller (left open)"
+check "caller: its row and resume line are in the issue" grep -qF -- "caller (left open)" <(issue_text test/home)
 check "caller: the others were closed" [ "$(outcome ttyw2)" = exited ]
 setup_main
 check "caller: inside a session whose tab is not found -> --all exits 3" [ "$(CLAUDE_CODE_SESSION_ID=$S4 rc_of ts freeze --all --hard)" = 3 ]
@@ -346,7 +347,8 @@ check "busy: a hand-written busy=interrupt still never interrupts" nokeys ttyw1
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" waiting; fdialog ttyw1 "Pick one?" sticky
 ts freeze --all --hard >/dev/null 2>&1
 check "dialog: a dialog that stays open keeps the tab" [ "$(outcome ttyw1)" = kept:dialog ]
-check "dialog: one Esc only, no option" [ "$(keys ttyw1 | tr '\n' ' ')" = "key:esc " ] && [ ! -f "$(tabdir ttyw1)/answered" ]
+check "dialog: one Esc only, no option" [ "$(keys ttyw1 | tr '\n' ' ')" = "key:esc " ]
+check "dialog: one Esc only, no option (second half)" [ ! -f "$(tabdir ttyw1)/answered" ]
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy
 ts freeze --all --hard >/dev/null 2>&1
 check "two signals: an idle screen with a busy session file is not typed into" [ "$(outcome ttyw1)" = kept:signals-disagree ]
@@ -375,7 +377,8 @@ check "selector: no snapshot from the refusals" [ -z "$(snapf)" ]
 out=$(ts freeze --all --hard --dry-run)
 check "dry run: prints the plan" grep -q '^ttyw2 g2 dialog -> hard close$' <<<"$out"
 check "dry run: touches nothing" nokeys ttyw1 ttyw2 ttyw3
-check "dry run: writes nothing" [ -z "$(snapf)" ] && [ ! -d "$GH_STUB_DIR/test__home" ]
+check "dry run: writes nothing" [ -z "$(snapf)" ]
+check "dry run: writes nothing (second half)" [ ! -d "$GH_STUB_DIR/test__home" ]
 
 # lock and linger
 setup_main
@@ -388,7 +391,8 @@ check "lock: a freeze after the first one ended runs" [ "$(rc_of ts freeze ttyw1
 check "lock: and the next one too" [ "$(rc_of ts freeze ttyw3 --hard)" = 0 ]
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; : > "$(tabdir ttyw1)/linger"
 check "linger: a PID that survives /exit -> exit 5" [ "$(rc_of ts freeze --all --hard)" = 5 ]
-check "linger: kept:linger, nothing signalled" [ "$(outcome ttyw1)" = kept:linger ] && [ ! -f "$TERM_FAKE_DIR/kills" ]
+check "linger: kept:linger, nothing signalled" [ "$(outcome ttyw1)" = kept:linger ]
+check "linger: kept:linger, nothing signalled (second half)" [ ! -f "$TERM_FAKE_DIR/kills" ]
 
 # continue, and a tab bound to an issue
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
@@ -418,8 +422,8 @@ tty_of() { jq -r --arg s "$1" '.entries[] | select(.session_id == $s) | .thaw_tt
 frozen_main
 check "thaw: latest reopens the frozen sessions" [ "$(rc_of ts thaw latest)" = 0 ]
 check "thaw: three sessions reopened" [ "$(jq '[.entries[] | select(.thaw_outcome == "reopened")] | length' "$(snapf)")" = 3 ]
-check "thaw: same session id with the profile and model" launch_of "$S1" | grep -qF "&& 'claude' -p 'work' --model 'opus' --resume $S1 'You were resumed. Continue where you stopped.'"
-check "thaw: an open question is re-asked" launch_of "$S2" | grep -qF "Re-ask your open question with the ask tool"
+check "thaw: same session id with the profile and model" grep -qF -- "&& 'claude' -p 'work' --model 'opus' --resume $S1 'You were resumed. Continue where you stopped.'" <(launch_of "$S1")
+check "thaw: an open question is re-asked" grep -qF -- "Re-ask your open question with the ask tool" <(launch_of "$S2")
 check "thaw: the g1 and g2 sessions open in different windows" [ "$(win_of "$(tty_of "$S1")")" != "$(win_of "$(tty_of "$S2")")" ]
 check "thaw: windows cached per group" [ "$(jq -r '[.[].group] | sort | join(" ")' "$HOME_ROOT/.local/windows.json")" = "g1 g2 general" ]
 check "thaw: nothing typed after the launch line" nokeys "$(tty_of "$S1")" "$(tty_of "$S2")"
@@ -443,7 +447,8 @@ check "thaw: nothing opened under memory pressure" [ ! -f "$TERM_FAKE_DIR/launch
 rm -f "$TERM_FAKE_DIR/mem_free"
 check "thaw: --continue reopens the rest" [ "$(ts thaw --continue "$FROZEN" | grep -c REOPENED)" = 3 ]
 frozen_main
-check "thaw: --group g2 reopens only that group" [ "$(ts thaw latest --group g2 | grep -c REOPENED)" = 1 ] && [ -z "$(launch_of "$S1")" ]
+check "thaw: --group g2 reopens only that group" [ "$(ts thaw latest --group g2 | grep -c REOPENED)" = 1 ]
+check "thaw: --group g2 reopens only that group (second half)" [ -z "$(launch_of "$S1")" ]
 check "thaw: an unknown group -> exit 2" [ "$(rc_of ts thaw latest --group nope)" = 2 ]
 frozen_main
 mv "$(snapf)" "$T/snap.bak"
@@ -473,18 +478,19 @@ check "soft: the prompt was the first thing typed" [ "$(sent ttyw1 | head -1 | c
 check "soft: /exit after the checkpoint with the right nonce" [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
 check "soft: closed" [ "$(outcome ttyw1)" = exited ]
 check "soft: the checkpoint is under this home's .local" [ -f "$HOME_ROOT/.local/freeze/$(jq -r .id "$(snapf)")/$S1.md" ]
-check "soft: the checkpoint is copied into the freeze issue without the nonce" issue_text test/home | grep -qF "Checkpoint question ttyw1?"
+check "soft: the checkpoint is copied into the freeze issue without the nonce" grep -qF -- "Checkpoint question ttyw1?" <(issue_text test/home)
 check "soft: no nonce line in the issue" not grep -q '^nonce: ' <(issue_text test/home)
 transcript work "$S1"
 ts thaw latest >/dev/null 2>&1
-check "soft: thaw asks it to read its checkpoint first" launch_of "$S1" | grep -qF "Read $HOME_ROOT/.local/freeze/"
+check "soft: thaw asks it to read its checkpoint first" grep -qF -- "Read $HOME_ROOT/.local/freeze/" <(launch_of "$S1")
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"
 ts freeze --all --soft >/dev/null 2>&1
 check "soft: only the prompt's echo, no file -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ]
 check "soft: kept:soft-timeout, the session runs" [ "$(outcome ttyw1)" = kept:soft-timeout ] && alive 801
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; answers ttyw1 wrong
 ts freeze --all --soft >/dev/null 2>&1
-check "soft: a file with a wrong nonce -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ] && [ "$(outcome ttyw1)" = kept:soft-timeout ]
+check "soft: a file with a wrong nonce -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ]
+check "soft: a file with a wrong nonce -> no /exit (second half)" [ "$(outcome ttyw1)" = kept:soft-timeout ]
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; answers ttyw1 nonce busy
 ts freeze --all --soft >/dev/null 2>&1
 check "soft: the right nonce but a session not idle -> no /exit" [ "$(sent ttyw1 | grep -c '^/exit$')" = 0 ]
@@ -498,7 +504,8 @@ check "soft: a dialog is never answered or cancelled by soft" nokeys ttyw1
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"
 ts freeze --all >/dev/null 2>&1
 check "default mode: soft first" [ "$(sent ttyw1 | head -1 | cut -c1-7)" = "Freeze " ]
-check "default mode: then hard for a tab that did not answer" [ "$(outcome ttyw1)" = exited ] && [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
+check "default mode: then hard for a tab that did not answer" [ "$(outcome ttyw1)" = exited ]
+check "default mode: then hard for a tab that did not answer (second half)" [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
 ts freeze --all --soft-then-hard >/dev/null 2>&1
 check "soft-then-hard: a running turn stays running after both" [ "$(outcome ttyw1)" = kept:busy ] && nokeys ttyw1
@@ -506,7 +513,7 @@ reset "${SKEYS[@]}"
 live ttyw2 802 "$W2" w8 "$S2"; answers ttyw2
 live ttyw3 803 "$T" w9 "$S3"; answers ttyw3
 ts freeze --all --soft >/dev/null 2>&1
-check "soft boundary: the peer tab's checkpoint goes to the peer issue" issue_text test/peer | grep -qF "Checkpoint question ttyw2?"
+check "soft boundary: the peer tab's checkpoint goes to the peer issue" grep -qF -- "Checkpoint question ttyw2?" <(issue_text test/peer)
 check "soft boundary: an unmapped tab's checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw3?"
 check "soft boundary: the peer checkpoint never enters this home's issue" no_leak test/home "Checkpoint question ttyw2?"
 
@@ -532,7 +539,7 @@ o=$(ts open "$W2" --issue 41); osid=${o%% *}; otty=$(echo "$o" | awk '{ print $2
 sess_file work "$opid" "$osid" waiting "$W2"; claim 41 "$osid"; fdialog "$otty" "$QP"
 ts freeze "$otty" --hard >/dev/null 2>&1
 check "boundary: an issue-bound tab of another home's group keeps its question out of this home" no_leak test/home "$QP"
-check "boundary: that question is in the peer freeze issue" issue_text test/peer | grep -qF "$QP"
+check "boundary: that question is in the peer freeze issue" grep -qF -- "$QP" <(issue_text test/peer)
 check "boundary: the tab's own issue still got the park checkpoint" grep -qF "Frozen by term.sh" <(issue_text test/home)
 reset "${FKEYS[@]}"
 mkdir -p "$GH_STUB_DIR/test__home/issues"
@@ -645,10 +652,10 @@ check "moved: the tab is closed" [ "$(outcome "$otty")" = exited ]
 check "moved: /exit was typed" [ "$(sent "$otty" | head -1)" = /exit ]
 check "moved: the entry names the new id, keeps the first and is closed" [ "$(regf '"\(.session_id) \(.moved_from) \(.closed != null)"')" = "$S4 $osid true" ]
 check "moved: the entry's resume line is for the new id" [ "$(regf .resume)" = "cd '$W1' && 'claude' -p 'work' --resume $S4" ]
-check "moved: the freeze issue lists the new id" issue_text test/home | grep -qF -- "--resume $S4"
+check "moved: the freeze issue lists the new id" grep -qF -- "--resume $S4" <(issue_text test/home)
 check "moved: the cleared session's resume line is in no issue" no_leak test/home "--resume $osid"
 check "moved: thaw reopens the new id" [ "$(ts thaw latest | grep -c "^REOPENED $S4 ")" = 1 ]
-check "moved: with its resume line" launch_of "$S4" | grep -qF "&& 'claude' -p 'work' --resume $S4 "
+check "moved: with its resume line" grep -qF -- "&& 'claude' -p 'work' --resume $S4 " <(launch_of "$S4")
 moved "${GKEYS[@]}" term.freeze.hard_grace=1   # no profile flag: the machine picks the profile itself
 check "moved, no profile flag: open recorded a line without a profile" [ "$(regf .resume)" = "cd '$W1' && claude --resume $osid" ]
 check "moved, no profile flag: the recorded line is kept for the new id" [ "$(sj "$otty" | jq -r .resume)" = "cd '$W1' && claude --resume $S4" ]
@@ -688,7 +695,7 @@ fissue() { # fissue <n> <profile> <resume text>: a freeze issue whose data block
 }
 reset "${FKEYS[@]}"; transcript work "$S1"; fissue 7 work "cd /x && touch $T/injected; claude --resume $S1"
 ts thaw --issue test/home#7 >/dev/null 2>&1
-check "thaw --issue: the line is rebuilt from the id, folder and profile" launch_of "$S1" | grep -qF "&& 'claude' -p 'work' --resume $S1"
+check "thaw --issue: the line is rebuilt from the id, folder and profile" grep -qF -- "&& 'claude' -p 'work' --resume $S1" <(launch_of "$S1")
 check "thaw --issue: the issue's resume text is never typed" not grep -q injected "$TERM_FAKE_DIR/launches"
 reset "${FKEYS[@]}"; transcript work "$S1"; fissue 8 'work; rm -rf x' "claude --resume $S1"
 ts thaw --issue test/home#8 >/dev/null 2>&1
@@ -731,7 +738,8 @@ check "resume: an entry not launched with its id -> exit 3" [ "$(rc_of ts resume
 check "resume: nothing launched" [ ! -f "$TERM_FAKE_DIR/launches" ]
 jq -n --arg s "$S1" '[{session_id: $s, tty: null, pid: null, cwd: "/x", issue: null, resume: null,
   opened: "x", closed: "y", role: "worker", tab: null, match: $s}]' > "$REG"
-check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ] && [ ! -f "$TERM_FAKE_DIR/launches" ]
+check "resume: no resume line -> exit 3, never the word null" [ "$(rc_of ts resume "$S1")" = 3 ]
+check "resume: no resume line -> exit 3, never the word null (second half)" [ ! -f "$TERM_FAKE_DIR/launches" ]
 
 # ---------------------------------------------------------------- faults of the first real-tab check
 # 1. a placeholder hint in an empty box is not a draft
