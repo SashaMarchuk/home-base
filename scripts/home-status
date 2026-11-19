@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# home-status: one combined, read-only view of this home and its related homes.
+#   scripts/home-status                this home only
+#   scripts/home-status --all          this home, then every related home whose role is child or peer
+#   scripts/home-status --home <name>  this home, then the related home <name> (any role, a parent included)
+# Per home it prints:
+#   == <name> <repo> (<role>)          "== this <repo> (this home)" for this home
+#   question #<n> <title>              open issue with that home's owner label (labels.needs_owner)
+#   <state> #<n> <title>               every other open issue: blocked, claimed, frozen (title "Freeze ..."),
+#                                      parked, review, delegated, ready, inbox, or open (no status label)
+#   session <live|lost|stopped?|starting> <tty|-> <session id> #<issue|-> <role>
+#                                      open entries of that home's .local/registry.json: lost when term.sh
+#                                      reconcile marked it (its last tty shown), live when its PID runs a
+#                                      command that holds the entry's match, stopped? when that PID is gone (one
+#                                      signal only: term.sh reconcile decides lost), starting with no PID yet
+#   sessions: none open | sessions: unknown (<why>)
+#   issues: none open | issues: cannot read <repo>
+# Issues labelled dreams and pull requests are skipped. A related home is read through its local clone
+# (homes.<name>.path): its home.config and .local/config give its owner label and its gh.config_dir, exactly
+# as its own scripts read them; without a clone the repo comes from homes.<name>.repo, the label is
+# needs-owner and sessions are unknown. A related home is read from its own folder and never with this home's
+# GH_CONFIG_DIR: with no gh.config_dir in its config, gh runs with none (its default account). An account chosen
+# by folder in a shell startup file (for example zshenv) applies only to a new shell, not to this script, so such
+# a home sets gh.config_dir in its .local/config. Reads only: gh api GETs and files; never switches a gh account,
+# never runs another home's scripts or term.sh, writes nothing.
+# Exit: 0 (also when a repo cannot be read: that is printed), 2 usage.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+. "$HERE/lib/config"
+
+usage() { echo "usage: home-status [--all | --home <name>]..." >&2; exit 2; }
+ALL=0; NAMES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all) ALL=1; shift ;;
+    --home) [ $# -ge 2 ] || usage; NAMES+=("$2"); shift 2 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    *) usage ;;
+  esac
+done
+command -v jq >/dev/null 2>&1 || { echo "home-status: jq not found" >&2; exit 2; }
+
+related_names() { # every name of homes.<name>.repo in this home's config files
+  cfg_all_keys | sed -n 's/^homes\.\([A-Za-z0-9_-]*\)\.repo$/\1/p' | sort -u
+}
+cfg_all_keys() {
+  local f
+  for f in "$HOME_ROOT/home.config" "$HOME_ROOT/.local/config"; do
+    [ -f "$f" ] && awk '/^[[:space:]]*#/ { next } { i = index($0, "="); if (i) { k = substr($0, 1, i - 1); gsub(/[[:space:]]/, "", k); print k } }' "$f"
+  done
+}
+
+issues_of() { # issues_of <repo> <owner label>: one line per open issue, or "issues: ..." lines
+  local raw
+  if ! raw=$(gh api --paginate "repos/$1/issues?state=open&per_page=100" 2>/dev/null) ||
+     ! raw=$(printf '%s' "$raw" | jq -s 'add // []' 2>/dev/null); then
+    echo "issues: cannot read $1"; return 0
+  fi
+  printf '%s' "$raw" | jq -r --arg q "$2" '
+    def kind: [.labels[].name] as $l
+      | if ($l | index($q)) then "question"
+        elif ($l | index("status:blocked")) then "blocked"
+        elif ($l | index("status:claimed")) then "claimed"
+        elif (.title | startswith("Freeze ")) then "frozen"
+        elif ($l | index("status:parked")) then "parked"
+        elif ($l | index("status:review")) or ($l | index("needs-summary")) then "review"
+        elif ($l | index("status:delegated")) then "delegated"
+        elif ($l | index("status:ready")) then "ready"
+        elif ($l | index("status:inbox")) then "inbox"
+        else "open" end;
+    def rank: {"question":0,"blocked":1,"claimed":2,"frozen":3,"parked":4,"review":5,"delegated":6,"ready":7,"inbox":8,"open":9}[.];
+    [.[] | select(has("pull_request") | not) | select([.labels[].name] | index("dreams") | not)
+      | {k: kind, n: .number, t: (.title | gsub("[\r\n\t]"; " "))}]
+    | if length == 0 then "issues: none open"
+      else sort_by((.k | rank), .n) | .[] | "\(.k) #\(.n) \(.t)" end'
+}
+
+sessions_of() { # sessions_of <home root>
+  local reg="$1/.local/registry.json" rows sid tty pid match issue role st c
+  [ -f "$reg" ] || { echo "sessions: none open"; return 0; }
+  if ! rows=$(jq -r '.[] | select(.closed == null)
+      | [.session_id, (.tty // .lost_tty // "-"), (if .lost != null then "lost" else (.pid // "null" | tostring) end),
+         (.match // .session_id), (.issue // "-" | tostring), (.role // "worker")] | @tsv' "$reg" 2>/dev/null); then
+    echo "sessions: unknown (cannot read the registry)"; return 0
+  fi
+  [ -n "$rows" ] || { echo "sessions: none open"; return 0; }
+  while IFS=$'\t' read -r sid tty pid match issue role; do
+    [ -n "$sid" ] || continue
+    if [ "$pid" = lost ]; then st=lost   # marked by term.sh reconcile: its tab and process were both gone
+    elif [ "$pid" = null ]; then st=starting
+    else   # one signal only (the process is gone; its tab is not checked here): never called lost
+      case "$pid" in *[!0-9]*) st="stopped?" ;; *)
+        c=$(ps -p "$pid" -o command= 2>/dev/null || true)
+        case "$c" in *"$match"*) st=live ;; *) st="stopped?" ;; esac ;;
+      esac
+    fi
+    echo "session $st ${tty#/dev/} $sid #$issue $role"
+  done <<EOF
+$rows
+EOF
+}
+
+show() { # show <name> <repo> <role> <home root|-> ; runs in a subshell so a related home's config stays there
+  (
+    name=$1 repo=$2 role=$3 root=$4 label=needs-owner why=""
+    # a related home never inherits this home's GitHub account: its own gh.config_dir when its config sets one,
+    # else none, read from its own folder (a shell started there would route by folder; this one cannot)
+    [ "$name" = this ] || unset GH_CONFIG_DIR
+    if [ "$name" != this ] && [ "$root" != - ] && [ -d "$root" ]; then cd "$root" || exit 0; fi
+    if [ "$root" != - ] && [ -f "$root/home.config" ]; then
+      HOME_ROOT=$root; . "$HERE/lib/config"   # its owner label and its gh.config_dir, as its own scripts read them
+      label=$(cfg labels.needs_owner needs-owner)
+      [ -n "$repo" ] || repo=$HOME_REPO
+    elif [ "$root" = - ]; then why="no local path (homes.$name.path)"
+    else why="no home.config at its path"; fi
+    echo "== $name ${repo:--} ($role)"
+    if [ -n "$repo" ]; then issues_of "$repo" "$label"; else echo "issues: cannot read (no repo)"; fi
+    if [ -z "$why" ]; then sessions_of "$root"; else echo "sessions: unknown ($why)"; fi
+  )
+}
+
+cfg_has_home || { echo "home-status: no home.config here" >&2; exit 2; }
+show this "$HOME_REPO" "this home" "$HOME_ROOT"
+
+PICK=()
+if [ "$ALL" = 1 ]; then
+  for n in $(related_names); do
+    case "$(cfg "homes.$n.role")" in child|peer) PICK+=("$n") ;; esac
+  done
+fi
+for n in ${NAMES[@]+"${NAMES[@]}"}; do
+  [ -n "$(cfg "homes.$n.repo")" ] || { echo "home-status: no homes.$n.repo in this home's config" >&2; exit 2; }
+  case " ${PICK[*]-} " in *" $n "*) ;; *) PICK+=("$n") ;; esac
+done
+for n in ${PICK[@]+"${PICK[@]}"}; do
+  p=$(cfg "homes.$n.path"); [ -n "$p" ] || p=-
+  show "$n" "$(cfg "homes.$n.repo")" "$(cfg "homes.$n.role" related)" "$p"
+done
+exit 0

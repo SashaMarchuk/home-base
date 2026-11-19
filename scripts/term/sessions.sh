@@ -3,7 +3,8 @@
 #
 # Identity: Claude Code writes <sessions dir>/<pid>.json (pid, sessionId, cwd, name, status) for each
 # live session. term.sessions_dirs (comma-separated globs, default ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions)
-# says where; the profile is the name of the folder above "sessions" (none when it is .claude).
+# says where; the profile is the name of the process's CLAUDE_CONFIG_DIR when its environment can be read, else
+# the name of the folder above "sessions" (none when it is .claude).
 # The session id comes from the registry (a tab this home opened), then the session file, then the
 # command line. A session with no id gets no resume line ("resume: manual") and is never closed by freeze.
 # When the recorded process still runs on the recorded tty and tab and its session file names another id
@@ -65,6 +66,13 @@ glob_dirs() { # glob_dirs <glob>: the folders it matches (spaces in the path are
 
 session_dirs() { local g; session_globs | while IFS= read -r g; do glob_dirs "$g"; done; }
 
+pid_config_dir() { # pid_config_dir <pid> -> the CLAUDE_CONFIG_DIR in the process's environment; rc 1 when unknown
+  local v
+  v=$(be_pid_env "$1" | tr ' ' '\n' | sed -n 's/^CLAUDE_CONFIG_DIR=//p' | tail -1)
+  [ -n "$v" ] || return 1
+  printf '%s\n' "$v"
+}
+
 session_of_pid() { # session_of_pid <pid> -> "sid US status US cwd US name US profile US profile dir"; rc 1 when none
   local d f out pdir prof
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
@@ -75,7 +83,11 @@ session_of_pid() { # session_of_pid <pid> -> "sid US status US cwd US name US pr
     out=$(jq -r --arg p "$1" 'select((.pid | tostring) == $p)
       | [(.sessionId // ""), (.status // ""), (.cwd // ""), (.name // "")] | join("\u001f")' "$f" 2>/dev/null) || continue
     [ -n "$out" ] || continue
-    pdir=$(dirname "$d"); prof=${pdir##*/}
+    pdir=$(dirname "$d")
+    # the profile the process really runs under: its CLAUDE_CONFIG_DIR when its environment can be read (a sessions
+    # folder may be shared by several profiles), else the name of the folder above "sessions"
+    pdir=$(pid_config_dir "$1") || pdir=$(dirname "$d")
+    prof=${pdir%/}; prof=${prof##*/}
     [ "$prof" = .claude ] && prof=""
     printf '%s%s%s%s%s\n' "$out" "$US" "$prof" "$US" "$pdir"
     return 0
@@ -278,6 +290,14 @@ is_caller() { case " $CALLER_TTYS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # ------------------------------------------------------------------ survey --json
 
+live_entry() { # live_entry <tty> <tab id> <pid> -> the open registry entry that speaks for this live tab; empty when none
+  # The same test as tab_json: the entry names this tty, the live tab (or no tab yet) and the live process. After a
+  # reboot or a crash ttys are reused, so an entry that matches by tty alone may name a dead session.
+  [ -n "$3" ] || return 0
+  reg_read -c --arg t "$1" --arg tab "$2" --arg p "$3" \
+    '[.[] | select(.tty == $t and .closed == null and (.tab == null or .tab == $tab) and ((.pid // "") | tostring) == $p)] | last // empty'
+}
+
 tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
   local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
@@ -325,6 +345,7 @@ tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a l
       # the registry speaks for this tab only while its pid is the live one
       printf '%s' "$entry" | jq -e --arg p "$pid" '(.pid | tostring) == $p' >/dev/null || stale=true
     fi
+    if [ "$stale" = true ]; then sid=""; src=none; resume=""; fi   # also when no session file is found for the live process
     if sf=$(session_of_pid "$pid"); then
       IFS=$US read -r s_sid status s_cwd sname prof pdir <<EOF
 $sf
@@ -334,7 +355,6 @@ EOF
         moved=$sid; resume=$(moved_line "$resume" "$sid" "$s_sid") || resume=""
         sid=""; src=none
       fi
-      if [ "$stale" = true ]; then sid=""; src=none; resume=""; fi
       if [ -z "$sid" ] && is_uuid "$s_sid"; then sid=$s_sid; src=file; fi
       [ -n "$cwd" ] || cwd=$s_cwd
     fi
@@ -342,8 +362,10 @@ EOF
       sid=$(cmdline_sid "$cmd")
       if is_uuid "$sid"; then src=cmdline; else sid=""; fi
     fi
+    # a stale entry names another session: neither its role (a profile) nor its group speaks for this one
+    [ "$stale" = true ] && role=""
     [ -n "$resume" ] || resume=$(resume_line "$cwd" "$cmd" "$prof" "$sid" "$role") || resume=""
-    group=$(printf '%s' "$entry" | jq -r '.group // empty' 2>/dev/null)
+    group=""; [ "$stale" = true ] || group=$(printf '%s' "$entry" | jq -r '.group // empty' 2>/dev/null)
     if [ -n "$group" ]; then gfrom=$(printf '%s' "$entry" | jq -r '.group_from // "registry"'); else read -r group gfrom <<EOF
 $(group_of_cwd "$cwd")
 EOF

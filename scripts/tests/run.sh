@@ -216,6 +216,15 @@ if sel sweep; then
   printf '%s\n' "$out3" | grep -qx 'SWEEP pr-no-final test/sw#1 named by pull request #40' && ok || bad "sweep must find #n past the first line of a PR body: $out3"
   printf '%s\n' "$out3" | grep -q 'pr-no-final test/sw#2' && bad "sweep must not report a PR-named finished issue" || ok
   rm -f "$GH_STUB_DIR/test__sw/pulls.json"
+  # An older hand-off (status:delegated here, the work in another home's issue) is still reported when that issue closes.
+  "$HL" new --title "older hand-off" --body "x" --ready >/dev/null
+  "$HL" start 3 --run-id d1 >/dev/null; "$HL" checkpoint 3 --run-id d1 --delegated "test/kid#1" >/dev/null
+  gh api -X POST repos/test/kid/issues -f title=work -f body=x >/dev/null
+  out4=$(cd "$H" && scripts/home-sweep)
+  printf '%s\n' "$out4" | grep -q 'delegated-child-closed' && bad "sweep must not report an older hand-off whose issue is open: $out4" || ok
+  gh api -X PATCH repos/test/kid/issues/1 -f state=closed >/dev/null
+  out4=$(cd "$H" && scripts/home-sweep)
+  printf '%s\n' "$out4" | grep -qx 'SWEEP delegated-child-closed test/sw#3 child test/kid#1' && ok || bad "sweep must report an older hand-off whose issue closed: $out4"
   # session-start: base-ahead and drift always show, then at most 12 other lines; limits line shows the verdict.
   H="$T/ss"; mkhome "$H" test/ss
   { for i in $(seq 1 15); do echo "SWEEP stale-claim test/ss#$i silent for 9h"; done
@@ -228,6 +237,120 @@ if sel sweep; then
   printf '%s\n' "$ss" | grep -qx 'limits: none (ok)' && ok || bad "session-start limits line must show the verdict: $ss"
   mkdir -p "$T/nohome/scripts" && cp -R "$SRC/scripts/." "$T/nohome/scripts/"
   expect "sweep exits 0 without home.config" 0 "$T/nohome/scripts/home-sweep"
+fi
+
+# ---------------------------------------------------------------- combined status
+if sel status; then
+  P="$T/st-par"; K="$T/st-kid"; mkhome "$P" test/stpar; mkhome "$K" test/stkid
+  printf 'labels.needs_owner=kid-q\n' >> "$K/home.config"
+  { printf 'homes.kid.repo=test/stkid\nhomes.kid.path=%s\nhomes.kid.role=child\n' "$K"
+    printf 'homes.mom.repo=test/stmom\nhomes.mom.role=parent\nhomes.pal.repo=test/stpal\nhomes.pal.role=peer\n'; } >> "$P/home.config"
+  mk() { gh api -X POST "repos/$1/issues" -f "title=$2" -f body=x $(shift 2; for l in "$@"; do printf -- '-f labels[]=%s ' "$l"; done) >/dev/null; }
+  mk test/stpar "Plan the week" status:ready
+  mk test/stkid "Pick a supplier" status:parked kid-q
+  mk test/stkid "Fix the build" status:claimed
+  mk test/stkid "Night summary" dreams
+  mk test/stkid "Freeze f1" status:parked
+  mk test/stmom "Parent work" status:claimed
+  python3 -c 'import time; time.sleep(60)' status-live-marker & LIVE=$!
+  jq -n --arg p "$LIVE" '[
+    {session_id: "s-live", tty: "/dev/ttys101", pid: ($p|tonumber), match: "status-live-marker", issue: 2, role: "worker", closed: null},
+    {session_id: "s-lost", tty: "/dev/ttys102", pid: 2147483646, match: "s-lost", issue: 3, role: "orchestrator", closed: null},
+    {session_id: "s-new", tty: null, pid: null, match: "s-new", issue: null, role: "worker", closed: null},
+    {session_id: "s-gone", tty: null, pid: null, match: "s-gone", issue: 5, role: "worker", closed: null, lost: "2026-01-01T00:00:00Z", lost_tty: "ttys105"},
+    {session_id: "s-done", tty: "/dev/ttys104", pid: 1, match: "s-done", issue: 9, role: "worker", closed: "2026-01-01T00:00:00Z"}]' > "$K/.local/registry.json"
+  before=$(wc -l < "$GH_STUB_DIR/calls.log")
+  out=$("$P/scripts/home-status" --all); rc=$?
+  [ "$rc" = 0 ] && ok || bad "home-status --all must exit 0 (got $rc)"
+  exp="== this test/stpar (this home)
+ready #1 Plan the week
+sessions: none open
+== kid test/stkid (child)
+question #1 Pick a supplier
+claimed #2 Fix the build
+frozen #4 Freeze f1
+session live ttys101 s-live #2 worker
+session stopped? ttys102 s-lost #3 orchestrator
+session starting - s-new #- worker
+session lost ttys105 s-gone #5 worker
+== pal test/stpal (peer)
+issues: none open
+sessions: unknown (no local path (homes.pal.path))"
+  [ "$out" = "$exp" ] && ok || bad "home-status --all: got
+$out"
+  printf '%s\n' "$out" | grep -q 'mom\|Parent work' && bad "--all must not read a parent home" || ok
+  tail -n +"$((before + 1))" "$GH_STUB_DIR/calls.log" | grep -qE '"(-X|--method)"' && bad "home-status must only read" || ok
+  "$P/scripts/home-status" | grep -q '^== kid' && bad "without --all only this home is shown" || ok
+  "$P/scripts/home-status" --home mom | grep -qx 'claimed #1 Parent work' && ok || bad "--home must read a named parent home"
+  expect "--home with an unknown name" 2 "$P/scripts/home-status" --home nobody
+  out=$(GH_STUB_FAIL_MATCH='test/stkid' "$P/scripts/home-status" --all)
+  printf '%s\n' "$out" | grep -qx 'issues: cannot read test/stkid' && ok || bad "an unreadable repo must be named, not shown as empty: $out"
+  kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+  # each home is read with its own gh config, from its own folder; never with this home's
+  mkdir -p "$T/ghwrap"; printf '#!/bin/sh\necho "${GH_CONFIG_DIR:-none} $PWD $*" >> "%s/ghenv.log"\nexec "%s/scripts/tests/stubs/gh" "$@"\n' "$T" "$SRC" > "$T/ghwrap/gh"; chmod +x "$T/ghwrap/gh"
+  printf 'gh.config_dir=%s/gh-par\n' "$T" > "$P/.local/config"; KP=$(cd "$K" && pwd)
+  : > "$T/ghenv.log"; PATH="$T/ghwrap:$PATH" GH_CONFIG_DIR="$T/gh-inherited" "$P/scripts/home-status" --all >/dev/null
+  grep -q "^$T/gh-par .* repos/test/stpar/" "$T/ghenv.log" && ok || bad "this home must be read with its own gh.config_dir: $(cat "$T/ghenv.log")"
+  grep -q "^none $KP .*repos/test/stkid/" "$T/ghenv.log" && ok || bad "a related home without gh.config_dir must be read from its folder with none: $(cat "$T/ghenv.log")"
+  grep -q "^none .*repos/test/stpal/" "$T/ghenv.log" && ok || bad "a related home with no clone must not get this home's gh config"
+  grep -q "gh-inherited\|gh-par .*repos/test/st\(kid\|pal\)/" "$T/ghenv.log" && bad "no related home may be read with this home's or the inherited gh config" || ok
+  printf 'gh.config_dir=%s/gh-kid\n' "$T" > "$K/.local/config"
+  : > "$T/ghenv.log"; PATH="$T/ghwrap:$PATH" "$P/scripts/home-status" --all >/dev/null
+  grep -q "^$T/gh-kid $KP .*repos/test/stkid/" "$T/ghenv.log" && ok || bad "a related home's own gh.config_dir must be used: $(cat "$T/ghenv.log")"
+  rm -f "$P/.local/config" "$K/.local/config"
+fi
+
+# ---------------------------------------------------------------- voice transcript
+if sel voice; then
+  VC="$SRC/scripts/voice-collect"; FX="$SRC/scripts/tests/fixtures/voice-rollout.jsonl"
+  out=$("$VC" "$FX" --since 2026-01-05T10:00:00Z); rc=$?
+  exp='# Voice transcript
+
+Source: voice-rollout.jsonl
+Time (UTC): 2026-01-05 10:00:10 to 10:00:45
+Turns: 6 (AI backchannels dropped: 2)
+
+**[10:00:10] AI:** First question: which shelf gets the new labels?
+
+**[10:00:15] Me:** The top shelf, the one with the jars.
+
+**[10:00:25] Me:** And the lable maker stays in the drawer.
+
+**[10:00:30] AI:** Noted, I will write that down. Second question: who keeps the key?
+
+**[10:00:40] Me:** Yes.
+
+**[10:00:45] Me:** The neighbour keeps it.'
+  [ "$rc" = 0 ] && [ "$out" = "$exp" ] && ok || bad "voice-collect transcript (rc $rc):
+$out"
+  "$VC" "$FX" | grep -qx '\*\*\[09:59:50\] Me:\*\* A warm-up line before the interview.' && ok || bad "without --since every segment is kept"
+  "$VC" "$FX" | grep -q 'Not part of the voice transcript' && bad "only transcript segments may be read" || ok
+  H="$T/vc"; mkhome "$H"
+  expect "voice-collect refuses an --out tracked by git" 3 "$VC" "$FX" --out "$H/wiki/call.md"
+  [ ! -e "$H/wiki/call.md" ] && ok || bad "a refused --out must write nothing"
+  expect "voice-collect writes into an ignored folder" 0 "$VC" "$FX" --out "$H/.local/call.md"
+  printf 'old\n' > "$H/.local/kept.md"; ( cd "$H" && git add -f .local/kept.md )
+  expect "voice-collect refuses a tracked file that an ignore pattern matches" 3 "$VC" "$FX" --out "$H/.local/kept.md"
+  [ "$(cat "$H/.local/kept.md")" = old ] && ok || bad "a tracked file must not be written over"
+  printf '%s\n' '{"ordinal":1,"type":"realtime_item","payload":{"type":"transcript_segment","role":"assistant","text":" Si."}}' \
+    '{"ordinal":2,"type":"realtime_item","payload":{"type":"transcript_segment","role":"assistant","text":" Mm-hm."}}' \
+    '{"ordinal":3,"type":"realtime_item","payload":{"type":"transcript_segment","role":"user","text":" Da."}}' > "$T/bc.jsonl"
+  printf 'voice.backchannels=si, DA\n' > "$H/.local/config"
+  out=$(HOME_ROOT="$H" "$VC" "$T/bc.jsonl")
+  printf '%s\n' "$out" | grep -q '^Turns: 2 (AI backchannels dropped: 1)$' && printf '%s\n' "$out" | grep -qx '\*\*\[--:--:--\] AI:\*\* Mm-hm\.' &&
+    printf '%s\n' "$out" | grep -qx '\*\*\[--:--:--\] Me:\*\* Da\.' && ok || bad "voice.backchannels must replace the default list:
+$out"
+  rm -f "$H/.local/config"
+  mkdir -p "$T/novcs"; expect "voice-collect writes outside git" 0 "$VC" "$FX" --out "$T/novcs/call.md"
+  cmp -s "$T/novcs/call.md" "$H/.local/call.md" && grep -q '^Turns: 7 ' "$T/novcs/call.md" && ok || bad "--out must hold the transcript"
+  mkdir -p "$T/codex/sessions/2026/01/05" "$T/codex/sessions/2026/01/06"
+  cp "$FX" "$T/codex/sessions/2026/01/05/rollout-a.jsonl"
+  echo '{"type":"session_meta","payload":{}}' > "$T/codex/sessions/2026/01/06/rollout-b.jsonl"
+  touch -t 202601050000 "$T/codex/sessions/2026/01/05/rollout-a.jsonl"
+  CODEX_HOME="$T/codex" "$VC" --latest | grep -q '^Source: rollout-a.jsonl$' && ok || bad "--latest must pick the newest rollout that holds a transcript"
+  expect "--latest with nothing after --since" 4 env CODEX_HOME="$T/codex" "$VC" --latest --since 2026-02-01T00:00:00Z
+  expect "a file and --latest together" 2 "$VC" "$FX" --latest
+  expect "a bad --since" 2 "$VC" "$FX" --since yesterday
 fi
 
 # ---------------------------------------------------------------- limits

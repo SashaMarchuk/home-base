@@ -43,6 +43,8 @@ base.url=https://github.com/example-org/home-base.git
 homes.allotment.repo=example-org/allotment-home
 homes.allotment.path=~/homes/allotment-home
 homes.allotment.role=child
+# Optional: words that route a request to that home, comma-separated.
+homes.allotment.topics=allotment,seedlings,watering rota
 
 # ---------- behaviour ----------
 # park | continue: what a worker does with a question while the owner is away.
@@ -59,6 +61,10 @@ dreams.mode=manual
 dreams.first_window_days=14
 # none | <MCP server name>
 facts.sink=none
+# Plugin or skill that makes a voice-interview package; empty: written by hand.
+voice.interview_plugin=
+# Comma list of AI-only backchannels voice-collect drops; replaces the English default.
+voice.backchannels=
 sweep.stale_hours=6
 # Days back the sweep looks at closed issues and merged pull requests.
 sweep.lookback_days=14

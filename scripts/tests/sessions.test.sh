@@ -628,6 +628,22 @@ check "registry: the plan keeps a reused tab as kept:changed" grep -q " -> kept:
 check "registry: freezing only that tab -> exit 3" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ]
 check "registry: a new session in a reused tab is not closed under the old entry" nokeys "$otty"
 check "registry: the old resume line is in no issue" no_leak test/home "--resume $osid"
+# 3a. after a reboot a tty is reused: the old entry (other tab, dead pid) never names the new session
+reset "${FKEYS[@]}"
+jq -n --arg s "$S1" --arg w "$W1" '[{session_id: $s, tty: "ttyr1", pid: 811, cwd: $w, issue: null, resume: ("cd x && claude --resume " + $s),
+  opened: "2026-01-01T00:00:00Z", closed: null, role: "worker", tab: "old-tab", match: $s}]' > "$REG"
+live ttyr1 812 "$W1" w7 "$S2"
+check "reuse: the text survey prints - for a stale entry" [ "$(ts survey)" = "ttyr1 812 claude - $W1" ]
+check "reuse: survey --json takes the session file's id and the tab is not registered" [ "$(sj ttyr1 | jq -r '.session_id + " " + (.registered | tostring)')" = "$S2 false" ]
+jq '.[0].tab = "hand-ttyr1" | .[0].pid = 812' "$REG" > "$REG.x" && mv "$REG.x" "$REG"
+check "reuse: the text survey prints the id of an entry that matches tab and pid" [ "$(ts survey)" = "ttyr1 812 claude $S1 $W1" ]
+jq '.[0].pid = 811' "$REG" > "$REG.x" && mv "$REG.x" "$REG"
+check "reuse: the same tab with another pid is stale too" [ "$(ts survey)" = "ttyr1 812 claude - $W1" ]
+jq '.[0].tab = "old-tab"' "$REG" > "$REG.x" && mv "$REG.x" "$REG"
+ts freeze ttyr1 --hard >/dev/null 2>&1
+check "reuse: the new session on the reused tty is frozen" [ "$(outcome ttyr1)" = exited ]
+check "reuse: the old entry of that tty is not closed with it" [ "$(jq -r --arg s "$S1" '.[] | select(.session_id == $s) | (.closed == null and .frozen == null)' "$REG")" = true ]
+check "reuse: the new session's own entry is closed" [ "$(jq -r --arg s "$S2" '.[] | select(.session_id == $s) | .closed != null' "$REG")" = true ]
 # 3b. the same process, tty and tab, a new session id in its session file (as after /clear): the entry follows it
 on_open() { # on_open <profile> [session id]: the new session writes its session file under that profile
   cat > "$TERM_FAKE_DIR/on-open" <<EOF

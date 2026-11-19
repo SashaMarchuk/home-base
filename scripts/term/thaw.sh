@@ -28,18 +28,23 @@ thaw_message() { # thaw_message <entry json> -> the one message for that session
   fi
 }
 
-thaw_reserve() { # thaw_reserve <entry json> <resume line>: registry entry for the reopened session; rc 6 at the worker cap
+thaw_reserve() { # thaw_reserve <entry json> <resume line> [lost]: registry entry for the reopened session; rc 6 at the worker cap
+  # "lost" (reopen): only while the entry is still lost and open, checked under the lock; rc 7 when another run
+  # reopened, adopted or closed it meanwhile
   local e=$1 sid role rc
   sid=$(printf '%s' "$e" | jq -r .session_id)
   role=$(printf '%s' "$e" | jq -r '.role // "owner"')
   reg_lock || return 3
+  if [ "${3:-}" = lost ] && ! reg_read -e --arg s "$sid" 'any(.[]; .session_id == $s and .closed == null and .lost != null)' >/dev/null; then
+    reg_unlock; return 7
+  fi
   if [ "$role" = worker ] && [ "$(count_live_workers)" -ge "$(cfg term.max_workers 4)" ]; then reg_unlock; return 6; fi
   if [ "$(reg_read --arg s "$sid" '[.[] | select(.session_id == $s)] | length')" -gt 0 ]; then
     reg_write --arg s "$sid" --arg o "$(now_utc)" --arg r "$2" --arg g "$(printf '%s' "$e" | jq -r '.group // ""')" \
       --arg gf "$(printf '%s' "$e" | jq -r '.group_from // ""')" \
       'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null,
          match: $s, resume: $r, group: (if $g == "" then .group else $g end),
-         group_from: (if $gf == "" then .group_from else $gf end)} else . end)'
+         group_from: (if $gf == "" then .group_from else $gf end)} | del(.lost, .lost_tty, .lost_tab, .lost_pid) else . end)'
   else
     reg_write --argjson e "$(printf '%s' "$e" | jq -c --arg o "$(now_utc)" --arg r "$2" \
       '{session_id, tty: null, pid: null, cwd, issue, resume: $r, opened: $o, closed: null, role: (.role // "owner"),

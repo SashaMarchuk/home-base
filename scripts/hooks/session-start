@@ -39,7 +39,7 @@ codex_record() { # the thread id of the Codex session on this tty, with the code
 [ "$(git config --local core.hooksPath 2>/dev/null)" = .githooks ] || git config --local core.hooksPath .githooks 2>/dev/null
 NEEDS=$(cfg labels.needs_owner needs-owner)
 echo "== home: ${HOME_REPO:-?} =="
-echo "Every request gets an issue first: first call scripts/home-log new --title T --body B --start (opens and claims it); last scripts/home-log finish <n> --text ..., a question or an explanation included."
+echo "Every request gets an issue first: first call scripts/home-log new --title T --body B --start (opens and claims it); last scripts/home-log finish <n> --text ..., a question or an explanation included. Work another home owns: its one issue goes there (new --repo <its repo> --ready), none here."
 q=$(gh api "repos/$HOME_REPO/issues?state=open&labels=$NEEDS&per_page=20" --jq '.[] | "- \(.html_url | sub(".*/issues/"; "#")) \(.title)"' 2>/dev/null)
 [ -n "$q" ] && { echo "Open owner questions ($NEEDS):"; printf '%s\n' "$q"; }
 for name in $(grep -hoE '^homes\.[A-Za-z0-9_-]+\.repo' home.config .local/config 2>/dev/null | cut -d. -f2 | sort -u); do

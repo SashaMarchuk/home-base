@@ -63,6 +63,7 @@ base.url=https://github.com/example-org/home-base.git
 homes.cellar.repo=example-org/cellar-home
 homes.cellar.path=~/homes/cellar-home
 homes.cellar.role=child
+homes.cellar.topics=cellar,wine list,bottling
 limits.mode=soft
 proactivity.mode=assigned
 dreams.mode=manual
@@ -87,11 +88,12 @@ check "missing keys write nothing" [ "$before" = "$(tree_sum)" ]
 
 # 2. invalid values and an address in accounts rows
 AT=@   # the fake address is built at run time, so none sits in this file
-{ sed -e 's/^limits.mode=soft/limits.mode=sometimes/' -e "s/^accounts.rows=orchard |/accounts.rows=jo${AT}example.org |/" "$A"; echo questions.worker_away=maybe; } > "$W/answers.bad"
+{ sed -e 's/^limits.mode=soft/limits.mode=sometimes/' -e "s/^accounts.rows=orchard |/accounts.rows=jo${AT}example.org |/" "$A"; echo questions.worker_away=maybe; echo 'homes.cellar.topics=cellar,,bottling'; } > "$W/answers.bad"
 out=$("$R/scripts/configure" --answers "$W/answers.bad" 2>&1); rc=$?
 check "invalid values exit 2" [ "$rc" = 2 ]
 check "invalid enum named" grep -q "invalid answer: limits.mode=sometimes" <<<"$out"
 check "invalid worker_away named" grep -q "invalid answer: questions.worker_away=maybe (allowed: park continue)" <<<"$out"
+check "topics with an empty item named" grep -q "invalid answer: homes.cellar.topics=cellar,,bottling (a comma-separated list" <<<"$out"
 check "address refused" grep -q "holds an address" <<<"$out"
 check "invalid values write nothing" [ "$before" = "$(tree_sum)" ]
 
@@ -109,6 +111,7 @@ check "home.config worker_away default" grep -qx 'questions.worker_away=park' "$
 check "home.config sweep lookback default" grep -qx 'sweep.lookback_days=14' "$R/home.config"
 check "home.config guard.extra" grep -qx 'guard.extra=docker compose down' "$R/home.config"
 check "home.config homes" grep -qx 'homes.cellar.role=child' "$R/home.config"
+check "home.config homes topics" grep -qx 'homes.cellar.topics=cellar,wine list,bottling' "$R/home.config"
 check "home.config has no machine key" sh -c "! grep -qE '^(gh\.config_dir|terminal_helpers|transcripts\.|limits\.reader|launch\.|guard\.private_values)=' '$R/home.config'"
 check "home.config has no owner name" sh -c "! grep -q 'Jordan' '$R/home.config'"
 check ".local/config machine key" grep -qx 'transcripts.exclude=~/sandbox' "$R/.local/config"

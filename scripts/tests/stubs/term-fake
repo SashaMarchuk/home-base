@@ -18,7 +18,7 @@
 #   on-screen  a script run before each screen read (stands in for a session that changes on its own)
 # $TERM_FAKE_DIR/on-first-key: a script run once, before the first key reaches any tab
 # Logs: keys (every keystroke), sent (submitted lines), answered (dialog answers).
-# Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd and ppid; kills go to $TERM_FAKE_DIR/kills.
+# Processes are folders $TERM_FAKE_DIR/proc/<pid>/ with cmd, tty, cwd, ppid and env (KEY=value words); kills go to $TERM_FAKE_DIR/kills.
 # $TERM_FAKE_DIR/self-pid is the pid term.sh sees as its own (start of the walk to the calling
 # session; none when absent); $TERM_FAKE_DIR/front-window the frontmost window; windows are
 # created as w<N> and logged to $TERM_FAKE_DIR/windows.
@@ -180,8 +180,9 @@ be_open() { # mirrors the real launch: the tab starts with "<shell> -lic '<wrapp
 
 fake_window_live() { be_tabs | awk -v w="$1" '$3 == w { f = 1 } END { exit !f }'; }
 
-be_tabs() {
+be_tabs() { # $TERM_FAKE_DIR/tabs-fail: the tabs cannot be read
   local d t
+  [ -f "$TERM_FAKE_DIR/tabs-fail" ] && return 1
   for d in "$TERM_FAKE_DIR"/tabs/*; do
     [ -d "$d" ] || continue
     t=${d##*/}
@@ -201,6 +202,7 @@ be_procs() {
 be_pid_cmd() { [ -f "$TERM_FAKE_DIR/proc/$1/cmd" ] || return 1; cat "$TERM_FAKE_DIR/proc/$1/cmd"; echo; }
 be_pid_tty() { cat "$TERM_FAKE_DIR/proc/$1/tty" 2>/dev/null; }
 be_pid_cwd() { cat "$TERM_FAKE_DIR/proc/$1/cwd" 2>/dev/null; }
+be_pid_env() { [ -f "$TERM_FAKE_DIR/proc/$1/env" ] || return 0; printf '%s %s\n' "$(cat "$TERM_FAKE_DIR/proc/$1/cmd")" "$(cat "$TERM_FAKE_DIR/proc/$1/env")"; }
 be_pid_ppid() { cat "$TERM_FAKE_DIR/proc/$1/ppid" 2>/dev/null; }
 be_self_pid() { cat "$TERM_FAKE_DIR/self-pid" 2>/dev/null || echo 0; }
 be_front_window() { cat "$TERM_FAKE_DIR/front-window" 2>/dev/null || echo w1; }

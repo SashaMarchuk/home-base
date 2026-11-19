@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""voice-collect: a Codex voice-chat rollout as a verbatim markdown transcript.
+
+  scripts/voice-collect <rollout.jsonl> [--since <ISO time>] [--out <file>]
+  scripts/voice-collect --latest [--since <ISO time>] [--out <file>]
+
+Reads only the realtime transcript segments of the rollout (lines with
+"type": "realtime_item" whose payload has "type": "transcript_segment", a "role"
+and a "text"); every other line is ignored. Segments run in their "ordinal" order.
+Neighbouring segments of one speaker are joined as written (a segment that
+continues a word has no leading space); a segment of the other speaker, or a
+dropped one, always starts a new turn. Speakers: "Me" (user) and "AI" (assistant).
+Text is kept verbatim, speech-recognition errors included. Only an AI segment that
+is nothing but a backchannel (compared without case and surrounding punctuation)
+is dropped; nothing the user said is ever dropped. The backchannels are
+voice.backchannels=<comma list> from the home's config (.local/config over
+home.config, read with scripts/lib/config) when set, which replaces the default
+English list (DEFAULT_BACKCHANNELS); a home lists its own language's words there.
+
+--latest   the newest rollout under $CODEX_HOME/sessions (default ~/.codex/sessions)
+           that holds a transcript segment (at or after --since, when given)
+--since    keep only segments at or after this time (ISO 8601, e.g. 2026-01-31T09:00:00Z)
+--out      write the transcript to this file instead of standard output. A path inside
+           a git work tree is refused unless git ignores it: transcripts stay out of git.
+Times are shown in UTC.
+Exit: 0 ok, 2 usage or unreadable file, 3 --out refused, 4 no transcript segment found.
+"""
+import glob
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+DEFAULT_BACKCHANNELS = {
+    "uh-huh", "mm-hm", "mm-hmm", "mhm", "hmm", "uh", "um",
+    "yeah", "yep", "yes", "ok", "okay", "right",
+}
+PUNCT = " \t\r\n.,!?…—–-:;\"'«»()"
+
+
+def die(code, msg):
+    sys.stderr.write("voice-collect: " + msg + "\n")
+    sys.exit(code)
+
+
+def parse_time(s):
+    try:
+        t = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc)
+
+
+def segments(path, since):
+    out = []
+    try:
+        f = open(path, encoding="utf-8")
+    except OSError as e:
+        die(2, "cannot read %s: %s" % (path, e.strerror))
+    with f:
+        for pos, line in enumerate(f):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict) or d.get("type") != "realtime_item":
+                continue
+            p = d.get("payload")
+            if not isinstance(p, dict) or p.get("type") != "transcript_segment":
+                continue
+            text, role = p.get("text"), p.get("role")
+            if not isinstance(text, str) or role not in ("user", "assistant"):
+                continue
+            t = parse_time(d.get("timestamp", ""))
+            if since and (t is None or t < since):
+                continue
+            order = d.get("ordinal")
+            out.append(((order if isinstance(order, int) else pos), pos, t, role, text))
+    out.sort(key=lambda s: (s[0], s[1]))
+    return out
+
+
+def backchannels():
+    """voice.backchannels from the home's config when set, else the default list."""
+    lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "config")
+    try:
+        r = subprocess.run(["bash", "-c", '. "$1" && cfg voice.backchannels', "voice-collect", lib],
+                           capture_output=True, text=True)
+        raw = r.stdout.strip() if r.returncode == 0 else ""
+    except OSError:
+        raw = ""
+    words = {w.strip(PUNCT).lower() for w in raw.split(",")} - {""}
+    return words or DEFAULT_BACKCHANNELS
+
+
+def is_backchannel(role, text, words):
+    return role == "assistant" and text.strip(PUNCT).lower() in words
+
+
+def turns(segs):
+    words = backchannels()
+    result, dropped, last = [], 0, None  # last: the turn the next segment may join
+    for _, _, t, role, text in segs:
+        if is_backchannel(role, text, words):
+            dropped += 1
+            last = None
+            continue
+        if last is not None and last["role"] == role:
+            last["text"] += text
+        else:
+            last = {"role": role, "time": t, "text": text}
+            result.append(last)
+    return result, dropped
+
+
+def latest(since):
+    base = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "sessions")
+    files = glob.glob(os.path.join(base, "**", "rollout-*.jsonl"), recursive=True)
+    for f in sorted(files, key=lambda x: os.path.getmtime(x), reverse=True):
+        try:
+            with open(f, encoding="utf-8") as h:
+                if "transcript_segment" not in h.read():
+                    continue
+        except OSError:
+            continue
+        if segments(f, since):
+            return f
+    die(4, "no rollout with a transcript segment under %s" % base)
+
+
+def out_allowed(path):
+    d = os.path.dirname(os.path.abspath(path))
+    while not os.path.isdir(d):
+        d = os.path.dirname(d)
+    top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode != 0:
+        return True  # not in a git work tree
+    full = os.path.abspath(path)
+    # a tracked file is never written over, even when an ignore pattern matches it
+    tracked = subprocess.run(["git", "-C", d, "ls-files", "--error-unmatch", "--", full], capture_output=True)
+    if tracked.returncode == 0:
+        return False
+    ign = subprocess.run(["git", "-C", d, "check-ignore", "-q", full], capture_output=True)
+    return ign.returncode == 0
+
+
+def main(argv):
+    src, since, out, use_latest = None, None, None, False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--since", "--out"):
+            if i + 1 >= len(argv):
+                die(2, a + " needs a value")
+            if a == "--since":
+                since = parse_time(argv[i + 1])
+                if since is None:
+                    die(2, "--since takes an ISO 8601 time, got '%s'" % argv[i + 1])
+            else:
+                out = argv[i + 1]
+            i += 2
+        elif a == "--latest":
+            use_latest = True
+            i += 1
+        elif a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        elif a.startswith("-") or src:
+            die(2, "usage: voice-collect <rollout.jsonl> | --latest [--since <ISO>] [--out <file>]")
+        else:
+            src = a
+            i += 1
+    if bool(src) == use_latest:
+        die(2, "give either a rollout file or --latest")
+    if out and not out_allowed(out):
+        die(3, "refusing to write %s: it is inside a git work tree and tracked or not ignored; give a path outside git" % out)
+    if use_latest:
+        src = latest(since)
+    segs = segments(src, since)
+    if not segs:
+        die(4, "no transcript segment in %s" % src)
+    ts, dropped = turns(segs)
+    times = [s[2] for s in segs if s[2]]
+    fmt = lambda t: t.strftime("%H:%M:%S") if t else "--:--:--"
+    lines = ["# Voice transcript", "",
+             "Source: %s" % os.path.basename(src)]
+    if times:
+        lines.append("Time (UTC): %s to %s" % (min(times).strftime("%Y-%m-%d %H:%M:%S"), max(times).strftime("%H:%M:%S")))
+    lines.append("Turns: %d (AI backchannels dropped: %d)" % (len(ts), dropped))
+    lines.append("")
+    for t in ts:
+        lines.append("**[%s] %s:** %s" % (fmt(t["time"]), "Me" if t["role"] == "user" else "AI", t["text"].strip()))
+        lines.append("")
+    text = "\n".join(lines)
+    if out:
+        try:
+            with open(out, "w", encoding="utf-8") as h:
+                h.write(text)
+        except OSError as e:
+            die(2, "cannot write %s: %s" % (out, e.strerror))
+        print("voice-collect: %d turns written to %s" % (len(ts), out))
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -6,6 +6,8 @@
 #   home-log start <n> [--resume CMD] [--text T]
 #   home-log checkpoint <n> [--text T | --text-file F] [--park | --blocked REASON |
 #                           --delegated OWNER/REPO#M | --handed SESSION_ID] [--question Q] [--clear-question]
+#     (--delegated: only for an older issue handed to another home under the earlier rule; a hand-off
+#      now opens its one issue in that home with 'new --repo <its repo> --ready' and none here)
 #     (--handed: a worker session was launched for it; needs no claim, writes this run's comment
 #      as delegated with the session id in its own field and changes no label)
 #   home-log finish <n> [--text T | --text-file F] [--review | --release REASON]

@@ -47,7 +47,7 @@ freeze_unlock() { if [ "$FLOCK_HELD" = 1 ]; then rm -f "$FLOCK/pid"; rmdir "$FLO
 freeze_lock() {
   mkdir -p "$LOCAL_DIR"
   mkdir "$FLOCK" 2>/dev/null ||
-    die 3 "another freeze or thaw runs ($FLOCK, holder pid $(cat "$FLOCK/pid" 2>/dev/null || echo '?')); remove it by hand only if that process is gone"
+    die 3 "another freeze, thaw or reopen runs ($FLOCK, holder pid $(cat "$FLOCK/pid" 2>/dev/null || echo '?')); remove it by hand only if that process is gone"
   FLOCK_HELD=1
   echo $$ > "$FLOCK/pid"
 }
@@ -433,7 +433,7 @@ EOF
     record_adopted "$e" || { snap_outcome "$tty" "kept:no-record" || die 3 "cannot update the snapshot; nothing was typed"; continue; }
     sid=$(printf '%s' "$e" | jq -r .session_id)
     printf '%s' "$e" | jq -e .registered >/dev/null &&
-      { reg_update --arg t "$tty" --arg f "$FID" 'map(if .tty == $t and .closed == null then . + {frozen: $f} else . end)' || note "registry not updated for $tty"; }
+      { reg_update --arg t "$tty" --arg s "$sid" --arg f "$FID" 'map(if .tty == $t and .closed == null and .session_id == $s then . + {frozen: $f} else . end)' || note "registry not updated for $tty"; }
   done <<EOF
 $(jq -c '.entries[] | select(.outcome == "captured")' "$SNAP")
 EOF
@@ -470,8 +470,9 @@ freeze_act() { # phase C and D over the snapshot's entries still to act on
     [ "$rc" = 5 ] && linger=1
     snap_outcome "$tty" "$outcome" || true
     if [ "$outcome" = exited ]; then
-      reg_update --arg t "$tty" --arg c "$(now_utc)" --arg f "$FID" \
-        'map(if .tty == $t and .closed == null then . + {closed: $c, frozen: $f} else . end)' || note "registry not updated for $tty"
+      # by tty and session id: an older entry of a reused tty (another session) is never closed with this one
+      reg_update --arg t "$tty" --arg s "$sid" --arg c "$(now_utc)" --arg f "$FID" \
+        'map(if .tty == $t and .closed == null and .session_id == $s then . + {closed: $c, frozen: $f} else . end)' || note "registry not updated for $tty"
     fi
   done <<EOF
 $(jq -c '[.entries[] | select(.outcome == "captured")]

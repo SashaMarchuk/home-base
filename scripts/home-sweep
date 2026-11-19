@@ -5,7 +5,8 @@
 #   closed-no-final        closed issue whose comments hold no final home-log comment
 #   stale-claim            status:claimed issue whose active comment is older than sweep.stale_hours
 #   pr-no-final            merged pull request naming an issue that has no final comment
-#   delegated-child-closed status:delegated issue whose child issue is closed
+#   delegated-child-closed status:delegated issue whose child issue is closed (older hand-offs only:
+#                          a hand-off now opens its one issue in the other home and none here)
 #   drift <path>           a flows-down path differs from base/main (printed as: SWEEP drift <repo> <path>)
 #   base-ahead <N>         base/main has N commits this home does not have (SWEEP base-ahead <repo> base/main is N commits ahead)
 # Adds the label needs-summary to closed-no-final and pr-no-final issues.

@@ -117,6 +117,8 @@ proactivity.every_minutes=60
 dreams.mode=manual
 dreams.first_window_days=14
 facts.sink=none
+voice.interview_plugin=
+voice.backchannels=
 sweep.stale_hours=6
 sweep.lookback_days=14"
 MACHINE_DEFAULTS="gh.config_dir=
@@ -329,9 +331,14 @@ for h in $HOMES; do
   [ -n "$(ans "homes.$h.repo")" ] || MISSING+=("homes.$h.repo")
   r=$(ans "homes.$h.role")
   case "$r" in parent|child|peer) ;; '') MISSING+=("homes.$h.role") ;; *) BAD+=("homes.$h.role=$r (parent, child or peer)") ;; esac
+  tp=$(ans "homes.$h.topics")
+  if [ -n "$tp" ] && { case "$tp" in *'#'*|*'='*) true ;; *) false ;; esac ||
+       printf '%s\n' "$tp" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -qx ''; }; then
+    BAD+=("homes.$h.topics=$tp (a comma-separated list of words, no empty item, no # or =)")
+  fi
 done
 for k in $(ans_keys); do
-  case "$k" in homes.*.repo|homes.*.path|homes.*.role) continue ;; esac
+  case "$k" in homes.*.repo|homes.*.path|homes.*.role|homes.*.topics) continue ;; esac
   case " $REQUIRED $PRESENT $REPEATABLE $HOME_FIELDS " in *" $k "*) continue ;; esac
   printf '%s\n%s\n' "$COMMITTED_DEFAULTS" "$MACHINE_DEFAULTS" | grep -q "^$k=" && continue
   echo "configure: warning: unknown key '$k' ignored" >&2
@@ -403,7 +410,7 @@ subst() { # subst <template file>: replaces {{NAME}} with $S_NAME, literally
 GUARD_LINES=$(ans_all guard.extra | grep -v '^$' | sed 's/^/guard.extra=/')
 HOMES_LINES=""
 for h in $HOMES; do
-  for f in repo path role; do
+  for f in repo path role topics; do
     v=$(ans "homes.$h.$f"); [ -n "$v" ] && HOMES_LINES="$HOMES_LINES"$'\n'"homes.$h.$f=$v"
   done
 done

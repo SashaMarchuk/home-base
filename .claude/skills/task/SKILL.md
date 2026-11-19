@@ -9,7 +9,7 @@ Every request gets an issue first: this skill opens it (step 5), then `scripts/h
 
 1. Search first: open issues (`gh api -X GET search/issues -f q='is:open is:issue repo:<repo> <words>' --jq '.items[] | "#\(.number) \(.title)"'`), `DECISIONS.md` and the wiki. If the task exists, say so and stop.
 2. Grill until the task has: an **outcome** (what is true when done), a **scope** (what is in, what is out), and **done-criteria** (checkable). Use the surface's ask tool, at most four questions per round, context first, recommended option first. Never ask what is already answered.
-3. Decide the home: if the task belongs to another home's domain (`homes.*`, its boundary), use the delegation steps of the `orchestrate` skill instead.
+3. Decide the home: if the task belongs to another home's domain (`homes.*`, its boundary and `homes.<name>.topics`; two homes fit: one question), use section 7 of the `orchestrate` skill instead: the one issue goes into that home, none here.
 4. Write the body to `scratch/task-body.md`:
    ```
    Outcome: ...

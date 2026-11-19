@@ -15,9 +15,21 @@
 #   term.sh finished [--json]        -> "<tty> <session_id> <issue|-> <verdict>" per open tab of the registry;
 #                                       verdict: closable | keep:<reason> | unsure:<what could not be read>,
 #                                       from the checks of close; read only (no key, no write, nothing closed)
-#   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|shell> <session_id|-> <cwd>" per live tab
+#   term.sh survey [--cwd DIR]       -> "<tty> <pid|-> <claude|codex|shell> <session_id|-> <cwd>" per live tab; the id
+#                                       is the registry's only while its entry names that tab and that process, else -;
+#                                       codex only for a Codex tab whose registry entry names its one codex process
 #   term.sh freeze ... --hard         -> see scripts/term/freeze.sh
 #   term.sh thaw [<id>|latest] ...    -> see scripts/term/thaw.sh
+#   term.sh reconcile [--dry-run]    -> "LOST <session_id> <tty>" per open entry whose tab AND process are gone;
+#                                       it is marked lost (not closed) so reopen finds it; see scripts/term/recover.sh
+#   term.sh adopt <tty>... [--issue N] [--repo R] [--group G] | adopt --all
+#                                    -> records live tabs this home did not open (adopted, typing nothing)
+#   term.sh reopen [--lost | <session_id>...] [--dry-run] [--message TEXT]
+#                                    -> reopens lost sessions after a reboot, one window per group
+#   term.sh forget <session_id> [--reason TEXT]
+#                                    -> closes a lost entry that must not be reopened (types nothing)
+#   term.sh regroup [--dry-run]      -> the plan to move registered tabs into their group's window; moving is
+#                                       not supported by the iTerm2 AppleScript backend, so nothing moves
 #   term.sh survey --json            -> one JSON object per live tab: tty, window, tab, pid, kind (claude,
 #                                       codex or shell), session_id and where it came from, profile, status,
 #                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
@@ -213,13 +225,16 @@ on run argv
     -- the session of a new window can be unready for a moment: wait until it answers
     set ready to false
     repeat 50 times
+      -- a session that is not ready can also answer with a missing tty instead of an error
       try
         set tt to tty of s
-        set ready to true
-        exit repeat
-      on error
-        delay 0.2
+        if tt is not missing value and (tt as text) is not "" then
+          set tt to tt as text
+          set ready to true
+          exit repeat
+        end if
       end try
+      delay 0.2
     end repeat
     if not ready then error "the new session did not become ready"
     -- give the focus back last: a new window takes the front a moment after it is created
@@ -237,7 +252,7 @@ on run argv
         tell frontS to select
       end try
     end if
-    return (id of s) & " " & (tty of s) & " " & (id of w)
+    return (id of s) & " " & tt & " " & (id of w)
   end tell
 end run
 OSA
@@ -245,9 +260,11 @@ OSA
   printf '%s\n' "${out/\/dev\//}"
 }
 
-be_tabs() { # -> "<tab id> <tty> <window id>" for every live session
-  iterm_running || return 0
-  osascript <<'OSA' | sed 's#/dev/##'
+be_tabs() { # -> "<tab id> <tty> <window id>" for every live session; rc 1 when the tabs cannot be read
+  local run out
+  run=$(osascript -e 'application "iTerm2" is running' 2>/dev/null) || return 1
+  [ "$run" = true ] || return 0
+  out=$(osascript <<'OSA'
 set out to ""
 tell application "iTerm2"
   repeat with w in windows
@@ -260,6 +277,8 @@ tell application "iTerm2"
 end tell
 return out
 OSA
+) || return 1
+  printf '%s\n' "$out" | sed 's#/dev/##'
 }
 
 be_front_window() { # -> id of the frontmost window
@@ -272,6 +291,7 @@ be_pid_cmd() { local c; c=$(ps -p "$1" -o command= 2>/dev/null) || return 1; [ -
 be_pid_tty() { ps -p "$1" -o tty= 2>/dev/null | tr -d ' '; }
 be_pid_ppid() { ps -p "$1" -o ppid= 2>/dev/null | tr -d ' '; }
 be_self_pid() { echo $$; }   # this script's own process: the start of the walk to the calling session
+be_pid_env() { ps eww -o command= -p "$1" 2>/dev/null; }   # -> the command line, then its environment (own processes)
 be_pid_cwd() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1; }
 be_kill() { kill -TERM "$1"; }
 be_mem_free() { memory_pressure -Q 2>/dev/null | awk -F': *' '/free percentage/ { gsub(/%/, "", $2); print $2 }'; }
@@ -440,13 +460,14 @@ load_entry() { # load_entry <json object>
   T_KIND=$(printf '%s' "$1" | jq -r '.kind // "claude"')
   T_MOVED=$(printf '%s' "$1" | jq -r '.moved_from // ""')
   T_ROLE=$(printf '%s' "$1" | jq -r '.role // "worker"')
+  T_LOST=$(printf '%s' "$1" | jq -r '.lost // ""')
   T_REG=1
 }
 
 resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed registry entry
   local target=$1 mode=${2:-open} entry n live
   T_TTY=""; T_TAB=""; T_SID=""; T_PID=""; T_MATCH=""; T_ISSUE=""; T_CLOSED=""; T_REG=0; T_ALIVE=0
-  T_ADOPTED=0; T_KIND=claude; T_MOVED=""; T_ROLE=worker
+  T_ADOPTED=0; T_KIND=claude; T_MOVED=""; T_ROLE=worker; T_LOST=""
   case "$target" in
     /dev/tty*|tty*)
       T_TTY=${target#/dev/}
@@ -466,6 +487,7 @@ resolve() { # resolve <target> [any]: sets T_*; "any" also accepts a closed regi
     [ "$mode" = any ] && return 0
     die 3 "session $T_SID was closed at $T_CLOSED"
   fi
+  [ -z "$T_LOST" ] || die 3 "session $T_SID was lost at $T_LOST (its tab and process were gone); reopen it with 'term.sh reopen $T_SID'"
   [ -n "$T_TTY" ] || die 4 "session $T_SID has no tty yet"
   live=$(be_tabs | awk -v t="$T_TTY" '$2 == t && !f { print $1; f = 1 }')
   [ -n "$live" ] || die 4 "no live tab on $T_TTY"
@@ -799,7 +821,7 @@ count_live_workers() { # caller holds the lock
     [ -n "$pid" ] || continue
     if [ "$pid" = null ] || pid_alive_as "$pid" "$match"; then n=$((n + 1)); fi
   done <<EOF
-$(reg_read -r --argjson w "$((OPEN_WAIT + 60))" '.[] | select(.closed == null and (.role // "worker") == "worker")
+$(reg_read -r --argjson w "$((OPEN_WAIT + 60))" '.[] | select(.closed == null and .lost == null and (.role // "worker") == "worker")
   | if .pid == null then (if ((.opened | fromdateiso8601) > (now - $w)) then "null -" else empty end)
     else "\(.pid) \(.match)" end')
 EOF
@@ -855,14 +877,15 @@ launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|curren
   read -r tab tty win <<EOF
 $out
 EOF
+  # a tab that opened is always named on stdout ("<sid> <tty> -"), also when the registry cannot record it
   reg_set "$sid" '{tab: $tab, tty: $tty, window: (if $w == "" then null else $w end)}' --arg tab "$tab" --arg tty "$tty" --arg w "${win:-}" ||
-    die 3 "tab $tty opened but the registry could not be updated; close it by hand"
+    { echo "$sid $tty -"; die 3 "tab $tty opened but the registry could not be updated; close it by hand"; }
   pid=$(find_pid "$tty" "$3" "$name") || {
     reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"
     die 5 "tab $tty opened but no process matching the launch appeared; marked closed"
   }
   reg_set "$sid" '{pid: ($p | tonumber)}' --arg p "$pid" ||
-    die 3 "tab $tty (PID $pid) opened but the registry could not be updated"
+    { echo "$sid $tty $pid"; die 3 "tab $tty (PID $pid) opened but the registry could not be updated"; }
   echo "$sid $tty $pid"
 }
 
@@ -1359,7 +1382,7 @@ cmd_resume() {
 }
 
 cmd_survey() {
-  local want="" tab tty win pid kind sid cwd procs found=0
+  local want="" tab tty win pid kind sid cwd procs found=0 cpid
   if [ "${1:-}" = --json ]; then
     [ $# -eq 1 ] || die 2 "usage: survey --json (no other option)"
     need_helpers; survey_json; return 0
@@ -1369,14 +1392,24 @@ cmd_survey() {
   procs=$(be_procs)
   while read -r tab tty win; do
     [ -n "$tty" ] || continue
-    pid=$(printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t { c = $3; n = split(c, p, "/"); if (p[n] == "claude") { print $1; exit } }')
+    # awk reads its whole input (no early exit), so the writer never meets a closed pipe
+    pid=$(printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t && !f { n = split($3, p, "/"); if (p[n] == "claude") { print $1; f = 1 } }')
     if [ -n "$pid" ]; then kind=claude
     else
       kind=shell
-      pid=$(printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t { print $1 }' | sort -n | tail -1)
+      cpid=$(tty_pids "$tty" codex "$procs")
+      # a Codex tab is a shell line unless its one codex process is the one its registry entry names
+      if [ -n "$cpid" ] && [ "$(printf '%s\n' "$cpid" | grep -c .)" = 1 ] &&
+         live_entry "$tty" "$tab" "$cpid" | jq -e '.kind == "codex"' >/dev/null 2>&1; then
+        kind=codex; pid=$cpid
+      else
+        pid=$(printf '%s\n' "$procs" | awk -v t="$tty" '$2 == t { print $1 }' | sort -n | tail -1)
+      fi
     fi
     cwd=""; [ -n "$pid" ] && cwd=$(be_pid_cwd "$pid")
-    sid=$(reg_read -r --arg t "$tty" '[.[] | select(.tty == $t and .closed == null)] | last | .session_id // "-"')
+    sid=-   # the registry's id only while its entry names this tab and this process (an entry of a reused tty is stale)
+    [ "$kind" = shell ] || sid=$(live_entry "$tty" "$tab" "$pid" | jq -r '.session_id // "-"' 2>/dev/null)
+    [ -n "$sid" ] || sid=-
     [ "$kind" = shell ] && pid=-
     if [ -n "$want" ]; then
       [ "$kind" = claude ] && [ "$cwd" = "$want" ] || continue
@@ -1392,6 +1425,7 @@ EOF
 . "$TERM_SH_DIR/sessions.sh"
 . "$TERM_SH_DIR/freeze.sh"
 . "$TERM_SH_DIR/thaw.sh"
+. "$TERM_SH_DIR/recover.sh"
 
 # Sourcing with TERM_SH_LIB=1 loads the functions only (used by the tests).
 if [ "${TERM_SH_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -1410,5 +1444,10 @@ case "$VERB" in
   finished) cmd_finished "$@" ;;
   freeze) cmd_freeze "$@" ;;
   thaw) cmd_thaw "$@" ;;
-  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|finished|survey|freeze|thaw ... (see the header of this script, freeze.sh and thaw.sh)" ;;
+  reconcile) cmd_reconcile "$@" ;;
+  adopt) cmd_adopt "$@" ;;
+  reopen) cmd_reopen "$@" ;;
+  regroup) cmd_regroup "$@" ;;
+  forget) cmd_forget "$@" ;;
+  *) die 2 "usage: term.sh open|screen|state|send|park|resume|close|finished|survey|freeze|thaw|reconcile|adopt|reopen|forget|regroup ... (see the header of this script, freeze.sh, thaw.sh and recover.sh)" ;;
 esac
