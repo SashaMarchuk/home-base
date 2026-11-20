@@ -596,6 +596,7 @@ if sel checks; then
 fi
 
 # ---------------------------------------------------------------- facts stub (Dreams sink)
+# No script here uses this stub; eval harnesses outside this repo run it, so this group is its only proof.
 if sel facts; then
   export FACTS_STUB_LOG="$T/facts.log" FACTS_STUB_STORE="$T/facts.json"
   out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Tests for the porcelain issue verbs of the gh stub (stubs/gh): gh issue create|list|view|comment|close|reopen|edit.
 # They must share state with the `gh api` routes. Exit 0 when all pass.
+# No script here calls these verbs; they are kept because eval harnesses outside this repo copy the stub, so this file is their only proof.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 T=$(mktemp -d "${TMPDIR:-/tmp}/gh-test.XXXXXX") || exit 1
