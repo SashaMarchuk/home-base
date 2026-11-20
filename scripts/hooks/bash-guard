@@ -10,7 +10,7 @@
 # Codex is refused (exit 2). Ownership that cannot be determined is refused. Signal 0 only
 # probes and always passes. A command that holds the word kill where the guard cannot read it
 # as "kill [signal] <PIDs>" (behind a wrapper such as timeout, nice, trap or a function body)
-# gets the same answer: ask in Claude Code, refused on Codex. Text is let through: after
+# is refused on every surface (never asked: the agent restates it, or passes text through a file). Text is let through: after
 # echo, printf, grep, egrep, fgrep, rg, git, gh, cat, man, which, type, ls, cd and home-log,
 # and where a plain word follows kill and no bare number or variable comes after it.
 # Not seen: a kill inside a script file or another interpreter. The agent session is the
@@ -156,13 +156,14 @@ for p in $PIDS; do
 done
 [ -n "$foreign$UNREAD" ] || exit 0
 foreign=${foreign%, }; UNREAD=${UNREAD%, }
-why=""
-[ -n "$foreign" ] && why="this session did not start PID $foreign"
-[ -n "$UNREAD" ] && why="${why:+$why; }the guard cannot read this as 'kill [signal] <PIDs>': $UNREAD"
+# A form the guard cannot read is refused on every surface, never asked: a confirmation would stall a
+# session nobody watches, and the agent can restate it (the kill on its own, or text through a file).
+[ -z "$UNREAD" ] || block "${foreign:+kill of a process this session did not start: PID $foreign; and }a kill the guard cannot read: $UNREAD" \
+  "Write it as kill <PID> on its own. If the word is only text (a message, test data), pass that text through a file instead of the command line (rule 9)."
+why="this session did not start PID $foreign"
 if [ "$AGENT_NAME" = claude ] && [ "${BASH_GUARD_SURFACE:-}" != codex ] && [ -z "${CODEX_THREAD_ID:-}" ]; then
   jq -nc --arg r "bash-guard: $why. Confirm only if exactly this process must end (rule 9)." \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r}}'
   exit 0
 fi
-[ -n "$foreign" ] && block "kill of a process this session did not start: PID $foreign${UNREAD:+; and a kill the guard cannot read: $UNREAD}" "$REFUSE"
-block "a kill the guard cannot read: $UNREAD" "Write it as kill <PID> on its own, or ask the owner to run it (rule 9)."
+block "kill of a process this session did not start: PID $foreign" "$REFUSE"

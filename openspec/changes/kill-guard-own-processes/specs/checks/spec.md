@@ -103,15 +103,19 @@ The bash guard SHALL refuse a kill of an exact process id with exit 2 on every s
 - **THEN** the hook exits 2 and the reason says there is nothing to kill
 
 ### Requirement: HOME-354 A kill the guard cannot read
-When the word `kill` stands in a command where the bash guard cannot read it as `kill`, one optional signal and exact process ids, the guard SHALL answer as HOME-351 does (Claude Code: `ask`; Codex, or no agent process found: exit 2), except after `echo`, `printf`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `gh`, `cat`, `man`, `which`, `type`, `ls`, `cd` and `home-log`, and where a plain word follows `kill` and no bare number or variable comes after it (never after `xargs`).
+When the word `kill` stands in a command where the bash guard cannot read it as `kill`, one optional signal and exact process ids, the guard SHALL refuse it with exit 2 on every surface, never ask, and name both ways on in its message; except after `echo`, `printf`, `grep`, `egrep`, `fgrep`, `rg`, `git`, `gh`, `cat`, `man`, `which`, `type`, `ls`, `cd` and `home-log`, and where a plain word follows `kill` and no bare number or variable comes after it (never after `xargs`).
 
 #### Scenario: A kill behind another command
 - **WHEN** a Claude Code session runs `timeout 5 kill 1234`, `nice kill 1234`, `trap 'kill 1234' EXIT`, `case x in x) kill 1234;; esac`, `f() { kill 1234; }; f` or `sudo -u x kill 1234`, whoever owns process 1234
-- **THEN** the hook exits 0 and prints the decision `ask` with a reason that quotes the command it could not read
+- **THEN** the hook exits 2, prints no decision, and its message quotes the command it could not read and says to write the kill on its own or to pass text through a file
 
 #### Scenario: The same on Codex
 - **WHEN** `timeout 5 kill 1234` reaches the guard through the Codex pre-tool hook
 - **THEN** the hook exits 2 and prints no decision
+
+#### Scenario: Test data or a message that names a kill
+- **WHEN** a session's command holds the word only as data the guard cannot tell from a command (a quoted function body in a list of words, a message with a number after the word)
+- **THEN** the hook exits 2 with that message, no confirmation is shown, and the session passes the text through a file
 
 #### Scenario: The word in text
 - **WHEN** a session runs `git commit -m "kill the bug"`, `grep kill file`, `echo kill me` or `mytool --note "kill it softly"`

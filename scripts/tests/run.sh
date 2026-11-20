@@ -413,7 +413,7 @@ EOS
     case "$1" in
       allow) [ "$rc" = 0 ] && [ -z "$out" ] ;;
       ask) [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | test("PID [0-9]+ \\("))' >/dev/null ;;
-      unread) [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | test("cannot read"))' >/dev/null ;;
+      unread) [ "$rc" = 2 ] && [ -z "$out" ] && grep -q '^bash-guard: blocked: .*cannot read.*through a file' "$T/err" ;;
       block) [ "$rc" = 2 ] && [ -z "$out" ] && grep -q '^bash-guard: blocked: ' "$T/err" ;;
     esac && ok || bad "kill guard must $1 under $2: $c (exit $rc, stdout '$out', stderr '$(head -1 "$T/err")')"
   }
@@ -431,7 +431,7 @@ EOS
     kg ask claude "$c"; kg block codex "$c"
   done
   for c in 'FOO=1 kill @OWN@' '"kill" @OWN@' 'if kill @OWN@; then :; fi' 'x&y&kill @OWN@'; do kg allow claude "$c"; kg allow codex "$c"; done
-  # a kill the guard cannot read (another command in front, a trap, a case arm, a function body): asked or refused, own process or not
+  # a kill the guard cannot read (another command in front, a trap, a case arm, a function body): refused on every surface, never asked, own process or not
   for c in 'timeout 5 kill @FOR@' 'nice kill -9 @FOR@' "trap 'kill @FOR@' EXIT" 'case x in x) kill @FOR@;; esac' 'f() { kill @FOR@; }; f' 'sudo -u x kill @FOR@' 'timeout 5 kill @OWN@' 'mytool --note "we kill 12 of them"' 'ls | xargs grep kill'; do
     kg unread claude "$c"; kg block codex "$c"
     GUARD="$H/scripts/hooks/codex-pre-tool" kg block claude "$c"
