@@ -64,8 +64,8 @@ S3="abcdefab-cdef-4abc-8def-abcdefabcd03"; S4="abcdefab-cdef-4abc-8def-abcdefabc
 S5="abcdefab-cdef-4abc-8def-abcdefabcd05"; S6="abcdefab-cdef-4abc-8def-abcdefabcd06"
 
 lint_underscore() { ! grep -nE '^[[:space:]]*(function[[:space:]]+)?_[A-Za-z0-9_]*[[:space:]]*\(\)' "$1" >/dev/null; }
-TMPWORD="tm""p"; USERS="Use""rs"
-lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|/private/" "$1" >/dev/null; }
+TMPWORD="tm""p"; USERS="Use""rs"; PRIV="priv""ate"
+lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|/$PRIV/" "$1" >/dev/null; }
 check "recover.sh has no underscore functions" lint_underscore "$ROOT/scripts/term/recover.sh"
 check "recover.sh has no temp/user paths" lint_paths "$ROOT/scripts/term/recover.sh"
 
