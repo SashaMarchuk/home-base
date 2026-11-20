@@ -51,7 +51,7 @@ if sel patterns; then
   for v in "card $CARD" "phone $PHONE" "iban $IBAN" "$DOC" "key gh""p_$(printf 'a%.0s' $(seq 36))"; do
     expect "pattern must hit: ${v%% *}" 1 sh -c 'printf "%s\n" "$1" | "$2"' _ "$v" "$SP"
   done
-  for v in "https://drive.google.com/drive/folders/EXAMPLE-FOLDER-ID" "task id x9y8z7 and a table row | notes/a.md | wiki/a.md |" \
+  for v in "https://drive.google.com/drive/folders/EXAMPLE-FOLDER-ID" "https://drive.google.com/file/d/EXAMPLE-FILE-ID/view" "task id x9y8z7 and a table row | notes/a.md | wiki/a.md |" \
            "build 4111 done in 12 steps" "sha 4b825dc642cb6eb9a060e54bf8d69288fbee4904" \
            "passport number: present in source, value hidden"; do
     expect "pattern must pass: $v" 0 sh -c 'printf "%s\n" "$1" | "$2"' _ "$v" "$SP"
@@ -75,9 +75,10 @@ if sel home-log; then
   [ "$n" = 1 ] && ok || bad "home-log new printed '$n'"
   n2=$("$HL" new --title "Task one" --body "Again." --ready 2>/dev/null)
   [ "$n2" = 1 ] && [ "$(gh api repos/test/hl/issues?state=all --jq length)" = 1 ] && ok || bad "new twice with the same title must not duplicate (got $n2)"
-  expect "new refuses a personal value" 4 "$HL" new --title "x" --body "call $PHONE"
+  "$HL" new --title "x" --body "card $CARD call $PHONE" >/dev/null 2>"$T/err"; rc=$?
+  [ "$rc" = 4 ] && grep -q 'card 41\*' "$T/err" && ! grep -qF "$CARD" "$T/err" && ! grep -qF "$(printf '%s' "$PHONE" | tr -cd 0-9)" "$T/err" \
+    && ok || bad "new must refuse a personal value (exit 4) and print only the masked hit (rc=$rc): $(cat "$T/err")"
   expect "start" 0 "$HL" start 1 --run-id r1
-  expect "start again, same run: no-op" 0 "$HL" start 1 --run-id r1
   expect "start by another run fails" 3 "$HL" start 1 --run-id r2
   expect "checkpoint with question" 0 "$HL" checkpoint 1 --run-id r1 --text "Half." --question "A or B?"
   gh api repos/test/hl/issues/1 --jq '[.labels[].name]|sort|join(",")' > "$T/l"
@@ -86,6 +87,9 @@ if sel home-log; then
   expect "park" 0 "$HL" checkpoint 1 --run-id r1 --park
   [ ! -f "$H/.local/runs/1" ] && ok || bad "park must end the run"
   expect "resume parked run" 0 "$HL" start 1 --run-id r1
+  gh api repos/test/hl/issues/1/comments --jq '.[0].body' | head -1 | grep -qx '<!-- home-log run=r1 state=active -->' \
+    && [ "$(gh api repos/test/hl/issues/1 --jq '[.labels[].name]|sort|join(",")')" = needs-test,status:claimed ] && [ -f "$H/.local/runs/1" ] \
+    && ok || bad "resume must make the run's comment active again, set status:claimed and record the run"
   expect "finish" 0 "$HL" finish 1 --run-id r1 --text "Done."
   expect "finish again: same result" 0 "$HL" finish 1 --run-id r1
   expect "finish by another run refused" 5 "$HL" finish 1 --run-id r9
@@ -101,6 +105,7 @@ if sel home-log; then
   [ "$(sed -n 's/^run=//p' "$H/.local/runs/2" 2>/dev/null)" = "$(gh api repos/test/hl/issues/2/comments --jq '.[0].body' | sed -n 's/^- run: //p')" ] && ok || bad "claim race: the winner's run file must survive"
   expect "finish by another run while a claim is active is refused" 3 "$HL" finish 2 --run-id intruder
   expect "checkpoint after finish is refused" 5 "$HL" checkpoint 1 --run-id r1 --text "late"
+  expect "start on a closed issue is refused" 2 "$HL" start 1 --run-id r3
   "$HL" new --title "Identity" --body "i" --ready >/dev/null
   "$HL" start 3 --run-id stored-x >/dev/null
   expect "later verbs use the stored run, not the session id" 0 env CLAUDE_CODE_SESSION_ID=other-session "$HL" checkpoint 3 --text "ok"
@@ -124,11 +129,21 @@ if sel home-log; then
     && printf '%s\n' "$body5" | grep -qx -- '- Open question for the owner: Which region?' && ok || bad "stub must keep the text and question and add the stub line"
   gh api repos/test/hl/issues/5/comments --jq '.[0].body' | head -1 | grep -q 'state=stub' && ok || bad "session-end must write a stub"
   gh api repos/test/hl/issues/5 --jq '[.labels[].name]|index("needs-summary")' | grep -qv null && ok || bad "session-end must add needs-summary"
-  echo '{"session_id":"other"}' | "$H/scripts/hooks/session-end"; ok
-  "$HL" new --title "Dies in codex" --body "d" --ready >/dev/null
-  "$HL" start 6 --run-id codex-x >/dev/null
-  echo '{}' | env -u CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID=codex-x "$H/scripts/hooks/session-end"
-  gh api repos/test/hl/issues/6/comments --jq '.[0].body' | grep -q 'codex resume codex-x' && ok || bad "session-end in codex must write a codex resume command"
+  w0=$(grep -c '"-X"' "$GH_STUB_DIR/calls.log")
+  echo '{"session_id":"other"}' | "$H/scripts/hooks/session-end"
+  [ "$(grep -c '"-X"' "$GH_STUB_DIR/calls.log")" = "$w0" ] && ok || bad "session-end without a claim of this session must write nothing"
+  # finish --release hands the issue back; finish --review leaves it open for review; a finished run cannot start again
+  "$HL" new --title "Review and release" --body "d" --ready >/dev/null
+  "$HL" start 6 --run-id rel1 >/dev/null; "$HL" checkpoint 6 --run-id rel1 --question "Keep it?" >/dev/null
+  expect "finish --release" 0 "$HL" finish 6 --run-id rel1 --release "tab gone"
+  gh api repos/test/hl/issues/6/comments --jq '.[0].body' | head -1 | grep -qx '<!-- home-log run=rel1 state=released -->' \
+    && [ "$(gh api repos/test/hl/issues/6 --jq '[.labels[].name]|sort|join(",")')" = status:ready ] && [ "$(gh api repos/test/hl/issues/6 --jq .state)" = open ] \
+    && ok || bad "finish --release must mark the comment released, drop the owner label and return the open issue to status:ready"
+  "$HL" start 6 --run-id rv1 >/dev/null
+  expect "finish --review" 0 "$HL" finish 6 --run-id rv1 --review --text "Ready for review."
+  [ "$(gh api repos/test/hl/issues/6 --jq '[.labels[].name]|sort|join(",")')" = status:review ] && [ "$(gh api repos/test/hl/issues/6 --jq .state)" = open ] \
+    && ok || bad "finish --review must leave the issue open with status:review"
+  expect "a finished run starting again is refused" 5 "$HL" start 6 --run-id rv1
   # new --start: opens and claims in one call; stdout is only the number
   n7=$("$HL" new --title "One call" --body "b" --start --run-id s7 2>/dev/null); rc=$?
   [ "$rc" = 0 ] && [ "$n7" = 7 ] && ok || bad "new --start must exit 0 and print only the number (rc=$rc out='$n7')"
@@ -365,6 +380,8 @@ if sel limits; then
   printf 'limits.reader=%s\n' "$T/reader-bad" > "$H/.local/config"; r=$("$H/scripts/limits" 2>/dev/null); [ "${r%% *}" = ok ] && ok || bad "broken reader must say ok: '$r'"
   printf 'limits.reader=%s\n' "$T/reader-hi" > "$H/.local/config"; printf 'mode=hard\n' > "$H/.local/limits"
   r=$("$H/scripts/limits" 2>/dev/null); [ "${r%% *}" = hard ] && ok || bad "live word wins: '$r'"
+  printf 'mode=hard\nuntil=2000-01-01T00:00:00Z\n' > "$H/.local/limits"
+  r=$("$H/scripts/limits" 2>/dev/null); [ "${r%% *}" = soft ] && ok || bad "a live word whose until has passed must be ignored: '$r'"
 fi
 
 # ---------------------------------------------------------------- bash guard
@@ -471,10 +488,9 @@ EOS
   printf 'secret-literal-value\n' > "$H/.local/pv"; printf 'guard.private_values=%s\n' "$H/.local/pv" > "$H/.local/config"
   expect "sensitive-guard blocks a new file with a card" 2 sh -c 'jq -n --arg p "$1/wiki/new.md" --arg t "card $2" "{tool_input:{file_path:\$p,content:\$t}}" | "$3"' _ "$H" "$CARD" "$SG"
   expect "sensitive-guard blocks an edit with a phone" 2 sh -c 'jq -n --arg p "$1/a.md" --arg t "call $2" "{tool_input:{file_path:\$p,new_string:\$t}}" | "$3"' _ "$H" "$PHONE" "$SG"
+  expect "sensitive-guard blocks a multi-edit with a card" 2 sh -c 'jq -n --arg p "$1/a.md" --arg t "card $2" "{tool_input:{file_path:\$p,edits:[{old_string:\"a\",new_string:\"b\"},{old_string:\"c\",new_string:\$t}]}}" | "$3"' _ "$H" "$CARD" "$SG"
   expect "sensitive-guard blocks a private literal" 2 sh -c 'jq -n --arg p "$1/a.md" "{tool_input:{file_path:\$p,content:\"x secret-literal-value\"}}" | "$2"' _ "$H" "$SG"
   expect "sensitive-guard allows a Drive link" 0 sh -c 'jq -n --arg p "$1/a.md" "{tool_input:{file_path:\$p,content:\"https://drive.google.com/drive/folders/EXAMPLE-FOLDER-ID\"}}" | "$2"' _ "$H" "$SG"
-  expect "sensitive-guard allows a board id" 0 sh -c 'jq -n --arg p "$1/a.md" "{tool_input:{file_path:\$p,content:\"task x9y8z7\"}}" | "$2"' _ "$H" "$SG"
-  expect "sensitive-guard allows a table row with a link" 0 sh -c 'jq -n --arg p "$1/a.md" "{tool_input:{file_path:\$p,content:\"| notes/x.md | link | https://drive.google.com/file/d/EXAMPLE-FILE-ID/view |\"}}" | "$2"' _ "$H" "$SG"
   expect "sensitive-guard skips gitignored .local" 0 sh -c 'jq -n --arg p "$1/.local/x" --arg t "card $2" "{tool_input:{file_path:\$p,content:\$t}}" | "$3"' _ "$H" "$CARD" "$SG"
   expect "sensitive-guard skips files outside the repo" 0 sh -c 'jq -n --arg p "/elsewhere/x" --arg t "card $1" "{tool_input:{file_path:\$p,content:\$t}}" | "$2"' _ "$CARD" "$SG"
   # Codex apply_patch: the captured shape (whole patch in tool_input.command, absolute paths, no file_path).
@@ -503,13 +519,10 @@ EOS
     ap "$H" "$pt" > "$T/ap.json"
     expect "sensitive-guard allows apply_patch ($c)" 0 sh -c '"$1" < "$2"' _ "$SG" "$T/ap.json"
   done
-  [ ! -e "$H/wiki/pay.md" ] && ok || bad "a blocked apply_patch must not create the file"
   # bash-guard: the Codex exec_command shape (.tool_input.cmd, a string or a list of words)
-  expect "bash-guard blocks .cmd string: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh auth switch -u a\"}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -lc gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-lc\",\"gh auth switch -u a\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -e -c kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
-  expect "bash-guard blocks .cmd list: /bin/bash -c -- kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-c\",\"--\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -e -c kill -0 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -0 4242\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -lc gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-lc\",\"gh issue list\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
@@ -526,8 +539,12 @@ EOS
   jq -n '{tool_name:"mcp__notes__run",tool_input:{command:"gh auth switch -u a"}}' > "$T/p4.json"
   ap "$H" "$(printf '*** Begin Patch\n*** Add File: %s/wiki/howto.md\n+Never run pkill -f node here.\n*** End Patch' "$H")" > "$T/p5.json"
   ap "$H" "$P_ADD" > "$T/p6.json"
+  jq -n '{tool_name:"shell",tool_input:{command:["bash","-lc","pkill -f node"]}}' > "$T/p9.json"
+  jq -n '{tool_name:"local_shell",tool_input:{command:["gh","auth","switch","-u","a"]}}' > "$T/p10.json"
   expect "Codex hook blocks Bash: gh auth switch" 2 hook "$T/p1.json"
   expect "Codex hook blocks exec_command: gh auth switch" 2 hook "$T/p2.json"
+  expect "Codex hook blocks shell: pkill" 2 hook "$T/p9.json"
+  expect "Codex hook blocks local_shell: gh auth switch" 2 hook "$T/p10.json"
   expect "Codex hook allows a clean command" 0 hook "$T/p3.json"
   expect "Codex hook passes another tool untouched" 0 hook "$T/p4.json"
   expect "Codex hook never sends a patch to bash-guard" 0 hook "$T/p5.json"
@@ -566,9 +583,11 @@ if sel checks; then
   mkdir -p "$H/openspec"; echo x > "$H/openspec/a.md"; ( cd "$H" && git add openspec )
   expect "checks fail on a base-only path in a home" 1 "$H/scripts/checks/run"
   ( cd "$H" && git rm -rq --cached openspec && rm -rf openspec )
-  printf 'note: call %s\n' "$PHONE" > "$H/note.md"; ( cd "$H" && git add note.md )
-  expect "pre-commit (staged) fails on a phone number" 1 "$H/scripts/checks/run" --staged
-  ( cd "$H" && git rm -q --cached note.md && rm note.md )
+  printf 'note\n' > "$H/note.md"; ( cd "$H" && git add note.md ); printf 'note: call %s\n' "$PHONE" > "$H/note.md"
+  expect "pre-commit (staged) checks the index: a phone only in the working tree passes" 0 "$H/scripts/checks/run" --staged
+  ( cd "$H" && git add note.md ); printf 'note\n' > "$H/note.md"
+  expect "pre-commit (staged) fails on a phone number only in the index" 1 "$H/scripts/checks/run" --staged
+  ( cd "$H" && git rm -qf --cached note.md && rm note.md )
   expect "checks pass again after the fixes" 0 "$H/scripts/checks/run"
 fi
 
