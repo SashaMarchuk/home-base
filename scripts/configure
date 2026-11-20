@@ -108,6 +108,7 @@ tracker.board=none
 tracker.board_write=
 labels.needs_owner=needs-owner
 questions.worker_away=park
+term.close_finished=ask
 base.url=
 limits.mode=none
 limits.threshold=90
@@ -295,6 +296,7 @@ num() { local v; v=$(ans "$1"); [ -n "$v" ] || return 0
 enum tracker.backend github
 enum tracker.board_write ask-first yes read-only
 enum questions.worker_away park continue
+enum term.close_finished ask auto
 enum limits.mode none soft hard
 enum proactivity.mode assigned off watch
 enum dreams.mode manual daily

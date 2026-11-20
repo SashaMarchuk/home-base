@@ -10,7 +10,7 @@ Tabs of workers that finished stay open until the owner asks to close them. The 
 - New HOME-420: a tab recorded with `--adopt` (the owner's own, every Codex tab included) is never `closable` (`keep:owner-tab`), and `close` needs `--adopt` on it every time.
 - HOME-419: a tab is also kept when its session moved to another id (`keep:moved`), when its launch is not over (`keep:starting`) and when its session is gone but the tab is not a lone shell at an empty prompt (`keep:shell`).
 - New HOME-421: `exit` is typed only into a lone shell; `close` of a session that was already gone also needs an empty prompt, and refuses a tab still starting. A prompt that ends in another character than `$`, `%`, `#` or `>` is not proven empty, so such a tab stays open.
-- HOME-320 and HOME-416: closing `closable` tabs without asking needs an active standing approval of the owner in `DECISIONS.md` (listed in the home section); without one the orchestrator lists them and closes on the owner's word, as before. Tabs outside the registry are closed only when the owner named them.
+- HOME-320 and HOME-416: closing `closable` tabs without asking needs the home's setting `term.close_finished=auto` (`home.config`, default `ask`); with `ask` the orchestrator lists them and closes on the owner's word, as before. Tabs outside the registry are closed only when the owner named them.
 
 ## Impact
 - `scripts/term/term.sh` (the `finished` verb; the issue check of `close` becomes a function both use), tests on the fake backend for every verdict, the `orchestrate` skill (sections 1, 3 and 6), the README tool table.

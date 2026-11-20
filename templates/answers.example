@@ -49,6 +49,8 @@ homes.allotment.topics=allotment,seedlings,watering rota
 # ---------- behaviour ----------
 # park | continue: what a worker does with a question while the owner is away.
 questions.worker_away=park
+# ask | auto: whether the orchestrator closes a finished session's tab on the owner's word or by itself.
+term.close_finished=ask
 # REQUIRED. none | soft | hard
 limits.mode=none
 limits.threshold=90

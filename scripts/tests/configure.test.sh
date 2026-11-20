@@ -108,6 +108,7 @@ check "home.config repo" grep -qx 'repo=example-org/orchard-home' "$R/home.confi
 check "home.config board_write" grep -qx 'tracker.board_write=read-only' "$R/home.config"
 check "home.config default kept" grep -qx 'sweep.stale_hours=6' "$R/home.config"
 check "home.config worker_away default" grep -qx 'questions.worker_away=park' "$R/home.config"
+check "home.config close_finished default" grep -qx 'term.close_finished=ask' "$R/home.config"
 check "home.config sweep lookback default" grep -qx 'sweep.lookback_days=14' "$R/home.config"
 check "home.config guard.extra" grep -qx 'guard.extra=docker compose down' "$R/home.config"
 check "home.config homes" grep -qx 'homes.cellar.role=child' "$R/home.config"

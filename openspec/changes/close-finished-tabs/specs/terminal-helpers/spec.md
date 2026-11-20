@@ -131,14 +131,14 @@ The `orchestrate` skill SHALL close or freeze only sessions the owner named, ask
 - **THEN** its issue is read in the repo named by the `home.config` of that tab's folder, and the verdict is `unsure:issue-repo` when that file names none
 
 ### Requirement: HOME-416 The orchestrator closes finished tabs
-After a worker's final record and at every status, the `orchestrate` skill SHALL run `term.sh finished` and close each `closable` tab with `term.sh close` without asking only while an active standing approval of the owner for closing finished tabs is listed in the home section, naming its id in the finish text; without one it lists the closable tabs and closes on the owner's word; it never closes this way a tab outside the registry.
+After a worker's final record and at every status, the `orchestrate` skill SHALL run `term.sh finished` and close each `closable` tab with `term.sh close` without asking only while the home's setting `term.close_finished` is `auto` (`home.config`, default `ask`; any other value counts as `ask`), naming the closed tabs in its status; with `ask` it lists the closable tabs and closes on the owner's word; it never closes this way a tab outside the registry.
 
-#### Scenario: A finished worker with the standing approval
-- **WHEN** `term.sh finished` lists a worker tab as `closable` and an active standing approval allows closing finished tabs
-- **THEN** the orchestrator runs `term.sh close` on it without asking and names the approval's id in its finish text
+#### Scenario: A finished worker in a home set to auto
+- **WHEN** `term.sh finished` lists a worker tab as `closable` and the home sets `term.close_finished=auto`
+- **THEN** the orchestrator runs `term.sh close` on it without asking and names the tab in its status
 
-#### Scenario: A finished worker without the standing approval
-- **WHEN** `term.sh finished` lists a worker tab as `closable` and no such approval is active
+#### Scenario: A finished worker in a home set to ask
+- **WHEN** `term.sh finished` lists a worker tab as `closable` and `term.close_finished` is `ask` or unset
 - **THEN** the orchestrator lists the tab as closable and closes nothing until the owner says so
 
 ### Requirement: HOME-417 A model reads what the checks could not
