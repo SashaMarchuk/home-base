@@ -65,10 +65,7 @@ sj() { ts survey --json | jq -c --arg t "$1" 'select(.tty == $t)'; }   # sj <tty
 S1="abcdefab-cdef-4abc-8def-abcdefabcd01"; S2="abcdefab-cdef-4abc-8def-abcdefabcd02"
 S3="abcdefab-cdef-4abc-8def-abcdefabcd03"; S4="abcdefab-cdef-4abc-8def-abcdefabcd04"
 
-# ---------------------------------------------------------------- static: fake twins, paths, underscores
-TMPWORD="tm""p"; USERS="Use""rs"; SCRATCH="scratch""pad"
-lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|$SCRATCH|/private/" "$1" >/dev/null; }
-lint_underscore() { ! grep -nE '^[[:space:]]*(function[[:space:]]+)?_[A-Za-z0-9_]*[[:space:]]*\(\)' "$1" >/dev/null; }
+# ---------------------------------------------------------------- static: fake twins
 be_twins() { # every be_* function of the real backend (except be_sleep) is redefined by the fake in <fake>
   local f missing=0
   for f in $(grep -oE '^be_[a-z_]+\(\)' "$TERM_SH" | tr -d '()' | sort -u); do
@@ -80,11 +77,6 @@ be_twins() { # every be_* function of the real backend (except be_sleep) is rede
 check "fake redefines every backend function" be_twins "$FAKE"
 grep -v '^be_tabs()' "$FAKE" > "$T/fake-missing"
 check "lint catches a backend function without a fake" not be_twins "$T/fake-missing"
-for f in "$SESS" "$ROOT/scripts/term/freeze.sh" "$ROOT/scripts/term/thaw.sh"; do
-  check "${f##*/} has no temp/user paths" lint_paths "$f"
-  check "${f##*/} has no underscore functions" lint_underscore "$f"
-done
-check "this test has no underscore functions" lint_underscore "$0"
 
 # ---------------------------------------------------------------- identity: session files
 reset launch.profile_flag=-p

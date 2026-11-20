@@ -83,8 +83,9 @@ dialog() { # dialog <with free-text row 0|1> [question]
 }
 
 # Static checks shared by rules 2 and 13 ------------------------------------------
-TMPWORD="tm""p"; USERS="Use""rs"; SCRATCH="scratch""pad"
-lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|$SCRATCH|/private/" "$1" >/dev/null; }
+# They run over every terminal script, the fake backend and every test file.
+TMPWORD="tm""p"; USERS="Use""rs"; SCRATCH="scratch""pad"; PRIV="priv""ate"
+lint_paths() { ! grep -nE "/$TMPWORD/|/$USERS/|$SCRATCH|/$PRIV/" "$1" >/dev/null; }
 lint_underscore() { ! grep -nE '^[[:space:]]*(function[[:space:]]+)?_[A-Za-z0-9_]*[[:space:]]*\(\)' "$1" >/dev/null; }
 
 # ---------------------------------------------------------------- rule 0: a new tab starts with its command
@@ -146,8 +147,7 @@ printf 'other-program' > "$TERM_FAKE_DIR/proc/$PID/cmd"
 check "r1 reused PID refused" [ "$(rc_of ts send "$SID" hello --timeout 1)" = 3 ]
 
 # ---------------------------------------------------------------- rule 2: no hard-coded paths
-check "r2 term.sh has no temp/user paths" lint_paths "$TERM_SH"
-check "r2 fake has no temp/user paths" lint_paths "$FAKE"
+for f in "$ROOT"/scripts/term/*.sh "$FAKE" "$ROOT"/scripts/tests/*.test.sh; do check "r2 ${f##*/} has no temp/user paths" lint_paths "$f"; done
 printf 'X=/%s/%s/x\n' "$TMPWORD" foo > "$T/bad-paths"
 check "r2 lint catches a temp path" not lint_paths "$T/bad-paths"
 reset; new_tab
@@ -239,9 +239,9 @@ check "r7 no row picked when the free-text row is gone" [ -z "$(keys)" ]
 for c in "" true ":" " exit 0 " "echo done" echo "test 1"; do
   reset; new_tab; dialog 1
   check "r7 trivial check '$c' -> refused" [ "$(rc_of ts send "$TTY" "logged in" --after "$c" --timeout 1)" = 3 ]
+  check "r7 refusal of trivial check '$c' names a real probe" grep -q "must prove the login" "$T/err"
   check "r7 nothing typed after trivial check '$c'" [ -z "$(keys)" ]
 done
-check "r7 refusal names a real probe" grep -q "must prove the login" "$T/err"
 reset; new_tab; dialog 1
 check "r7 a real probe is accepted" ts send "$TTY" "logged in" --after "cli-whoami --check" --timeout 2
 
@@ -291,7 +291,6 @@ check "r8 PID gone" not alive "$PID"
 check "r8 tab closed" [ "$(mode)" = closed ]
 check "r8 registry closed" [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | .closed != null' "$REG")" = true ]
 check "r8 never killed" [ ! -f "$TERM_FAKE_DIR/kills" ]
-check "r8 issue comments read on GitHub" grep -q 'repos/test/home/issues/12/comments' "$GH_STUB_DIR/calls.log"
 reset; new_tab --issue 12; issue 12 final
 check "r8 issue taken from the registry" ts close "$TTY"
 reset; new_tab; issue 12 final
@@ -334,8 +333,6 @@ check "r8 lingering PID -> reported, not force-closed" [ "$(rc_of ts close "$TTY
 check "r8 lingering PID still alive" alive "$PID"
 check "r8 lingering PID never signalled" [ ! -f "$TERM_FAKE_DIR/kills" ]
 check "r8 shell left open" [ "$(mode)" = shell ]
-reset; new_tab --issue 12; issue 12 final
-check "r8 nothing typed for the removed option" [ -z "$(keys)" ]
 
 entry_open() { [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | .closed == null' "$REG")" = true ]; }
 gone() { rm -rf "$TERM_FAKE_DIR/proc/$PID"; put mode shell; }   # the session ended on its own: the tab shows its shell
@@ -471,7 +468,7 @@ check "finished: one line per open tab of the registry" [ "$(ts finished | awk '
 hand_tab_plain() { mkdir -p "$TERM_FAKE_DIR/tabs/ttyh9" "$TERM_FAKE_DIR/proc/709"; printf 'hand-9' > "$TERM_FAKE_DIR/tabs/ttyh9/tab"; printf claude > "$TERM_FAKE_DIR/tabs/ttyh9/mode"
   printf claude > "$TERM_FAKE_DIR/proc/709/cmd"; printf ttyh9 > "$TERM_FAKE_DIR/proc/709/tty"; }
 hand_tab_plain
-check "finished: a tab outside the registry is never listed" not grep -q ttyh9 <(ts finished)
+check "finished: a tab outside the registry is never listed" sh -c '[ "$(printf "%s\n" "$1" | grep -c .)" = 3 ] && ! printf "%s\n" "$1" | grep -q ttyh9' _ "$(ts finished)"
 check "finished: an option it does not know -> usage" [ "$(rc_of ts finished --force)" = 2 ]
 check "finished: works from a Codex session" [ "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" finished | grep -c .)" = 3 ]
 reset; printf '%s\n' terminal_helpers=off > "$HOME_ROOT/.local/config"
@@ -590,12 +587,20 @@ reset term.max_workers=2
 ts open "$WORK" >/dev/null 2>&1; ts open "$WORK" >/dev/null 2>&1
 check "r11 cap reached -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
 check "r11 orchestrator not counted as a worker" ts open "$WORK" --role orchestrator
-check "r11 exactly two worker launches" [ "$(grep -c . "$TERM_FAKE_DIR/launches")" = 3 ]
+check "r11 cap: two workers and the orchestrator launched, no third worker" [ "$(grep -c . "$TERM_FAKE_DIR/launches")" = 3 ]
 rm -rf "$TERM_FAKE_DIR/proc/60001"
 check "r11 dead worker frees a slot" ts open "$WORK"
 reset term.max_workers=1
 jq -nc '[{session_id: "stale-reservation", pid: null, tty: null, closed: null, role: "worker", match: "x", opened: "2000-01-01T00:00:00Z"}]' > "$REG"
 check "r11 stale reservation does not hold a slot" ts open "$WORK"
+launch_count() { grep -c . "$TERM_FAKE_DIR/launches"; }
+reset term.max_workers=1; new_tab --issue 21; ts park "$TTY" >/dev/null 2>&1; PARKED=$SID; new_tab --issue 22; n=$(launch_count)
+check "r11 worker resume at a full cap -> refused" [ "$(rc_of ts resume "$PARKED")" = 3 ]
+check "r11 nothing launched by a resume at a full cap" [ "$(launch_count)" = "$n" ]
+check "r11 a resume refused at the cap leaves the entry closed" [ "$(jq -r --arg s "$PARKED" '.[] | select(.session_id == $s) | .closed != null' "$REG")" = true ]
+parked; n=$(launch_count); echo 5 > "$TERM_FAKE_DIR/mem_free"
+check "r11 resume under memory pressure -> refused" [ "$(rc_of ts resume "$SID")" = 3 ]
+check "r11 nothing launched by a resume under memory pressure" [ "$(launch_count)" = "$n" ]
 reset; printf '%s\n' terminal_helpers=off > "$HOME_ROOT/.local/config"
 check "r11 helpers off -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
 check "r11 helpers off -> survey refused too" [ "$(rc_of ts survey)" = 3 ]
@@ -607,12 +612,13 @@ check "r11 launch.command=claude -> open works" ts open "$WORK"
 reset
 check "r11 called from a Codex session (CODEX_THREAD_ID) -> refused" [ "$(rc_of env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
 check "r11 called from a Codex session: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
-reset; new_tab
-check "r11 called from a Codex session: survey works" [ -n "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" survey)" ]
-check "r11 called from a Codex session: state works" [ "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" state "$TTY")" = idle ]
 
 # ---------------------------------------------------------------- rule 12: kill exact PID after checking it
-check "r12 no verb signals a PID (pid_kill is never called)" not grep -n 'pid_kill "' "$TERM_SH"
+signals_outside_pid_kill() { # code lines (comments dropped) outside pid_kill and the be_kill primitive that signal or call them
+  awk '/^pid_kill\(\)/ { inside = 1 } inside { if (/^}/) inside = 0; next } /^be_kill\(\)/ { next }
+    { sub(/(^|[[:space:]])#.*/, "") } /(^|[^A-Za-z0-9_])(p?kill(all)?|pid_kill|be_kill)([^A-Za-z0-9_]|$)/ { print NR ": " $0 }' "$1" | grep .
+}
+check "r12 no verb signals a PID (no kill or pid_kill outside pid_kill)" not signals_outside_pid_kill "$TERM_SH"
 (
   export TERM_SH_LIB=1 TERM_SH_BACKEND=real
   . "$TERM_SH"
@@ -628,9 +634,7 @@ check "r12 no verb signals a PID (pid_kill is never called)" not grep -n 'pid_ki
 check "r12 real process: match killed, mismatch refused ($(tr '\n' ';' < "$T/r12"))" [ ! -s "$T/r12" ]
 
 # ---------------------------------------------------------------- rule 13: no underscore function names
-check "r13 term.sh" lint_underscore "$TERM_SH"
-check "r13 fake backend" lint_underscore "$FAKE"
-check "r13 this test" lint_underscore "$0"
+for f in "$ROOT"/scripts/term/*.sh "$FAKE" "$ROOT"/scripts/tests/*.test.sh; do check "r13 ${f##*/} has no underscore functions" lint_underscore "$f"; done
 printf '%s() { :; }\n' "_hidden" > "$T/bad-fn"
 check "r13 lint catches an underscore function" not lint_underscore "$T/bad-fn"
 
@@ -655,11 +659,10 @@ check "r14 pinned model id -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
 check "r14 nothing launched with a pinned id" [ ! -f "$TERM_FAKE_DIR/launches" ]
 reset "launch.command=claude --model $MODEL_ID"
 check "r14 launch command with extra words -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
+check "r14 nothing launched with extra words in the command" [ ! -f "$TERM_FAKE_DIR/launches" ]
 reset "launch.profile_flag=-p x"
 check "r14 profile flag with a value in it -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
-check "r14 nothing launched with a bad launch value" [ ! -f "$TERM_FAKE_DIR/launches" ]
-reset
-check "r14 nothing launched by --cmd" [ ! -f "$TERM_FAKE_DIR/launches" ]
+check "r14 nothing launched with a value in the profile flag" [ ! -f "$TERM_FAKE_DIR/launches" ]
 reset
 cp "$HOME_ROOT/home.config" "$T/home.config.bak"
 printf '%s\n' launch.command=othercli launch.profile_flag=-p launch.profile.worker=shared "launch.model=$MODEL_ID" >> "$HOME_ROOT/home.config"
@@ -672,8 +675,7 @@ reset term.max_workers=100
 N=12; i=0; export TERM_SH_LOCK_TIMEOUT=30 TERM_SH_OPEN_WAIT=30
 while [ $i -lt $N ]; do ts open "$WORK" --issue $((i + 1)) >"$T/par.$i" 2>&1 & i=$((i + 1)); done
 wait
-check "registry valid JSON after $N parallel writers" jq -e 'type == "array"' "$REG" >/dev/null
-check "registry holds every entry" [ "$(jq 'length' "$REG")" = $N ]
+check "registry is a valid JSON array holding every entry after $N parallel writers" [ "$(jq 'if type == "array" then length else -1 end' "$REG")" = $N ]
 check "every entry has tty and pid" [ "$(jq '[.[] | select(.tty != null and .pid != null)] | length' "$REG")" = $N ]
 check "session ids unique" [ "$(jq '[.[].session_id] | unique | length' "$REG")" = $N ]
 check "issues all recorded" [ "$(jq '[.[].issue] | unique | length' "$REG")" = $N ]

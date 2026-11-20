@@ -20,8 +20,9 @@ for m in re.finditer(r"osascript -e '([^']*)'", s):
 print(n)
 PY
 }
+BLOCKS=0
 for f in "$SRC"/scripts/term/*.sh; do
-  d="$T/$(basename "$f")"; n=$(extract "$f" "$d")
+  d="$T/$(basename "$f")"; n=$(extract "$f" "$d"); BLOCKS=$((BLOCKS + n))
   for s in "$d"/*.applescript; do
     [ -f "$s" ] || continue
     if compiles "$s"; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $(basename "$f"): block $(basename "$s") does not compile"; fi
@@ -31,7 +32,7 @@ done
 for f in "$SRC"/scripts/term/*.sh; do
   if /bin/bash -n "$f" 2>/dev/null; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $(basename "$f") does not parse under /bin/bash"; fi
 done
-[ "$PASS" -ge 9 ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL fewer AppleScript blocks found than expected ($PASS)"; }
+[ "$BLOCKS" -ge 5 ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL fewer AppleScript blocks found than expected ($BLOCKS)"; }
 # the block that creates a tab: it starts the tab with its command, types nothing and gives the focus back;
 # no block ever activates the app
 creates_quietly() { # creates_quietly <block file>
