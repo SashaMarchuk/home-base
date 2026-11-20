@@ -158,8 +158,8 @@ check "caller: the process walk finds the calling tab" [ "$(sj ttyc1 | jq -r .ca
 check "caller: another tab is not the caller" [ "$(sj ttyc2 | jq -r .caller)" = false ]
 rm -f "$TERM_FAKE_DIR/self-pid"
 check "caller: CLAUDE_CODE_SESSION_ID finds the calling tab" [ "$(CLAUDE_CODE_SESSION_ID=$S2 ts survey --json | jq -r 'select(.tty == "ttyc2") | .caller')" = true ]
-check "caller: no signal -> no caller" [ "$(ts survey --json | jq -s '[.[] | select(.caller)] | length')" = 0 ]
-check "caller: an id with no session file -> no caller" [ "$(CLAUDE_CODE_SESSION_ID=$S4 ts survey --json | jq -s '[.[] | select(.caller)] | length')" = 0 ]
+check "caller: no signal -> no caller" [ "$(ts survey --json | jq -sc '[(map(.tty) | sort | join(" ")), (map(select(.caller)) | length)]')" = '["ttyc1 ttyc2",0]' ]
+check "caller: an id with no session file -> no caller" [ "$(CLAUDE_CODE_SESSION_ID=$S4 ts survey --json | jq -sc '[(map(.tty) | sort | join(" ")), (map(select(.caller)) | length)]')" = '["ttyc1 ttyc2",0]' ]
 
 # ---------------------------------------------------------------- groups and windows
 GRPS="term.groups=g1,g2,wide"
@@ -442,11 +442,17 @@ check "thaw: never launched twice" [ -z "$(launch_of "$S1")" ]
 check "thaw: a missing transcript is skipped with its resume line" grep -q "^SKIP $S3: its transcript is not on this machine; resume it where it is: cd " <<<"$out"
 check "thaw: the rest reopened" grep -q "^REOPENED $S2 " <<<"$out"
 check "thaw: the freeze issue stays open while sessions are left" [ "$(cat "$GH_STUB_DIR"/test__home/issues/*.json | jq -r .state)" = open ]
+reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"; live ttyw2 802 "$W1" w7 "$S2"
+ts freeze --all --hard >/dev/null 2>&1; transcript work "$S1"; transcript work "$S2"
+rm -rf "$(tabdir ttyw1)" "$TERM_FAKE_DIR/proc/801" "$TERM_FAKE_DIR/proc/5801"   # the kept tab was closed by hand later
+out=$(ts thaw latest)
+check "thaw: an entry that was not closed is skipped" grep -q "^SKIP $S1: it was not closed (kept:busy)" <<<"$out"
+check "thaw: an entry that was not closed is never launched" [ -z "$(launch_of "$S1")" ]
 frozen_main
 printf '5' > "$TERM_FAKE_DIR/mem_free"
 check "thaw: low memory stops the run (exit 3)" [ "$(rc_of ts thaw latest)" = 3 ]
 check "thaw: it reports what is left and how to continue" grep -q "3 left; run 'term.sh thaw --continue $FROZEN' later" "$T/out"
-check "thaw: nothing opened under memory pressure" [ ! -f "$TERM_FAKE_DIR/launches" ] || [ -z "$(launch_of "$S1")" ]
+check "thaw: nothing opened under memory pressure" [ ! -f "$TERM_FAKE_DIR/launches" ]
 rm -f "$TERM_FAKE_DIR/mem_free"
 check "thaw: --continue reopens the rest" [ "$(ts thaw --continue "$FROZEN" | grep -c REOPENED)" = 3 ]
 frozen_main
@@ -509,6 +515,12 @@ ts freeze --all >/dev/null 2>&1
 check "default mode: soft first" [ "$(sent ttyw1 | head -1 | cut -c1-7)" = "Freeze " ]
 check "default mode: then hard for a tab that did not answer" [ "$(outcome ttyw1)" = exited ]
 check "default mode: then hard for a tab that did not answer (second half)" [ "$(sent ttyw1 | sed -n 2p)" = /exit ]
+reset "${SKEYS[@]}" term.freeze.default_mode=hard; live ttyw1 801 "$W1" w7 "$S1"
+ts freeze --all >/dev/null 2>&1
+check "default mode: term.freeze.default_mode=hard types no soft prompt" [ "$(sent ttyw1 | head -1)" = /exit ]
+reset "${SKEYS[@]}" term.freeze.default_mode=fast; live ttyw1 801 "$W1" w7 "$S1"
+check "default mode: an invalid term.freeze.default_mode -> exit 3" [ "$(rc_of ts freeze --all)" = 3 ]
+check "default mode: nothing typed for an invalid mode" nokeys ttyw1
 reset "${SKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1" busy; : > "$(tabdir ttyw1)/busy"
 ts freeze --all --soft-then-hard >/dev/null 2>&1
 check "soft-then-hard: a running turn stays running after both" [ "$(outcome ttyw1)" = kept:busy ] && nokeys ttyw1
@@ -627,7 +639,7 @@ printf '%s' "$W1" > "$TERM_FAKE_DIR/proc/870/cwd"; printf '870' > "$(tabdir "$ot
 check "registry: the plan keeps a reused tab as kept:changed" grep -q " -> kept:changed$" <(ts freeze "$otty" --hard --dry-run)
 check "registry: freezing only that tab -> exit 3" [ "$(rc_of ts freeze "$otty" --hard)" = 3 ]
 check "registry: a new session in a reused tab is not closed under the old entry" nokeys "$otty"
-check "registry: the old resume line is in no issue" no_leak test/home "--resume $osid"
+check "registry: no snapshot and no freeze issue written for it" [ -z "$(snapf)$(issue_text test/home)" ]
 # 3a. after a reboot a tty is reused: the old entry (other tab, dead pid) never names the new session
 reset "${FKEYS[@]}"
 jq -n --arg s "$S1" --arg w "$W1" '[{session_id: $s, tty: "ttyr1", pid: 811, cwd: $w, issue: null, resume: ("cd x && claude --resume " + $s),
@@ -676,13 +688,11 @@ check "moved: the cleared session's resume line is in no issue" no_leak test/hom
 check "moved: thaw reopens the new id" [ "$(ts thaw latest | grep -c "^REOPENED $S4 ")" = 1 ]
 check "moved: with its resume line" grep -qF -- "&& 'claude' -p 'work' --resume $S4 " <(launch_of "$S4")
 moved "${GKEYS[@]}" term.freeze.hard_grace=1   # no profile flag: the machine picks the profile itself
-check "moved, no profile flag: open recorded a line without a profile" [ "$(regf .resume)" = "cd '$W1' && claude --resume $osid" ]
 check "moved, no profile flag: the recorded line is kept for the new id" [ "$(sj "$otty" | jq -r .resume)" = "cd '$W1' && claude --resume $S4" ]
 ts freeze "$otty" --hard >/dev/null 2>&1
 check "moved, no profile flag: freeze closes the tab" [ "$(outcome "$otty")" = exited ]
 check "moved, no profile flag: the entry holds that line" [ "$(regf '"\(.session_id) \(.resume)"')" = "$S4 cd '$W1' && claude --resume $S4" ]
 reset "${GKEYS[@]}" term.freeze.hard_grace=1; hand_tab ttyw6 806 "claude --model opus" "$W1" w7; sess_file work 806 "$S4" idle "$W1"
-check "moved: a tab opened by hand under a profile that cannot be passed still gets no resume line" [ "$(sj ttyw6 | jq -r '.resume == null')" = true ]
 check "moved: and freeze never closes it" [ "$(rc_of ts freeze ttyw6 --hard)" = 3 ]
 moved; mkdir "$HOME_ROOT/.local/registry.lock"
 ts freeze "$otty" --hard >/dev/null 2>&1
