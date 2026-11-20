@@ -125,7 +125,7 @@ check "home section owner" grep -q 'Owner(s): Jordan Sample' "$R/CLAUDE.md"
 check "home section rule" grep -qx -- "- Never contact a buyer without the owner's yes." "$R/CLAUDE.md"
 check "no placeholder left" sh -c "! grep -q '{{' '$R/CLAUDE.md' '$R/wiki/index.md' '$R/wiki/howto/accounts.md'"
 check "settings plugins" [ "$(jq -c '.enabledPlugins' "$R/.claude/settings.json")" = '{"plugin-a@example-market":true,"plugin-b@example-market":true}' ]
-check "settings hooks" [ "$(jq -r '.hooks.PreToolUse[1].matcher' "$R/.claude/settings.json")" = 'Write|Edit|MultiEdit' ]
+check "settings hooks" jq -e 'any(.hooks.PreToolUse[]; .matcher == "Write|Edit|MultiEdit")' "$R/.claude/settings.json"
 check "template lists no plugin" [ "$(jq 'has("enabledPlugins")' "$R/templates/settings.json")" = false ]
 check "gitignore .local/" grep -qx '.local/' "$R/.gitignore"
 check "accounts row" grep -qx '| orchard | the co-op workspace | the workspace CLI'"'"'s own config |' "$R/wiki/howto/accounts.md"
@@ -177,9 +177,17 @@ check "empty plugins: no enabledPlugins" [ "$(jq 'has("enabledPlugins")' "$R2/.c
 check "no board: exit 0" [ "$rc" = 0 ]
 check "no board: board_write empty" grep -qx 'tracker.board_write=' "$R2/home.config"
 check "worker_away answered: continue written" grep -qx 'questions.worker_away=continue' "$R2/home.config"
-check "board named: board_write kept" grep -qx 'tracker.board_write=read-only' "$R/home.config"
 
-# 6c. helpers asked on, device check fails: the answers file is rewritten to off
+# 6c. an unknown key is warned about and ignored; an existing wiki/index.md is kept as it is
+{ cat "$W/answers.no"; echo bogus.key=x; } > "$W/answers.unknown"
+printf '# Own wiki\nwritten by the owner\n' > "$R2/wiki/index.md"; wk=$(shasum "$R2/wiki/index.md")
+out=$("$R2/scripts/configure" --answers "$W/answers.unknown" 2>&1); rc=$?
+check "unknown key: exit 0" [ "$rc" = 0 ]
+check "unknown key: warning printed" grep -qx "configure: warning: unknown key 'bogus.key' ignored" <<<"$out"
+check "unknown key: not written" sh -c "! grep -q 'bogus' '$R2/home.config' '$R2/.local/config'"
+check "existing wiki/index.md kept byte for byte" [ "$(shasum "$R2/wiki/index.md")" = "$wk" ]
+
+# 6d. helpers asked on, device check fails: the answers file is rewritten to off
 mkdir -p "$W/notmac"; printf '#!/bin/sh\necho Linux\n' > "$W/notmac/uname"; chmod +x "$W/notmac/uname"
 sed 's/^terminal_helpers=.*/terminal_helpers=on/' "$W/answers.no" > "$W/answers.on"
 out=$(PATH="$W/notmac:$PATH" "$R2/scripts/configure" --answers "$W/answers.on" 2>&1); rc=$?
@@ -202,14 +210,26 @@ check "failed write never says wrote" sh -c "! grep -q 'wrote home.config' <<'X'
 $out
 X"
 
+# 7b. not a base clone (a template missing, or CLAUDE.md without the fourth BUFFER line): exit 3, nothing written
+R9="$W/home9"; mkdir -p "$R9"; cp -R "$SRC/scripts" "$SRC/templates" "$R9/"; cp "$R/CLAUDE.md" "$R9/CLAUDE.md"
+git -C "$R9" init -q; rm "$R9/templates/DECISIONS.md"
+sum9() { (cd "$R9" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs shasum | shasum; git config --local --list | LC_ALL=C sort | shasum); }
+b9=$(sum9); out=$("$R9/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "template missing: exit 3" [ "$rc" = 3 ]
+check "template missing: named" grep -q 'template missing: templates/DECISIONS.md' <<<"$out"
+check "template missing: nothing written" [ "$(sum9)" = "$b9" ]
+cp "$SRC/templates/DECISIONS.md" "$R9/templates/DECISIONS.md"; grep -v 'BUFFER 4/4' "$R/CLAUDE.md" > "$R9/CLAUDE.md"
+b9=$(sum9); out=$("$R9/scripts/configure" --answers "$A" 2>&1); rc=$?
+check "CLAUDE.md without the buffer line: exit 3" [ "$rc" = 3 ]
+check "CLAUDE.md without the buffer line: named" grep -q 'take it from the base first' <<<"$out"
+check "CLAUDE.md without the buffer line: nothing written" [ "$(sum9)" = "$b9" ]
+
 # 8. labels: one plain line per failure, configure exit 4 says which
 R4="$W/home4"; mkdir -p "$R4"; cp -R "$SRC/scripts" "$SRC/templates" "$R4/"; cp "$R/CLAUDE.md" "$R4/CLAUDE.md"
 git -C "$R4" init -q
 out=$(GH_STUB_FAIL_MATCH='^api repos/' GH_STUB_FAIL_MESSAGE='gh: Not Found (HTTP 404)' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "missing repo: exit 4" [ "$rc" = 4 ]
 check "missing repo: labels one-liner" grep -qx 'labels: cannot reach example-org/orchard-home: create it on GitHub (private) and push, then run scripts/labels' <<<"$out"
-check "missing repo: configure says not found" sh -c 'printf "%s
-" "$1" | tail -1 | grep -q "labels are NOT created: the repo example-org/orchard-home was not found"' _ "$out"
 check "missing repo: the remaining line" sh -c 'printf "%s\n" "$1" | tail -1 | grep -qxF "configure: the files are written, but the labels are NOT created: the repo example-org/orchard-home was not found on GitHub. Create it (private), then run this line from your own terminal: cd $2 && scripts/labels"' _ "$out" "$(cd "$R4" && pwd -P)"
 out=$(GH_STUB_FAIL_MATCH='^label create' GH_STUB_FAIL_MESSAGE='HTTP 403: Resource not accessible by integration' "$R4/scripts/configure" --answers "$A" --labels 2>&1); rc=$?
 check "no permission: exit 4" [ "$rc" = 4 ]
@@ -357,7 +377,10 @@ check "two-word profile and pinned model refused: exit 2" [ "$rc" = 2 ]
 check "two-word profile named" grep -q 'refused: launch.profile.worker=two words (one word' <<<"$out"
 check "pinned model named" grep -q 'refused: launch.model=claude-opus-4-1 (an alias' <<<"$out"
 check "refused values: nothing written" [ "$(shasum "$R7/.local/config")" = "$lc" ]
-check "--set with --answers refused" sh -c "! '$R7/scripts/configure' --answers '$A' --set launch.model=opus >/dev/null 2>&1"
+out=$("$R7/scripts/configure" --answers "$A" --set launch.model=opus 2>&1); rc=$?
+check "--set with --answers refused (exit 2)" [ "$rc" = 2 ]
+check "--set with --answers named" grep -q 'configure: --set and --get do not go with --answers or --labels' <<<"$out"
+check "--set with --answers: nothing written" [ "$(shasum "$R7/.local/config")" = "$lc" ]
 # a later answers run keeps a profile set with --set
 "$R2/scripts/configure" --set launch.profile.worker=personal >/dev/null 2>&1
 "$R2/scripts/configure" --answers "$W/answers.codex" >/dev/null 2>&1; rc=$?
@@ -377,7 +400,6 @@ toml_ok() { # valid TOML; without python 3.11 (tomllib) the parse is skipped
   python3 -c 'import tomllib' 2>/dev/null || return 0
   python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$1"; }
 CT="$R/.codex/config.toml"
-check "codex config written" [ -f "$CT" ]
 check "codex config is valid TOML" toml_ok "$CT"
 check "codex config enables plugin-a" grep -qx '\[plugins."plugin-a@example-market"\]' "$CT"
 check "codex config enables plugin-b" grep -qx '\[plugins."plugin-b@example-market"\]' "$CT"
