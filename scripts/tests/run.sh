@@ -211,6 +211,9 @@ if sel home-log; then
   "$HL" new --title "Not mine" --body b --start --run-id other-16 >/dev/null 2>&1
   echo '{"session_id":"cs-other","cwd":"/x"}' | env CODEX_THREAD_ID=th-15 "$H/scripts/hooks/session-end" --surface claude
   gh api repos/test/hl/issues/16/comments --jq '.[0].body' | head -1 | grep -q 'state=active' && ok || bad "a claim of another run must stay active"
+  "$HL" new --title "Dies in codex" --body b --start --run-id codex-x >/dev/null 2>&1
+  echo '{}' | env -u CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID=codex-x "$H/scripts/hooks/session-end"
+  gh api repos/test/hl/issues/17/comments --jq '.[0].body' | grep -q 'codex resume codex-x' && ok || bad "session-end with only CODEX_THREAD_ID (no session id, no surface) must write a codex resume command"
 fi
 
 # ---------------------------------------------------------------- sweep
@@ -523,6 +526,7 @@ EOS
   expect "bash-guard blocks .cmd list: gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"gh\",\"auth\",\"switch\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -lc gh auth switch" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-lc\",\"gh auth switch -u a\"]}}" | "$1"' _ "$BG"
   expect "bash-guard blocks .cmd list: bash -e -c kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
+  expect "bash-guard blocks .cmd list: /bin/bash -c -- kill -9 -1" 2 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"/bin/bash\",\"-c\",\"--\",\"kill -9 -1\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -e -c kill -0 4242" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-e\",\"-c\",\"kill -0 4242\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd list: bash -lc gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:[\"bash\",\"-lc\",\"gh issue list\"]}}" | "$1"' _ "$BG"
   expect "bash-guard allows .cmd: gh issue list" 0 sh -c 'jq -n "{tool_name:\"exec_command\",tool_input:{cmd:\"gh issue list\"}}" | "$1"' _ "$BG"
