@@ -612,6 +612,9 @@ check "r11 launch.command=claude -> open works" ts open "$WORK"
 reset
 check "r11 called from a Codex session (CODEX_THREAD_ID) -> refused" [ "$(rc_of env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" open "$WORK")" = 3 ]
 check "r11 called from a Codex session: no tab opened" sh -c '[ -z "$(ls "$1/tabs" 2>/dev/null)" ]' _ "$TERM_FAKE_DIR"
+reset; new_tab   # a Codex thread with no record of its own still reads the tabs
+check "r11 called from an unmapped Codex session: survey lists the tab" grep -q "$TTY" <(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" survey)
+check "r11 called from an unmapped Codex session: state works" [ "$(env CODEX_THREAD_ID=thread-1 /bin/bash "$TERM_SH" state "$TTY")" = idle ]
 
 # ---------------------------------------------------------------- rule 12: kill exact PID after checking it
 signals_outside_pid_kill() { # code lines (comments dropped) outside pid_kill and the be_kill primitive that signal or call them
