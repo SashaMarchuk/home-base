@@ -2,7 +2,7 @@
 #   shared     base block and buffer flow down; the home section below them is the home's
 #   flows      owned by the base, present in every home, never edited in a home
 #   base-only  present in the base repo only; configure removes it from a new home and base-update never brings it
-#              (a home's own file at such a path, its own README for example, stays)
+#              (nor deletes a home's own file there; scripts/checks/run reports such a file)
 # A path ending in "/" is a folder; "*" is a git pathspec glob. Every path tracked in the base is covered by a line here.
 shared CLAUDE.md
 flows AGENTS.md

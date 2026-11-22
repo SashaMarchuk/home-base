@@ -87,7 +87,7 @@ if ! git remote get-url base >/dev/null 2>&1 && [ -n "$burl" ]; then
   git remote add base "$burl" 2>/dev/null && git remote set-url --push base DISABLED
 fi
 if git remote get-url base >/dev/null 2>&1; then
-  ( git fetch -q base >/dev/null 2>&1; git fetch -q --no-tags base '+refs/tags/v*:refs/base-tags/v*' >/dev/null 2>&1 ) & fp=$!
+  ( git fetch -q --no-tags base >/dev/null 2>&1; git fetch -q --no-tags base '+refs/tags/v*:refs/base-tags/v*' >/dev/null 2>&1 ) & fp=$!
   i=0; while kill -0 "$fp" 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
   kill -0 "$fp" 2>/dev/null && kill "$fp" 2>/dev/null
   chk=""; [ -x scripts/base-update ] && chk=$(scripts/base-update --check --no-fetch 2>/dev/null)

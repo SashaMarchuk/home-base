@@ -92,13 +92,13 @@ scripts/base-update --rollback         # back to the release before the last upd
 
 - It refuses to run with uncommitted changes to tracked files, and stops with exit 3 and changes nothing when the base cannot be reached.
 - It makes one commit and never pushes: look at it, run `scripts/checks/run`, then `git push`.
-- It sets every path the base owns (`base.manifest`) to the release's exact content: the base folders and files, and the base block of `CLAUDE.md` (your home section below the `BUFFER` lines stays as it is). It never touches anything else; the base-only paths (its README, openspec) never enter your home, and your own files at those paths stay.
+- It sets every path the base owns (`base.manifest`) to the release's exact content: the base folders and files, and the base block of `CLAUDE.md` (your home section below the `BUFFER` lines stays as it is). It never touches anything else, and the base-only paths (its README, openspec) never enter your home. It never deletes a file of yours at such a path either; `scripts/checks/run` reports it, because a home keeps those names free.
 - `--check` and `--dry-run` change no file and no commit; they only fetch the release tags into `refs/base-tags/`.
 - **Pin a version:** put `base.pin=1.4` in `home.config` (or `.local/config` for one machine only). Updates then stay on the newest `1.4.x`; `base.pin=1.4.2` holds exactly that release. Remove the line to follow the newest release again.
 - **Roll back:** `scripts/base-update --rollback` makes a new commit with the previous release's content. It never resets or force-pushes, so it is safe after a push and in a home that several people share. One step only; run an update to move forward again.
 - **First update of a home made before releases** (no `VERSION` file): the command finds the base commit your home last merged and starts from there. If your home has no copy of the command yet, run it once from the release itself:
   ```
-  git fetch base '+refs/tags/v*:refs/base-tags/v*'
+  git fetch --no-tags base '+refs/tags/v*:refs/base-tags/v*'
   bash <(git show refs/base-tags/v1.0.0:scripts/base-update) 1.0.0
   ```
 - In an agent session, say `update from base` (the `base-update` skill runs the same command). A session start prints `SWEEP base-ahead ... base release vX.Y.Z is out` when there is one to take.

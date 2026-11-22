@@ -49,9 +49,9 @@ while [ $# -gt 0 ]; do
 done
 [ "$MODE" = update ] || [ -z "$WANT" ] || die 2 "a version goes with an update only"
 
-# The home: the folder above scripts/ when it holds home.config, else the repo of the current folder.
-SELF_DIR=$(cd "$(dirname "${BASE_UPDATE_SELF:-.}")" 2>/dev/null && pwd -P)
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/../home.config" ]; then ROOT=$(cd "$SELF_DIR/.." && pwd -P)
+# The home: the folder above this script's scripts/ folder. Only when the script is not a file
+# (run as bash <(git show ...) to bootstrap an old home) is it the repo of the current folder.
+if [ -f "${BASE_UPDATE_SELF:-}" ]; then ROOT=$(cd "$(dirname "$BASE_UPDATE_SELF")/.." && pwd -P)
 else ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die 1 "run it inside a home (a git repo with home.config)"; fi
 [ -f "$ROOT/home.config" ] || die 1 "$ROOT has no home.config: run it in a home, not in the base"
 export HOME_ROOT=$ROOT; . "$ROOT/scripts/lib/config"
@@ -128,13 +128,17 @@ apply() {
 
   # Files in the way, checked in the real home (a dry run too): an untracked file where the release
   # puts a file, or any file (tracked or not) where the release needs a folder. Refuse; git merge would too.
+  # A folder of old base files that the release turns into a file, and an old base file that it
+  # turns into a folder, are not in the way.
   comm -23 "$T/f.new" "$T/s.pre" | while IFS= read -r f; do
-    { [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ]; } && printf '%s\n' "$f"
+    if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then
+      { R ls-files --others -- "$f"; R ls-files -- "$f" | grep -vxF -f "$T/f.old"; } | sed -n 1p | grep -q . && printf '%s\n' "$f"
+    elif [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ]; then printf '%s\n' "$f"; fi
   done > "$T/untracked"
   while IFS= read -r f; do
     d=${f%/*}
     while [ "$d" != "$f" ] && [ -n "$d" ]; do
-      { [ -L "$ROOT/$d" ] || { [ -e "$ROOT/$d" ] && [ ! -d "$ROOT/$d" ]; }; } && printf '%s\n' "$d"
+      grep -qxF -- "$d" "$T/f.old" || { { [ -L "$ROOT/$d" ] || { [ -e "$ROOT/$d" ] && [ ! -d "$ROOT/$d" ]; }; } && printf '%s\n' "$d"; }
       case "$d" in */*) d=${d%/*} ;; *) break ;; esac
     done
   done < "$T/f.new" | sort -u >> "$T/untracked"
@@ -167,9 +171,9 @@ apply() {
   awk '$1 == "flows" { print $2 }' "$T/m.new" | while IFS= read -r path; do
     path=${path%/}; R cat-file -e "$new:$path" 2>/dev/null && printf '%s\n' "$path"
   done > "$T/checkout"
-  xg "$T/checkout" checkout "$new"
   comm -12 "$T/f.old" "$T/s.pre" | comm -23 - "$T/s.new" > "$T/gone"
   xg "$T/gone" rm -q -f
+  xg "$T/checkout" checkout "$new"
   { cat "$T/b.new"; R show "$pre:CLAUDE.md" | home_of; } > "$W/CLAUDE.md"
   G add CLAUDE.md
   # Check: every file of the release's flows paths now matches the release.

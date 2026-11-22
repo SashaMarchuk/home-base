@@ -177,6 +177,18 @@ run bash "$H/scripts/base-update"
 [ "$RC" = 1 ] && [ "$(cat "$H/scripts/new-thing.d")" = "my notes" ] && ok || bad "folder: a tracked home file where the release needs a folder is refused"
 git -C "$B" tag -d v1.3.1 >/dev/null; git -C "$B" reset -q --hard HEAD~1
 
+# 7b. A release that turns a base file into a folder, and one that turns it back.
+H="$T/shape"; mkhome "$H" v1.0.0
+git -C "$B" rm -q scripts/tool; mkdir -p "$B/scripts/tool"; printf 'now a folder\n' > "$B/scripts/tool/main"; printf '1.4.0\n' > "$B/VERSION"
+git -C "$B" add -A; git -C "$B" commit -q -m "release 1.4.0"; git -C "$B" tag -a v1.4.0 -m v1.4.0
+git -C "$B" rm -q -r scripts/tool; printf 'a file again\n' > "$B/scripts/tool"; printf '1.5.0\n' > "$B/VERSION"
+git -C "$B" add -A; git -C "$B" commit -q -m "release 1.5.0"; git -C "$B" tag -a v1.5.0 -m v1.5.0
+run bash "$H/scripts/base-update" 1.4.0
+[ "$RC" = 0 ] && [ -f "$H/scripts/tool/main" ] && ok || bad "shape: a base file becomes a folder"
+run bash "$H/scripts/base-update" 1.5.0
+[ "$RC" = 0 ] && [ "$(cat "$H/scripts/tool")" = "a file again" ] && ok || bad "shape: a base folder becomes a file"
+git -C "$B" tag -d v1.4.0 v1.5.0 >/dev/null; git -C "$B" reset -q --hard HEAD~2
+
 # 8. Offline: clear message, exit 3, nothing changed; rollback still works offline.
 H="$T/offline"; mkhome "$H" v1.0.0
 run bash "$H/scripts/base-update" 1.1.0
@@ -203,8 +215,8 @@ H="$T/markers"; mkhome "$H" v1.0.0
 grep -v 'BUFFER 4/4' "$H/CLAUDE.md" > "$T/c"; cp "$T/c" "$H/CLAUDE.md"; git -C "$H" commit -q -am "broken markers"
 run bash "$H/scripts/base-update"
 [ "$RC" = 1 ] && has "BUFFER" && ok || bad "broken CLAUDE.md markers refused"
-run bash "$B/scripts/base-update"
-[ "$RC" = 1 ] && has "not in the base" && ok || bad "refuses to run in the base"
+run sh -c "cd '$H' && bash '$B/scripts/base-update'"
+[ "$RC" = 1 ] && has "not in the base" && [ "$(git -C "$H" log -1 --format=%s)" = "broken markers" ] && ok || bad "the base's copy refuses, even when run from inside a home"
 
 # 10. The sweep: a newer release, drift against the release the home is on, quiet when pinned and current.
 export PATH="$SRC/scripts/tests/stubs:$PATH" GH_STUB_DIR="$T/ghstore" HOME_LOG_SETTLE=0; mkdir -p "$GH_STUB_DIR"

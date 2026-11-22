@@ -20,7 +20,7 @@ A home's `base` remote SHALL have its push URL set to `DISABLED`, and the bash g
 - **THEN** the guard blocks it with exit 2
 
 ### Requirement: HOME-050 Update by command
-`scripts/base-update` SHALL be the one way a home takes the base: people run it by hand and the `base-update` skill runs the same command. It SHALL refuse, changing nothing, when tracked files have uncommitted changes, when a merge, rebase, cherry-pick or revert is in progress, or when `CLAUDE.md` lacks exactly one `BASE:BEGIN`, one `BASE:END` and one `BUFFER 4/4` line in that order. It SHALL fetch the base's release tags into `refs/base-tags/`, never into the home's own tags, run from a temporary copy of itself, make one commit and never push.
+`scripts/base-update` SHALL be the one way a home takes the base: people run it by hand and the `base-update` skill runs the same command. It SHALL refuse, changing nothing, when tracked files have uncommitted changes, when a merge, rebase, cherry-pick or revert is in progress, or when `CLAUDE.md` lacks exactly one `BASE:BEGIN`, one `BASE:END` and one `BUFFER 4/4` line in that order. It SHALL fetch the base's release tags into `refs/base-tags/` with `--no-tags`, never into the home's own tags, run from a temporary copy of itself, make one commit and never push.
 
 #### Scenario: Dirty tree
 - **WHEN** a tracked file has uncommitted changes
@@ -31,7 +31,7 @@ A home's `base` remote SHALL have its push URL set to `DISABLED`, and the bash g
 - **THEN** the update runs and the untracked files stay
 
 ### Requirement: HOME-051 Base-owned paths take the release
-An update SHALL record the release in history as a merge with the strategy `ours` and then set every path of the release's `base.manifest` to the release's exact content: the `flows` paths (files the release no longer has, and the old release had, are removed; files the home added inside a `flows` folder stay and are listed), and the base block and buffer of `CLAUDE.md` with the home section below them kept as it is. `base-only` paths SHALL never enter a home, and a home's own file at a `base-only` path (its own README, for example) SHALL stay. It SHALL never touch a path the manifest does not list.
+An update SHALL record the release in history as a merge with the strategy `ours` and then set every path of the release's `base.manifest` to the release's exact content: the `flows` paths (files the release no longer has, and the old release had, are removed; files the home added inside a `flows` folder stay and are listed), and the base block and buffer of `CLAUDE.md` with the home section below them kept as it is. `base-only` paths SHALL never enter a home, and an update SHALL never delete a home's own file at a `base-only` path (`scripts/checks/run` reports it). It SHALL never touch a path the manifest does not list.
 
 #### Scenario: Conflict-free by construction
 - **WHEN** the home and the release both changed `scripts/home-log`
