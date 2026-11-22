@@ -12,7 +12,7 @@
 - **THEN** the update runs and the untracked files stay
 
 ### Requirement: HOME-051 Base-owned paths take the release
-An update SHALL record the release in history as a merge with the strategy `ours` and then set every path of the release's `base.manifest` to the release's exact content: the `flows` paths (files the release no longer has, and the old release had, are removed; files the home added inside a `flows` folder stay and are listed), the base block and buffer of `CLAUDE.md` with the home section below them kept as it is, and no `base-only` path. It SHALL never touch a path the manifest does not list.
+An update SHALL record the release in history as a merge with the strategy `ours` and then set every path of the release's `base.manifest` to the release's exact content: the `flows` paths (files the release no longer has, and the old release had, are removed; files the home added inside a `flows` folder stay and are listed), and the base block and buffer of `CLAUDE.md` with the home section below them kept as it is. `base-only` paths SHALL never enter a home, and a home's own file at a `base-only` path (its own README, for example) SHALL stay. It SHALL never touch a path the manifest does not list.
 
 #### Scenario: Conflict-free by construction
 - **WHEN** the home and the release both changed `scripts/home-log`
@@ -61,18 +61,22 @@ The base SHALL ship `VERSION`, a `flows` file holding the release number `X.Y.Z`
 - **THEN** its `VERSION` holds `1.3.0`
 
 ### Requirement: HOME-478 The target release
-`scripts/base-update` SHALL update to the version given (`1.4.0` or `v1.4.0`), else to the newest release matching `base.pin` (`1.4` is the newest `1.4.x`, `1.4.2` exactly that one), else to the newest release. It SHALL refuse a target older than the current release (pointing to `--rollback`), an unknown release, and a malformed version (exit 2). `--check` SHALL print the lines `current`, `newest`, `target`, `update` (a release to take, or `none`) and `base` (the base commit the home is on) and change nothing.
+`scripts/base-update` SHALL update to the version given (`1.4.0` or `v1.4.0`), else to the newest release matching `base.pin` (`1.4` is the newest `1.4.x`, `1.4.2` exactly that one), else to the newest release. An older version given by name SHALL be applied the same way, with no merge. It SHALL refuse an unknown release (exit 1) and a malformed version (exit 2). `--check` SHALL print the lines `current`, `newest`, `target`, `update` (a release to take, or `none`) and `base` (the base commit the home is on) and change nothing.
 
 #### Scenario: Skipped releases
 - **WHEN** a home on v1.0.0 updates while v1.3.0 is the newest
 - **THEN** it lands on v1.3.0 in one commit and prints the changelog sections of v1.1.0 to v1.3.0
+
+#### Scenario: An older release by name
+- **WHEN** a home on v1.1.0 runs `scripts/base-update 1.0.0`
+- **THEN** its base-owned paths equal v1.0.0's in one new commit
 
 #### Scenario: Pinned
 - **WHEN** `base.pin=1.1` and v1.3.0 is the newest
 - **THEN** the update lands on the newest v1.1.x
 
 ### Requirement: HOME-479 Dry run
-`scripts/base-update --dry-run` SHALL run the same update in a temporary worktree, print the files that would change, the edits that would be saved and the changelog sections, and remove the worktree, leaving the home's commits, files and worktrees as they were.
+`scripts/base-update --dry-run` SHALL run the same update in a temporary worktree, print the files that would change, the edits that would be saved and the changelog sections, and remove the worktree, leaving the home's commits, files and worktrees as they were; like `--check`, it only fetches the release tags.
 
 #### Scenario: Nothing changes
 - **WHEN** the dry run finishes

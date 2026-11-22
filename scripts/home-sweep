@@ -93,7 +93,7 @@ if git remote get-url base >/dev/null 2>&1; then
   chk=""; [ -x scripts/base-update ] && chk=$(scripts/base-update --check --no-fetch 2>/dev/null)
   line() { printf '%s\n' "$chk" | sed -n "s/^$1 //p" | head -1; }
   mb=""
-  if [ -n "$(line update)" ]; then
+  if [ -n "$(line newest)" ] && [ "$(line newest)" != none ]; then
     # Releases exist: compare with the release this home is on (VERSION) and the target (base.pin or newest).
     upd=$(line update); cur=$(line current); mb=$(line base); [ "$mb" = none ] && mb=""
     [ "$upd" != none ] && echo "SWEEP base-ahead $R base release $upd is out (this home is on $cur)"
@@ -108,27 +108,6 @@ if git remote get-url base >/dev/null 2>&1; then
       git cat-file -e "$mb:${p%/}" 2>/dev/null || continue
       git diff --quiet "$mb" HEAD -- "$p" 2>/dev/null || echo "SWEEP drift $R $p"
     done
-  fi
-fi
-exit 0
-burl=$(cfg base.url)
-if ! git remote get-url base >/dev/null 2>&1 && [ -n "$burl" ]; then
-  git remote add base "$burl" 2>/dev/null && git remote set-url --push base DISABLED
-fi
-if git remote get-url base >/dev/null 2>&1; then
-  ( git fetch -q base >/dev/null 2>&1 ) & fp=$!
-  i=0; while kill -0 "$fp" 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
-  kill -0 "$fp" 2>/dev/null && kill "$fp" 2>/dev/null
-  if git rev-parse -q --verify base/main >/dev/null; then
-    ahead=$(git rev-list --count HEAD..base/main 2>/dev/null || echo 0)
-    [ "$ahead" -gt 0 ] && echo "SWEEP base-ahead $R base/main is $ahead commits ahead"
-    mb=$(git merge-base HEAD base/main 2>/dev/null)
-    if [ -n "$mb" ] && [ -f base.manifest ]; then
-      grep -E '^flows[[:space:]]' base.manifest | awk '{print $2}' | while read -r p; do
-        git cat-file -e "base/main:${p%/}" 2>/dev/null || continue
-        git diff --quiet "$mb" HEAD -- "$p" 2>/dev/null || echo "SWEEP drift $R $p"
-      done
-    fi
   fi
 fi
 exit 0

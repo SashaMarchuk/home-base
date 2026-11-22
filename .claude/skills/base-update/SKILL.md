@@ -7,8 +7,9 @@ description: Take a base release into this home, or roll the last one back. Use 
 
 The base ships releases (tags `vX.Y.Z`, notes in its `CHANGELOG.md`). `VERSION` says which release this home is on. `scripts/base-update` is the one way to move: people run it by hand, this skill runs the same command. The base owns the paths `base.manifest` lists and the base block of `CLAUDE.md`; this home owns everything else.
 
-1. `scripts/base-update --dry-run` (add the version the owner named, if any; with none it takes `base.pin` from `home.config`, else the newest release). Read what it prints.
-   - Exit 1 (uncommitted changes, an untracked file in the way, broken `CLAUDE.md` markers, an older or unknown version): fix what it names when it is this session's own change; otherwise open one owner issue (`scripts/home-log new --title "base-update needs the owner" --body-file <file> --label <labels.needs_owner>`) with its words, and stop.
+1. `scripts/base-update --dry-run` (add the version the owner named, if any, older ones too; with none it takes `base.pin` from `home.config`, else the newest release). Read what it prints.
+   - Exit 1 (uncommitted changes, an untracked file in the way, broken `CLAUDE.md` markers, an unknown version): fix what it names when it is this session's own change; otherwise open one owner issue (`scripts/home-log new --title "base-update needs the owner" --body-file <file> --label <labels.needs_owner>`) with its words, and stop.
+   - Exit 2 (a malformed version such as `banana`): ask the owner which version was meant.
    - Exit 3 (the base cannot be reached): say so in one line and stop. Nothing changed.
 2. `scripts/base-update` with the same arguments. It commits once and never pushes.
 3. If it saved a patch (`.local/base-update/<name>.patch`: this home's edits to base-owned files, replaced by the release): write `scratch/base-sync.md` with the paths it listed, the release and the patch in a fenced block, then `scripts/home-log new --title "base-sync: home edits to base files" --body-file scratch/base-sync.md --label base-sync`. The issue says where each edit belongs: a rule in the home section of `CLAUDE.md`, a setting in `home.config` or `.local/config`, a script in `tools/`, a skill in `.claude/skills/<own name>/`, a fix the base needs in the base.

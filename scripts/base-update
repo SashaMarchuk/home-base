@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # base-update: take a release of the base into this home. People and agents run the same command.
-#   scripts/base-update [<version>] [--dry-run]   update to <version>, else to base.pin, else to the newest release
+#   scripts/base-update [<version>] [--dry-run]   update to <version> (older ones too), else to base.pin, else to the newest release
 #   scripts/base-update --rollback [--dry-run]     go back to the release this home was on before its last update
 #   scripts/base-update --check [--no-fetch]       print this home's release and the target; change nothing
 # A release is a tag vX.Y.Z of the base. The base-owned file VERSION says which release a home is on.
 # An update refuses uncommitted changes to tracked files, fetches the release tags into refs/base-tags/,
 # records the release as a merge (strategy "ours") and then sets every base-owned path of the
 # release's base.manifest to the release's exact content: the flows paths, the base block and buffer
-# of CLAUDE.md (the home section below them stays as it is), and no base-only path. Your own edits
+# of CLAUDE.md (the home section below them stays as it is); base-only paths never enter. Your own edits
 # to base-owned files are saved first to .local/base-update/<from>-to-<to>.patch and listed; files
 # you added inside a base folder stay and are listed. It makes one commit and never pushes.
 # A rollback is one new commit made the same way (no reset, no revert), so it is safe after a push.
-# --dry-run does all of it in a temporary worktree, prints what would change and removes it.
+# --dry-run does all of it in a temporary worktree, prints what would change and removes it; like
+# --check, it only fetches the release tags (and adds the base remote when missing).
 # Exit: 0 done or nothing to do, 1 refused (nothing changed), 2 usage, 3 the base cannot be reached.
 set -u
 if [ "${BASE_UPDATE_COPY:-}" != 1 ]; then # run from a copy: an update replaces this very file
@@ -20,9 +21,17 @@ if [ "${BASE_UPDATE_COPY:-}" != 1 ]; then # run from a copy: an update replaces 
   exit 1
 fi
 
+[ "${BASE_UPDATE_COPY:-}" = 1 ] && trap 'rm -f "$0"' EXIT
 say() { printf 'base-update: %s\n' "$*"; }
 die() { local c=$1; shift; printf 'base-update: %s\n' "$*" >&2; exit "$c"; }
-usage() { sed -n '2,5p' "${BASE_UPDATE_SELF:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() {
+  cat >&2 <<'EOF'
+scripts/base-update [<version>|--to <version>] [--dry-run]   update to <version>, else to base.pin, else to the newest release
+scripts/base-update --rollback [--dry-run]                    go back to the release this home was on before its last update
+scripts/base-update --check [--no-fetch]                      print this home's release and the target; change nothing
+EOF
+  exit 2
+}
 
 DRY=0; MODE=update; WANT=""; FETCH=1
 while [ $# -gt 0 ]; do
@@ -110,9 +119,9 @@ apply() {
   manifest_of "$new" > "$T/m.new"; manifest_of "$old" > "$T/m.old"
   [ -s "$T/m.new" ] || die 1 "$to has no base.manifest"
   [ -s "$T/m.old" ] || cp "$T/m.new" "$T/m.old"
-  R -c core.quotepath=off ls-tree -r --name-only "$old" > "$T/t.old"
-  R -c core.quotepath=off ls-tree -r --name-only "$new" > "$T/t.new"
-  R -c core.quotepath=off ls-tree -r --name-only "$pre" > "$T/t.pre"
+  R ls-tree -r -z --name-only "$old" | tr '\0' '\n' > "$T/t.old"
+  R ls-tree -r -z --name-only "$new" | tr '\0' '\n' > "$T/t.new"
+  R ls-tree -r -z --name-only "$pre" | tr '\0' '\n' > "$T/t.pre"
   of_kind flows "$T/m.old" < "$T/t.old" | sort -u > "$T/f.old"
   of_kind flows "$T/m.new" < "$T/t.new" | sort -u > "$T/f.new"
   sort -u "$T/t.pre" > "$T/s.pre"; sort -u "$T/t.new" > "$T/s.new"
@@ -137,7 +146,7 @@ apply() {
   [ -s "$T/lost" ] && xg "$T/lost" diff --binary "$old" "$pre" > "$T/patch"
   if ! cmp -s "$T/b.pre" "$T/b.old" && ! cmp -s "$T/b.pre" "$T/b.new"; then
     echo "CLAUDE.md (base block)" >> "$T/lost"
-    diff -u --label "a/CLAUDE.md (base block of $from)" --label "b/CLAUDE.md (base block in this home)" "$T/b.old" "$T/b.pre" >> "$T/patch"
+    { echo "diff --git a/CLAUDE.md b/CLAUDE.md"; diff -u --label a/CLAUDE.md --label b/CLAUDE.md "$T/b.old" "$T/b.pre"; } >> "$T/patch"
   fi
   # Files the home added inside base folders: they stay.
   of_kind flows "$T/m.new" < "$T/s.pre" | sort -u | comm -23 - "$T/s.new" | comm -23 - "$T/f.old" > "$T/own"
@@ -153,8 +162,6 @@ apply() {
   xg "$T/checkout" checkout "$new"
   comm -12 "$T/f.old" "$T/s.pre" | comm -23 - "$T/s.new" > "$T/gone"
   xg "$T/gone" rm -q -f
-  awk '$1 == "base-only" { print $2 }' "$T/m.new" > "$T/baseonly"
-  xg "$T/baseonly" rm -r -q -f --ignore-unmatch
   { cat "$T/b.new"; R show "$pre:CLAUDE.md" | home_of; } > "$W/CLAUDE.md"
   G add CLAUDE.md
   # Check: every file of the release's flows paths now matches the release.
@@ -300,7 +307,7 @@ if [ -n "$CUR" ]; then
   OLDC=$(tag_commit "$CUR") || die 1 "VERSION says $CUR, but the base has no tag $CUR; restore VERSION from git history"
   FROM=$CUR
   [ "$CUR" = "$TO" ] && { say "already on $TO; nothing to do"; exit 0; }
-  newer "$CUR" "$TO" && die 1 "this home is on $CUR, which is newer than $TO; to go back one release use scripts/base-update --rollback"
+  newer "$CUR" "$TO" && say "$TO is older than $CUR: going back to it"
 else
   # First update of a home made before releases: its base content is the last base commit it merged.
   OLDC=$(R merge-base "$PRE" "$TOC") || die 1 "this repo shares no history with the base, so its base content is unknown; make the home by cloning the base (see the base README)"

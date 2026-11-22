@@ -107,8 +107,17 @@ same "$H" v1.3.0 scripts/tool && ! grep -q 'changed by me' "$H/CLAUDE.md" && ok 
 has "home section of CLAUDE.md" && has "tools/" && ok || bad "edited: says where the text belongs"
 [ -f "$H/scripts/my-own" ] && has "scripts/my-own" && ok || bad "edited: own file in a base folder kept and listed"
 grep -q 'scripts/new-thing' "$p" && bad "edited: untouched base files must not be in the patch" || ok
+( cd "$H" && git stash -q -u 2>/dev/null; git checkout -q v1.0.0 -- scripts/tool CLAUDE.md && git apply --check "$p" ) && ok || bad "edited: the whole patch applies to the old release"
+git -C "$H" checkout -q HEAD -- scripts/tool CLAUDE.md
 git -C "$H" checkout -q v1.0.0 -- scripts/tool 2>/dev/null; git -C "$H" apply --include='scripts/*' "$p" 2>/dev/null && grep -q 'echo my tweak' "$H/scripts/tool" && ok || bad "edited: the patch applies to the old release"
 git -C "$H" checkout -q HEAD -- scripts/tool
+
+# 3b. The home's own files on base-only paths (README.md, openspec/) stay.
+H="$T/ownreadme"; mkhome "$H" v1.0.0
+printf 'my home\n' > "$H/README.md"; mkdir -p "$H/openspec"; printf 'mine\n' > "$H/openspec/mine.md"
+git -C "$H" add -A; git -C "$H" commit -q -m "own readme"
+run bash "$H/scripts/base-update"
+[ "$RC" = 0 ] && [ "$(cat "$H/README.md")" = "my home" ] && [ -f "$H/openspec/mine.md" ] && ok || bad "own files on base-only paths are kept"
 
 # 4. First update of an old home with no VERSION file (made before releases).
 H="$T/old"; mkhome "$H" "$PRE0"
@@ -172,7 +181,7 @@ has "target v1.1.0 (pinned to 1.1)" && has "current v1.0.0" && has "newest v1.3.
 run bash "$H/scripts/base-update"
 [ "$RC" = 0 ] && [ "$(ver "$H")" = 1.1.0 ] && ok || bad "pin: update stops at the pin"
 run bash "$H/scripts/base-update" 1.0.0
-[ "$RC" = 1 ] && has "--rollback" && ok || bad "older target refused"
+[ "$RC" = 0 ] && [ "$(ver "$H")" = 1.0.0 ] && same "$H" v1.0.0 scripts templates VERSION && ok || bad "an older chosen release is applied"
 run bash "$H/scripts/base-update" banana
 [ "$RC" = 2 ] && ok || bad "bad version is a usage error"
 run bash "$H/scripts/base-update" 9.9.9
@@ -194,6 +203,14 @@ has "SWEEP drift test/home scripts/" && ! has "SWEEP drift test/home templates/"
 printf 'base.pin=1.1\n' >> "$H/home.config"; git -C "$H" checkout -q v1.1.0 -- scripts/tool; git -C "$H" commit -q -am "pin, untweak"
 run sh -c "cd '$H' && scripts/home-sweep"
 ! has "base-ahead" && ! has "drift" && ok || bad "sweep: quiet when on the pinned release"
+
+# 11. Before the base has any release, the sweep compares with base/main.
+B2="$T/base-norel"; git clone -q "$B" "$B2"; git -C "$B2" tag -l | while read -r t; do git -C "$B2" tag -d "$t" >/dev/null; done
+H="$T/sweep-norel"; git clone -q "$B2" "$H"; git -C "$H" checkout -q -B main HEAD~2
+( cd "$H" && git remote rename origin base && git rm -q VERSION && printf 'repo=test/home\n' > home.config && printf '.local/\n' > .gitignore && git add -A && git commit -q -m home )
+cp "$SRC/scripts/home-sweep" "$SRC/scripts/base-update" "$H/scripts/"; git -C "$H" add -A; git -C "$H" commit -q -m "new scripts"
+run sh -c "cd '$H' && scripts/home-sweep < /dev/null"
+has "SWEEP base-ahead test/home base/main is" && ok || bad "sweep: before any release it compares with base/main"
 
 echo "base-update tests: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

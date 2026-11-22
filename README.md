@@ -84,15 +84,16 @@ The base ships releases: git tags `vX.Y.Z` ([SemVer](https://semver.org): a majo
 
 ```
 scripts/base-update --check            # this home's release, the newest one, the target
-scripts/base-update --dry-run          # what an update would change; changes nothing
+scripts/base-update --dry-run          # what an update would change; changes no file or commit
 scripts/base-update                    # update to the newest release (or to base.pin)
-scripts/base-update 1.4.0              # update to that release
+scripts/base-update 1.4.0              # move to that release (an older one too)
 scripts/base-update --rollback         # back to the release before the last update
 ```
 
 - It refuses to run with uncommitted changes to tracked files, and stops with exit 3 and changes nothing when the base cannot be reached.
 - It makes one commit and never pushes: look at it, run `scripts/checks/run`, then `git push`.
-- It sets every path the base owns (`base.manifest`) to the release's exact content: the base folders and files, and the base block of `CLAUDE.md` (your home section below the `BUFFER` lines stays as it is). It never touches anything else.
+- It sets every path the base owns (`base.manifest`) to the release's exact content: the base folders and files, and the base block of `CLAUDE.md` (your home section below the `BUFFER` lines stays as it is). It never touches anything else; the base-only paths (its README, openspec) never enter your home, and your own files at those paths stay.
+- `--check` and `--dry-run` change no file and no commit; they only fetch the release tags into `refs/base-tags/`.
 - **Pin a version:** put `base.pin=1.4` in `home.config` (or `.local/config` for one machine only). Updates then stay on the newest `1.4.x`; `base.pin=1.4.2` holds exactly that release. Remove the line to follow the newest release again.
 - **Roll back:** `scripts/base-update --rollback` makes a new commit with the previous release's content. It never resets or force-pushes, so it is safe after a push and in a home that several people share. One step only; run an update to move forward again.
 - **First update of a home made before releases** (no `VERSION` file): the command finds the base commit your home last merged and starts from there. If your home has no copy of the command yet, run it once from the release itself:
