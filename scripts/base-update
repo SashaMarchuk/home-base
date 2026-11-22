@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# base-update: take a release of the base into this home. People and agents run the same command.
+#   scripts/base-update [<version>] [--dry-run]   update to <version>, else to base.pin, else to the newest release
+#   scripts/base-update --rollback [--dry-run]     go back to the release this home was on before its last update
+#   scripts/base-update --check [--no-fetch]       print this home's release and the target; change nothing
+# A release is a tag vX.Y.Z of the base. The base-owned file VERSION says which release a home is on.
+# An update refuses uncommitted changes to tracked files, fetches the release tags into refs/base-tags/,
+# records the release as a merge (strategy "ours") and then sets every base-owned path of the
+# release's base.manifest to the release's exact content: the flows paths, the base block and buffer
+# of CLAUDE.md (the home section below them stays as it is), and no base-only path. Your own edits
+# to base-owned files are saved first to .local/base-update/<from>-to-<to>.patch and listed; files
+# you added inside a base folder stay and are listed. It makes one commit and never pushes.
+# A rollback is one new commit made the same way (no reset, no revert), so it is safe after a push.
+# --dry-run does all of it in a temporary worktree, prints what would change and removes it.
+# Exit: 0 done or nothing to do, 1 refused (nothing changed), 2 usage, 3 the base cannot be reached.
+set -u
+if [ "${BASE_UPDATE_COPY:-}" != 1 ]; then # run from a copy: an update replaces this very file
+  c=$(mktemp "${TMPDIR:-/tmp}/base-update.XXXXXX") || exit 1
+  cp "$0" "$c" && BASE_UPDATE_COPY=1 BASE_UPDATE_SELF="$0" exec bash "$c" "$@"
+  exit 1
+fi
+
+say() { printf 'base-update: %s\n' "$*"; }
+die() { local c=$1; shift; printf 'base-update: %s\n' "$*" >&2; exit "$c"; }
+usage() { sed -n '2,5p' "${BASE_UPDATE_SELF:-$0}" 2>/dev/null | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+DRY=0; MODE=update; WANT=""; FETCH=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    --rollback) MODE=rollback ;;
+    --check) MODE=check ;;
+    --no-fetch) FETCH=0 ;;
+    --to) [ $# -ge 2 ] || usage; WANT=$2; shift ;;
+    -h|--help) usage ;;
+    -*) printf 'base-update: unknown option %s\n' "$1" >&2; usage ;;
+    *) [ -z "$WANT" ] || usage; WANT=$1 ;;
+  esac
+  shift
+done
+[ "$MODE" = update ] || [ -z "$WANT" ] || die 2 "a version goes with an update only"
+
+# The home: the folder above scripts/ when it holds home.config, else the repo of the current folder.
+SELF_DIR=$(cd "$(dirname "${BASE_UPDATE_SELF:-.}")" 2>/dev/null && pwd -P)
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/../home.config" ]; then ROOT=$(cd "$SELF_DIR/.." && pwd -P)
+else ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die 1 "run it inside a home (a git repo with home.config)"; fi
+[ -f "$ROOT/home.config" ] || die 1 "$ROOT has no home.config: run it in a home, not in the base"
+export HOME_ROOT=$ROOT; . "$ROOT/scripts/lib/config"
+
+T=$(mktemp -d "${TMPDIR:-/tmp}/base-update.d.XXXXXX") || exit 1
+WT=""
+cleanup() {
+  [ -n "$WT" ] && { git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; git -C "$ROOT" worktree prune >/dev/null 2>&1; }
+  rm -rf "$T"; [ "${BASE_UPDATE_COPY:-}" = 1 ] && rm -f "$0"
+}
+trap cleanup EXIT
+
+R() { git -C "$ROOT" "$@"; }
+W=$ROOT
+G() { git -C "$W" "$@"; }
+
+# ---------------------------------------------------------------- versions
+is_release() { printf '%s\n' "$1" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; }
+releases() { # every release tag fetched, oldest first
+  R for-each-ref --format='%(refname:lstrip=2)' refs/base-tags/ | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1.2,1n -k2,2n -k3,3n
+}
+newer() { # newer <a> <b>: a is a later release than b
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -1)" = "$1" ]
+}
+tag_commit() { R rev-parse -q --verify "refs/base-tags/$1^{commit}"; }
+version_at() { # version_at <commit>: the release named by its VERSION file, or nothing
+  local v; v=$(R show "$1:VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')
+  [ -n "$v" ] && printf 'v%s\n' "${v#v}"
+}
+
+# ---------------------------------------------------------------- manifest
+manifest_of() { R show "$1:base.manifest" 2>/dev/null | awk '$1 ~ /^(shared|flows|base-only)$/ && NF >= 2 { print $1, $2 }'; }
+of_kind() { # of_kind <kind> <manifest file> < paths: prints the paths whose first matching line has <kind>
+  awk -v want="$1" '
+    function glob2re(s) { gsub(/[.+^$()|{}\[\]\\]/, "\\\\&", s); gsub(/\*/, ".*", s); gsub(/\?/, ".", s); return "^" s "(/.*)?$" }
+    NR == FNR { k[++n] = $1; p[n] = $2; next }
+    { for (i = 1; i <= n; i++) {
+        q = p[i]
+        if (q ~ /\/$/) hit = (index($0, q) == 1)
+        else if (q ~ /[*?]/) hit = ($0 ~ glob2re(q))
+        else hit = ($0 == q || index($0, q "/") == 1)
+        if (hit) { if (k[i] == want) print; next }
+      } }
+  ' "$2" -
+}
+blob() { R rev-parse -q --verify "$1:$2" 2>/dev/null; }
+block_of() { awk '{ print } /^<!-- BUFFER 4\/4/ { exit }'; }
+home_of() { awk 'f { print } /^<!-- BUFFER 4\/4/ { f = 1 }'; }
+markers_ok() { # markers_ok <file>: one BASE:BEGIN, one BASE:END, one BUFFER 4/4, in that order
+  awk '/^<!-- BASE:BEGIN/ { b++; if (!bl) bl = NR } /^<!-- BASE:END/ { e++; el = NR } /^<!-- BUFFER 4\/4/ { f++; fl = NR }
+       END { exit !(b == 1 && e == 1 && f == 1 && bl < el && el < fl) }' "$1"
+}
+xg() { # xg <list file> <git args...>: git args -- <paths of the list>
+  local list=$1; shift
+  [ -s "$list" ] || return 0
+  tr '\n' '\0' < "$list" | xargs -0 git -C "$W" "$@" --
+}
+
+# ---------------------------------------------------------------- the one way content changes
+# apply <old commit> <new commit> <from name> <to name> <commit subject> <trailer>
+#   old: the base content this home is on; new: the base content it moves to. Runs in $W.
+apply() {
+  local old=$1 new=$2 from=$3 to=$4 subject=$5 trailer=$6 pre f p o n path
+  pre=$(G rev-parse HEAD)
+  manifest_of "$new" > "$T/m.new"; manifest_of "$old" > "$T/m.old"
+  [ -s "$T/m.new" ] || die 1 "$to has no base.manifest"
+  [ -s "$T/m.old" ] || cp "$T/m.new" "$T/m.old"
+  R -c core.quotepath=off ls-tree -r --name-only "$old" > "$T/t.old"
+  R -c core.quotepath=off ls-tree -r --name-only "$new" > "$T/t.new"
+  R -c core.quotepath=off ls-tree -r --name-only "$pre" > "$T/t.pre"
+  of_kind flows "$T/m.old" < "$T/t.old" | sort -u > "$T/f.old"
+  of_kind flows "$T/m.new" < "$T/t.new" | sort -u > "$T/f.new"
+  sort -u "$T/t.pre" > "$T/s.pre"; sort -u "$T/t.new" > "$T/s.new"
+
+  # Untracked files where the release puts a file: refuse (git merge would refuse too).
+  comm -23 "$T/f.new" "$T/s.pre" | while IFS= read -r f; do
+    { [ -e "$W/$f" ] || [ -L "$W/$f" ]; } && printf '%s\n' "$f"
+  done > "$T/untracked"
+  [ -s "$T/untracked" ] && { sed 's/^/  /' "$T/untracked" >&2; die 1 "these untracked files sit where $to puts a file; move them and run again"; }
+
+  # Edits that the new content would replace: the file differs from both the old and the new base.
+  { cat "$T/f.old"; comm -12 "$T/f.new" "$T/s.pre"; } | sort -u > "$T/s"
+  : > "$T/lost"
+  while IFS= read -r f; do
+    p=$(blob "$pre" "$f"); o=$(blob "$old" "$f"); n=$(blob "$new" "$f")
+    [ "$p" != "$o" ] && [ "$p" != "$n" ] && printf '%s\n' "$f" >> "$T/lost"
+  done < "$T/s"
+  R show "$pre:CLAUDE.md" | block_of > "$T/b.pre"
+  R show "$old:CLAUDE.md" 2>/dev/null | block_of > "$T/b.old"
+  R show "$new:CLAUDE.md" | block_of > "$T/b.new"
+  : > "$T/patch"
+  [ -s "$T/lost" ] && xg "$T/lost" diff --binary "$old" "$pre" > "$T/patch"
+  if ! cmp -s "$T/b.pre" "$T/b.old" && ! cmp -s "$T/b.pre" "$T/b.new"; then
+    echo "CLAUDE.md (base block)" >> "$T/lost"
+    diff -u --label "a/CLAUDE.md (base block of $from)" --label "b/CLAUDE.md (base block in this home)" "$T/b.old" "$T/b.pre" >> "$T/patch"
+  fi
+  # Files the home added inside base folders: they stay.
+  of_kind flows "$T/m.new" < "$T/s.pre" | sort -u | comm -23 - "$T/s.new" | comm -23 - "$T/f.old" > "$T/own"
+
+  # Record the release in history, then set the base-owned paths to its content.
+  if ! G merge-base --is-ancestor "$new" "$pre"; then
+    G merge -q --no-commit --no-ff -s ours -m "$subject" "$new" > "$T/merge.out" 2>&1 \
+      || { G merge --abort >/dev/null 2>&1; cat "$T/merge.out" >&2; die 1 "git could not record the merge of $to; nothing changed"; }
+  fi
+  awk '$1 == "flows" { print $2 }' "$T/m.new" | while IFS= read -r path; do
+    path=${path%/}; R cat-file -e "$new:$path" 2>/dev/null && printf '%s\n' "$path"
+  done > "$T/checkout"
+  xg "$T/checkout" checkout "$new"
+  comm -12 "$T/f.old" "$T/s.pre" | comm -23 - "$T/s.new" > "$T/gone"
+  xg "$T/gone" rm -q -f
+  awk '$1 == "base-only" { print $2 }' "$T/m.new" > "$T/baseonly"
+  xg "$T/baseonly" rm -r -q -f --ignore-unmatch
+  { cat "$T/b.new"; R show "$pre:CLAUDE.md" | home_of; } > "$W/CLAUDE.md"
+  G add CLAUDE.md
+  # Check: every file of the release's flows paths now matches the release.
+  : > "$T/bad"
+  while IFS= read -r f; do
+    [ "$(G rev-parse -q --verify ":$f" 2>/dev/null)" = "$(blob "$new" "$f")" ] || printf '%s\n' "$f" >> "$T/bad"
+  done < "$T/f.new"
+  if [ -s "$T/bad" ]; then
+    sed 's/^/  /' "$T/bad" >&2; G merge --abort >/dev/null 2>&1 || G reset -q --hard "$pre"
+    die 1 "these files did not take $to's content; nothing changed"
+  fi
+  if G diff --cached --quiet && [ ! -f "$(G rev-parse --git-path MERGE_HEAD)" ]; then
+    NOCHANGE=1; return 0
+  fi
+  NOCHANGE=0
+  printf '%s\n\n%s\n' "$subject" "$trailer" > "$T/msg"
+  if ! G commit -q -F "$T/msg" > "$T/commit.out" 2>&1; then
+    cat "$T/commit.out" >&2
+    G merge --abort >/dev/null 2>&1 || G reset -q --hard "$pre"
+    die 1 "the commit failed (see above); nothing changed"
+  fi
+  G diff --stat "$pre" HEAD > "$T/stat"
+  SETTINGS_CHANGED=0
+  [ "$(blob "$pre" templates/settings.json)" != "$(blob "$new" templates/settings.json)" ] && SETTINGS_CHANGED=1
+  return 0
+}
+
+report() { # report <from> <to> <patch name>
+  local from=$1 to=$2 name=$3 dest
+  if [ "$NOCHANGE" = 1 ]; then say "nothing to change: the base files already match $to"; return; fi
+  if [ "$DRY" = 1 ]; then say "dry run: $from -> $to would change these files (nothing was changed):"
+  else say "$from -> $to committed as $(R rev-parse --short HEAD) (not pushed):"; fi
+  sed 's/^/  /' "$T/stat"
+  if [ -s "$T/lost" ]; then
+    dest="$ROOT/.local/base-update/$name.patch"
+    if [ "$DRY" = 1 ]; then say "your edits to these base-owned files would be saved to $dest:"
+    else mkdir -p "$ROOT/.local/base-update" && cp "$T/patch" "$dest"; say "your edits to these base-owned files are saved in $dest:"; fi
+    sed 's/^/  /' "$T/lost"
+    say "base-owned files take every update as they are. Move that text to your own place: rules to the home section of CLAUDE.md (below the BUFFER lines), settings to home.config or .local/config, your own scripts to tools/, your own skills to .claude/skills/<a name the base does not use>/. A fix the base needs goes to the base."
+  fi
+  if [ -s "$T/own" ]; then
+    say "your own files inside base folders stay as they are (better in tools/ or your own skill folder):"
+    sed 's/^/  /' "$T/own"
+  fi
+  [ "${SETTINGS_CHANGED:-0}" = 1 ] && say "templates/settings.json changed: apply its changed hook lines to .claude/settings.json by hand (keep enabledPlugins)"
+  [ "$DRY" = 1 ] || say "push when you are happy with it: git push. To undo: scripts/base-update --rollback"
+}
+
+changelog() { # changelog <from> <to> <release commit>: the CHANGELOG sections after <from> up to <to>
+  R show "$3:CHANGELOG.md" 2>/dev/null | awk -v from="${1#v}" -v to="${2#v}" '
+    /^## \[/ { v = $0; sub(/^## \[/, "", v); sub(/\].*/, "", v); if (v == from) exit; if (v == to) on = 1 }
+    on' > "$T/changes"
+  [ -s "$T/changes" ] && { say "what changed (CHANGELOG.md of $2):"; sed 's/^/  /' "$T/changes"; }
+}
+
+# ---------------------------------------------------------------- preflight
+cd "$ROOT" || exit 1
+R rev-parse -q --verify HEAD >/dev/null || die 1 "this home has no commit yet"
+for s in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
+  [ -e "$(R rev-parse --git-path "$s")" ] && die 1 "a merge, rebase, cherry-pick or revert is in progress; finish or abort it first"
+done
+if [ "$MODE" != check ]; then
+  [ -z "$(R status --porcelain --untracked-files=no)" ] || { R status --short --untracked-files=no | sed 's/^/  /' >&2; die 1 "commit or stash your changes first; nothing changed"; }
+  { [ -f CLAUDE.md ] && markers_ok CLAUDE.md; } || die 1 "CLAUDE.md must hold one BASE:BEGIN line, one BASE:END line and the four BUFFER lines after them; restore them (your home section is everything after BUFFER 4/4)"
+fi
+
+BURL=$(cfg base.url)
+if ! R remote get-url base >/dev/null 2>&1; then
+  [ -n "$BURL" ] || die 1 "no base remote and no base.url in home.config"
+  R remote add base "$BURL" || die 1 "cannot add the base remote"
+fi
+R remote set-url --push base DISABLED
+
+PRE=$(R rev-parse HEAD)
+CUR=$(version_at "$PRE")
+
+mkwt() { # the dry run works in a temporary worktree; its commit is thrown away with it
+  WT="$T/wt"; R worktree add -q --detach "$WT" HEAD >/dev/null 2>&1 || die 1 "cannot make a temporary worktree"; W=$WT
+  export GIT_AUTHOR_NAME=base-update GIT_AUTHOR_EMAIL=base-update@localhost GIT_COMMITTER_NAME=base-update GIT_COMMITTER_EMAIL=base-update@localhost
+}
+fetch() {
+  [ "$FETCH" = 1 ] || return 0
+  R fetch -q --no-tags base '+refs/tags/v*:refs/base-tags/v*' 2> "$T/fetch.err" \
+    || { sed -n '1,3p' "$T/fetch.err" >&2; die 3 "cannot reach the base ($(R remote get-url base)); nothing changed"; }
+}
+
+# ---------------------------------------------------------------- check
+if [ "$MODE" = check ]; then
+  # Lines for people and for the sweep: current, newest, target, update (a release to take, or none),
+  # base (the base commit whose content this home is on, or none).
+  fetch
+  PIN=$(cfg base.pin)
+  NEWEST=$(releases | tail -1)
+  TARGET=$NEWEST
+  [ -n "$PIN" ] && TARGET=$(releases | awk -v p="${PIN#v}" '{ v = substr($0, 2); if (v == p || index(v, p ".") == 1) print }' | tail -1)
+  BASEC=""
+  if [ -n "$CUR" ]; then BASEC=$(tag_commit "$CUR")
+  elif [ -n "$TARGET" ]; then BASEC=$(R merge-base "$PRE" "$(tag_commit "$TARGET")" 2>/dev/null)
+  fi
+  UPD=none
+  [ -n "$TARGET" ] && { [ -z "$CUR" ] || newer "$TARGET" "$CUR"; } && UPD=$TARGET
+  echo "current ${CUR:-none}"
+  echo "newest ${NEWEST:-none}"
+  echo "target ${TARGET:-none}${PIN:+ (pinned to $PIN)}"
+  echo "update $UPD"
+  echo "base ${BASEC:-none}"
+  exit 0
+fi
+
+# ---------------------------------------------------------------- rollback
+if [ "$MODE" = rollback ]; then
+  [ -n "$CUR" ] || die 1 "this home has no VERSION file, so there is no release to roll back from"
+  CURC=$(tag_commit "$CUR") || die 1 "VERSION says $CUR, but there is no tag $CUR here; run scripts/base-update --check first"
+  LAST=$(R log -1 -E --grep='^Base-(Update|Rollback): ' --format=%B "$PRE" | grep -E '^Base-(Update|Rollback): ' | tail -1)
+  case "$LAST" in
+    "Base-Update: "*" -> $CUR") PREV=${LAST#Base-Update: }; PREV=${PREV%% -> *} ;;
+    "") die 1 "no base update is recorded in this home's history; nothing to roll back" ;;
+    *) die 1 "the last base change here is '$LAST', not an update to $CUR; nothing to roll back (to move on: scripts/base-update <version>)" ;;
+  esac
+  is_release "$PREV" || die 1 "before its last update this home was on no release ($PREV); a rollback has nothing to go back to. Undo it with git if you must: git revert -m 1 <that update commit>"
+  PREVC=$(tag_commit "$PREV") || die 1 "there is no tag $PREV here (offline? run scripts/base-update --check)"
+  [ "$DRY" = 1 ] && mkwt
+  apply "$CURC" "$PREVC" "$CUR" "$PREV" "base-update: rollback $CUR -> $PREV" "Base-Rollback: $CUR -> $PREV"
+  report "$CUR" "$PREV" "rollback-$CUR-to-$PREV-$(date -u +%Y%m%dT%H%M%SZ)"
+  exit 0
+fi
+
+# ---------------------------------------------------------------- update
+fetch
+PIN=$(cfg base.pin)
+if [ -n "$WANT" ]; then
+  TO="v${WANT#v}"; is_release "$TO" || die 2 "a version looks like 1.4.0 or v1.4.0, not '$WANT'"
+elif [ -n "$PIN" ]; then
+  TO=$(releases | awk -v p="${PIN#v}" '{ v = substr($0, 2); if (v == p || index(v, p ".") == 1) print }' | tail -1)
+  [ -n "$TO" ] || die 1 "base.pin=$PIN matches no release of the base"
+else
+  TO=$(releases | tail -1)
+  [ -n "$TO" ] || die 1 "the base has no release yet (no tag vX.Y.Z)"
+fi
+TOC=$(tag_commit "$TO") || die 1 "the base has no release $TO (releases: $(releases | tr '\n' ' '))"
+
+if [ -n "$CUR" ]; then
+  OLDC=$(tag_commit "$CUR") || die 1 "VERSION says $CUR, but the base has no tag $CUR; restore VERSION from git history"
+  FROM=$CUR
+  [ "$CUR" = "$TO" ] && { say "already on $TO; nothing to do"; exit 0; }
+  newer "$CUR" "$TO" && die 1 "this home is on $CUR, which is newer than $TO; to go back one release use scripts/base-update --rollback"
+else
+  # First update of a home made before releases: its base content is the last base commit it merged.
+  OLDC=$(R merge-base "$PRE" "$TOC") || die 1 "this repo shares no history with the base, so its base content is unknown; make the home by cloning the base (see the base README)"
+  FROM="unreleased-$(R rev-parse --short "$OLDC")"
+  for v in $(releases); do [ "$(tag_commit "$v")" = "$OLDC" ] && FROM=$v; done
+fi
+changelog "$FROM" "$TO" "$TOC"
+[ "$DRY" = 1 ] && mkwt
+apply "$OLDC" "$TOC" "$FROM" "$TO" "base-update: $FROM -> $TO" "Base-Update: $FROM -> $TO"
+report "$FROM" "$TO" "$FROM-to-$TO-$(date -u +%Y%m%dT%H%M%SZ)"
+exit 0

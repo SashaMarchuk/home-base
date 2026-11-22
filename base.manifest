@@ -18,6 +18,7 @@ flows .claude/skills/base-update/
 flows scripts/
 flows templates/
 flows base.manifest
+flows VERSION
 flows .githooks/
 flows .github/workflows/home-checks.yml
 flows .github/workflows/home-sweep.yml
@@ -27,5 +28,6 @@ base-only openspec/
 base-only .claude/commands/opsx/
 base-only .claude/skills/openspec-*
 base-only README.md
+base-only CHANGELOG.md
 base-only LICENSE
 base-only .github/workflows/base-checks.yml

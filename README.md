@@ -80,7 +80,42 @@ Now, in the personal home, "prepare the release notes for Acme" opens one issue 
 
 ## Take base updates
 
-In a home, say `update from base` (the `base-update` skill): it fetches `base`, merges, removes the base-only paths again and settles conflicts. A clean merge is committed; a conflict only in base-owned paths takes the base's side and saves your dropped diff in an issue; anything else stops and asks you. A session start prints "base/main is N commits ahead" when there is something to take.
+The base ships releases: git tags `vX.Y.Z` ([SemVer](https://semver.org): a major release asks you to do something by hand and says what in its notes), each with a section in `CHANGELOG.md` and a GitHub release. `main` is always the newest release. `VERSION` in your home says which release it is on. Nothing updates by itself: you choose when.
+
+```
+scripts/base-update --check            # this home's release, the newest one, the target
+scripts/base-update --dry-run          # what an update would change; changes nothing
+scripts/base-update                    # update to the newest release (or to base.pin)
+scripts/base-update 1.4.0              # update to that release
+scripts/base-update --rollback         # back to the release before the last update
+```
+
+- It refuses to run with uncommitted changes to tracked files, and stops with exit 3 and changes nothing when the base cannot be reached.
+- It makes one commit and never pushes: look at it, run `scripts/checks/run`, then `git push`.
+- It sets every path the base owns (`base.manifest`) to the release's exact content: the base folders and files, and the base block of `CLAUDE.md` (your home section below the `BUFFER` lines stays as it is). It never touches anything else.
+- **Pin a version:** put `base.pin=1.4` in `home.config` (or `.local/config` for one machine only). Updates then stay on the newest `1.4.x`; `base.pin=1.4.2` holds exactly that release. Remove the line to follow the newest release again.
+- **Roll back:** `scripts/base-update --rollback` makes a new commit with the previous release's content. It never resets or force-pushes, so it is safe after a push and in a home that several people share. One step only; run an update to move forward again.
+- **First update of a home made before releases** (no `VERSION` file): the command finds the base commit your home last merged and starts from there. If your home has no copy of the command yet, run it once from the release itself:
+  ```
+  git fetch base '+refs/tags/v*:refs/base-tags/v*'
+  bash <(git show refs/base-tags/v1.0.0:scripts/base-update) 1.0.0
+  ```
+- In an agent session, say `update from base` (the `base-update` skill runs the same command). A session start prints `SWEEP base-ahead ... base release vX.Y.Z is out` when there is one to take.
+
+## Your own rules and settings
+
+A base update never touches these, so put everything of yours here and never edit a base file:
+
+| Yours | Where |
+|---|---|
+| Rules for the agent, standing approvals | the home section of `CLAUDE.md`, below the four `BUFFER` lines. A rule there may replace a base rule it names. |
+| Settings shared by everyone who uses the home | `home.config` |
+| Settings of one machine, secrets paths | `.local/config` (gitignored) |
+| Your own scripts | `tools/` |
+| Your own skills | `.claude/skills/<a name the base does not use>/` |
+| Knowledge and decisions | `wiki/`, `DECISIONS.md` |
+
+If you edited a base-owned file anyway, the next update keeps your text safe: it saves your edits as a patch in `.local/base-update/<from>-to-<to>.patch`, applies the release, lists the files and says where that text belongs. Files you added inside a base folder (for example `scripts/my-tool`) stay where they are and are listed; move them to `tools/`. A fix the base itself needs goes to the base as an issue or a pull request.
 
 ## What never goes into a home
 
@@ -102,14 +137,24 @@ Git holds links and knowledge only. Never commit secrets or tokens, personal val
 |---|---|
 | `CLAUDE.md` | base block (rules, where things live), a fixed four-line buffer, then your home section |
 | `.claude/skills/` | `orchestrate`, `task`, `status`, `wiki`, `decide`, `configure`, `dreams`, `base-update` (`.agents/skills` is the same folder, for Codex) |
-| `scripts/` | `home-log`, `home-sweep`, `home-status`, `labels`, `limits`, `configure`, `voice-collect`, `checks/run`, `hooks/`, `term/term.sh`, `tests/` |
+| `scripts/` | `home-log`, `home-sweep`, `home-status`, `labels`, `limits`, `configure`, `base-update`, `voice-collect`, `checks/run`, `hooks/`, `term/term.sh`, `tests/` |
 | `.codex/` | `hooks.json`: the same hooks for Codex (the home's own `config.toml` sits beside it) |
 | `templates/` | the files `configure` writes into a home |
 | `base.manifest` | which paths the base owns and which stay in the base only |
+| `VERSION` | the base release a home is on |
+| `CHANGELOG.md` | what each release changed (base only) |
 | `openspec/` | the base's requirements (base only) |
 
 The terminal helpers (`scripts/term/term.sh`) open, freeze and thaw Claude Code tabs only. `survey`, `state`, `send`, `park`, `resume` and `close` also run from a Codex session, and park, resume and close of a Codex tab (once its SessionStart hook has recorded its thread id) are built and tested on a fake terminal only, not yet checked on a real Codex tab. `term.sh finished` lists, without touching anything, which tabs `close` would accept. After a reboot or a crash, `term.sh reconcile` marks a registry entry lost (never closed) when its session runs nowhere it was recorded: its process is gone and its tab is gone or no longer runs it (a window iTerm2 restores with the same tab ids and fresh shells counts as gone). `term.sh reopen --lost` reopens lost entries in their group windows with their resume lines (sessions already running, and entries whose issue is closed, finished, released or taken over by another run, are skipped), `term.sh forget <session id>` closes a lost entry that must not come back, `term.sh adopt <tty>|--all` records tabs this home did not open (typing nothing; they stay the owner's tabs), and `term.sh regroup --dry-run` prints which registered tabs sit outside their group's window: the iTerm2 AppleScript backend cannot move a tab, so regroup moves nothing. These five are tested on a fake terminal only. A session is found by its process name: the kill guard sees only a process named exactly `claude` or `codex`, and the helpers one named as `launch.command` (default `claude`) or `codex`; a wrapper under another name is not seen. The hooks and the session-end stub support Claude Code and Codex; Codex runs them once you trust the folder and, with `/hooks`, the home's hooks. Known limit: a Claude Code session started from a Codex shell inherits `CODEX_THREAD_ID`, so `home-log` records it as a Codex run and `term.sh open`, `freeze` and `thaw` refuse to run in it.
 
 Run `scripts/tests/run.sh` to test the scripts (needs bash, jq, perl, python3, git; no network; a full run takes a few minutes).
+
+## Making a release (base maintainers)
+
+1. Add a section `## [X.Y.Z] - <date>` at the top of `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com): Added, Changed, Fixed, Removed; a major release adds "Do by hand").
+2. Write `X.Y.Z` into `VERSION`, commit, and tag the commit: `git tag -a vX.Y.Z -m vX.Y.Z`.
+3. Push `main` and the tag together, then make the GitHub release from that changelog section: `gh release create vX.Y.Z --verify-tag --title vX.Y.Z --notes-file <section>`.
+
+`main` moves only at a release, so a fresh clone is always a release.
 
 Licence: MIT (see LICENSE)

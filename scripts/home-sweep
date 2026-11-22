@@ -7,8 +7,9 @@
 #   pr-no-final            merged pull request naming an issue that has no final comment
 #   delegated-child-closed status:delegated issue whose child issue is closed (older hand-offs only:
 #                          a hand-off now opens its one issue in the other home and none here)
-#   drift <path>           a flows-down path differs from base/main (printed as: SWEEP drift <repo> <path>)
-#   base-ahead <N>         base/main has N commits this home does not have (SWEEP base-ahead <repo> base/main is N commits ahead)
+#   drift <path>           a flows-down path differs from the base content this home is on (SWEEP drift <repo> <path>)
+#   base-ahead             a newer base release to take: SWEEP base-ahead <repo> base release vX.Y.Z is out (this home is on vA.B.C|none);
+#                          before the base has any release: SWEEP base-ahead <repo> base/main is N commits ahead
 # Adds the label needs-summary to closed-no-final and pr-no-final issues.
 # --same-repo (CI): only checks that need this repo's own issues.
 # Exits 0 when there is no home.config (the base) and on any network error.
@@ -79,8 +80,37 @@ done
 
 [ "$SAME" = 1 ] && exit 0
 
-# 5. Base remote: drift in flows-down paths, and commits the home does not have.
+# 5. Base remote: a newer release to take, and drift in flows-down paths.
 cd "$HOME_ROOT" || exit 0
+burl=$(cfg base.url)
+if ! git remote get-url base >/dev/null 2>&1 && [ -n "$burl" ]; then
+  git remote add base "$burl" 2>/dev/null && git remote set-url --push base DISABLED
+fi
+if git remote get-url base >/dev/null 2>&1; then
+  ( git fetch -q base >/dev/null 2>&1; git fetch -q --no-tags base '+refs/tags/v*:refs/base-tags/v*' >/dev/null 2>&1 ) & fp=$!
+  i=0; while kill -0 "$fp" 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
+  kill -0 "$fp" 2>/dev/null && kill "$fp" 2>/dev/null
+  chk=""; [ -x scripts/base-update ] && chk=$(scripts/base-update --check --no-fetch 2>/dev/null)
+  line() { printf '%s\n' "$chk" | sed -n "s/^$1 //p" | head -1; }
+  mb=""
+  if [ -n "$(line update)" ]; then
+    # Releases exist: compare with the release this home is on (VERSION) and the target (base.pin or newest).
+    upd=$(line update); cur=$(line current); mb=$(line base); [ "$mb" = none ] && mb=""
+    [ "$upd" != none ] && echo "SWEEP base-ahead $R base release $upd is out (this home is on $cur)"
+  elif git rev-parse -q --verify base/main >/dev/null; then
+    # No release yet: compare with base/main.
+    ahead=$(git rev-list --count HEAD..base/main 2>/dev/null || echo 0)
+    [ "$ahead" -gt 0 ] && echo "SWEEP base-ahead $R base/main is $ahead commits ahead"
+    mb=$(git merge-base HEAD base/main 2>/dev/null)
+  fi
+  if [ -n "$mb" ] && [ -f base.manifest ]; then
+    grep -E '^flows[[:space:]]' base.manifest | awk '{print $2}' | while read -r p; do
+      git cat-file -e "$mb:${p%/}" 2>/dev/null || continue
+      git diff --quiet "$mb" HEAD -- "$p" 2>/dev/null || echo "SWEEP drift $R $p"
+    done
+  fi
+fi
+exit 0
 burl=$(cfg base.url)
 if ! git remote get-url base >/dev/null 2>&1 && [ -n "$burl" ]; then
   git remote add base "$burl" 2>/dev/null && git remote set-url --push base DISABLED

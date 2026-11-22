@@ -24,7 +24,7 @@
 13. Model aliases only, never pinned versions.
 14. No time estimates, dates or deadlines the owner did not ask for.
 15. Files, briefs and worker prompts are written in the configured file language (`lang.files`); questions and every message to the owner, the final one included, in `lang.owner`.
-16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them).
+16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them). A rule of your own goes in the home section below; it may replace a base rule it names. Take base releases with `scripts/base-update` (the `base-update` skill).
 17. Never change global agent settings from a home.
 18. The final message reports in at most five plain lines: what is done, what waits for the owner, what is next. Never repeat what the question, artifact or issue already holds; no tty numbers, tool names or environment notes; end without an offer ("want me to…"): the next step is in the report. An explanation the owner asked for answers only that, at the length the owner asked for, with no next step or proposal.
 
@@ -33,11 +33,13 @@
 |---|---|
 | Settings: repo, tracker, board, labels, homes, limits, proactivity, dreams | `home.config` (committed), `.local/config` (this machine, overrides) |
 | How to work: orchestrate, task, status, wiki, decide, configure, dreams, base-update | `.claude/skills/` (`.agents/skills` is the same folder) |
-| Record of work, sweep, combined status, labels, limits, checks, terminal helpers, voice transcripts | `scripts/` (`home-log`, `home-sweep`, `home-status`, `labels`, `limits`, `checks/run`, `term/term.sh`, `voice-collect`) |
+| Record of work, sweep, combined status, labels, limits, base updates, checks, terminal helpers, voice transcripts | `scripts/` (`home-log`, `home-sweep`, `home-status`, `labels`, `limits`, `base-update`, `checks/run`, `term/term.sh`, `voice-collect`) |
 | Knowledge: projects, systems, people, how-tos | `wiki/` (start at `wiki/index.md`) |
 | The owner's decisions, verbatim | `DECISIONS.md` (append-only) |
 | Codex hooks and settings | `.codex/` (`hooks.json` from the base; `config.toml` the home's own) |
 | Which paths the base owns | `base.manifest` |
+| Your own rules, settings, scripts and skills (never touched by a base update) | the home section of this file, `home.config`, `.local/config`, `tools/`, `.claude/skills/<a name the base does not use>/` |
+| The base release this home is on | `VERSION` (`scripts/base-update --check`) |
 <!-- BASE:END -->
 <!-- BUFFER 1/4: these four lines are fixed and identical in the base and in every home. -->
 <!-- BUFFER 2/4: never edit, move or delete them. -->
