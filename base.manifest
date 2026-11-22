@@ -1,7 +1,8 @@
 # base.manifest: which paths the base owns. One path per line: "<kind> <path>".
 #   shared     base block and buffer flow down; the home section below them is the home's
 #   flows      owned by the base, present in every home, never edited in a home
-#   base-only  present in the base repo only; removed from every home by configure and base-update
+#   base-only  present in the base repo only; configure removes it from a new home and base-update never brings it
+#              (a home's own file at such a path, its own README for example, stays)
 # A path ending in "/" is a folder; "*" is a git pathspec glob. Every path tracked in the base is covered by a line here.
 shared CLAUDE.md
 flows AGENTS.md

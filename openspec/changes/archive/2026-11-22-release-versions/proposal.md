@@ -1,5 +1,5 @@
 ## Why
-Homes take the base by merging `base/main`, with no versions, no standalone command, no dry run and no rollback. The owner asked (22.11) for home-base to be treated as an ordinary product with releases, so anyone can update their home to the newest or a chosen version when they want, without conflicts and without being bound by the base's choices.
+Homes take the base by merging `base/main`, with no versions, no standalone command, no dry run and no rollback. Releases make home-base an ordinary product: anyone can update their home to the newest or a chosen version when they want, without conflicts and without being bound by the base's choices.
 
 ## What Changes
 - Releases: SemVer tags, `CHANGELOG.md`, GitHub releases; `main` moves only at a release. `VERSION` (flows) names the release a home is on.

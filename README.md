@@ -116,7 +116,7 @@ A base update never touches these, so put everything of yours here and never edi
 | Your own skills | `.claude/skills/<a name the base does not use>/` |
 | Knowledge and decisions | `wiki/`, `DECISIONS.md` |
 
-If you edited a base-owned file anyway, the next update keeps your text safe: it saves your edits as a patch in `.local/base-update/<from>-to-<to>.patch`, applies the release, lists the files and says where that text belongs. Files you added inside a base folder (for example `scripts/my-tool`) stay where they are and are listed; move them to `tools/`. A fix the base itself needs goes to the base as an issue or a pull request.
+If you edited a base-owned file anyway, the next update keeps your text safe: it saves your edits as a patch in `.local/base-update/<from>-to-<to>-<time>.patch`, applies the release, lists the files and says where that text belongs. Files you added inside a base folder (for example `scripts/my-tool`) stay where they are and are listed; move them to `tools/`. A fix the base itself needs goes to the base as an issue or a pull request.
 
 ## What never goes into a home
 

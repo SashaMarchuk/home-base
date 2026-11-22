@@ -8,7 +8,7 @@
 # records the release as a merge (strategy "ours") and then sets every base-owned path of the
 # release's base.manifest to the release's exact content: the flows paths, the base block and buffer
 # of CLAUDE.md (the home section below them stays as it is); base-only paths never enter. Your own edits
-# to base-owned files are saved first to .local/base-update/<from>-to-<to>.patch and listed; files
+# to base-owned files are saved first to .local/base-update/<from>-to-<to>-<time>.patch and listed; files
 # you added inside a base folder stay and are listed. It makes one commit and never pushes.
 # A rollback is one new commit made the same way (no reset, no revert), so it is safe after a push.
 # --dry-run does all of it in a temporary worktree, prints what would change and removes it; like
@@ -126,11 +126,19 @@ apply() {
   of_kind flows "$T/m.new" < "$T/t.new" | sort -u > "$T/f.new"
   sort -u "$T/t.pre" > "$T/s.pre"; sort -u "$T/t.new" > "$T/s.new"
 
-  # Untracked files where the release puts a file: refuse (git merge would refuse too).
+  # Files in the way, checked in the real home (a dry run too): an untracked file where the release
+  # puts a file, or any file (tracked or not) where the release needs a folder. Refuse; git merge would too.
   comm -23 "$T/f.new" "$T/s.pre" | while IFS= read -r f; do
-    { [ -e "$W/$f" ] || [ -L "$W/$f" ]; } && printf '%s\n' "$f"
+    { [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ]; } && printf '%s\n' "$f"
   done > "$T/untracked"
-  [ -s "$T/untracked" ] && { sed 's/^/  /' "$T/untracked" >&2; die 1 "these untracked files sit where $to puts a file; move them and run again"; }
+  while IFS= read -r f; do
+    d=${f%/*}
+    while [ "$d" != "$f" ] && [ -n "$d" ]; do
+      { [ -L "$ROOT/$d" ] || { [ -e "$ROOT/$d" ] && [ ! -d "$ROOT/$d" ]; }; } && printf '%s\n' "$d"
+      case "$d" in */*) d=${d%/*} ;; *) break ;; esac
+    done
+  done < "$T/f.new" | sort -u >> "$T/untracked"
+  [ -s "$T/untracked" ] && { sort -u "$T/untracked" | sed 's/^/  /' >&2; die 1 "these files sit where $to puts a file or a folder; move them (your own files belong in tools/) and run again"; }
 
   # Edits that the new content would replace: the file differs from both the old and the new base.
   { cat "$T/f.old"; comm -12 "$T/f.new" "$T/s.pre"; } | sort -u > "$T/s"
@@ -198,7 +206,8 @@ report() { # report <from> <to> <patch name>
   if [ -s "$T/lost" ]; then
     dest="$ROOT/.local/base-update/$name.patch"
     if [ "$DRY" = 1 ]; then say "your edits to these base-owned files would be saved to $dest:"
-    else mkdir -p "$ROOT/.local/base-update" && cp "$T/patch" "$dest"; say "your edits to these base-owned files are saved in $dest:"; fi
+    elif mkdir -p "$ROOT/.local/base-update" && cp "$T/patch" "$dest"; then say "your edits to these base-owned files are saved in $dest:"
+    else say "could not write $dest; your edits are still in git history at $PRE (git diff $PRE HEAD shows them):"; fi
     sed 's/^/  /' "$T/lost"
     say "base-owned files take every update as they are. Move that text to your own place: rules to the home section of CLAUDE.md (below the BUFFER lines), settings to home.config or .local/config, your own scripts to tools/, your own skills to .claude/skills/<a name the base does not use>/. A fix the base needs goes to the base."
   fi
@@ -314,7 +323,7 @@ else
   FROM="unreleased-$(R rev-parse --short "$OLDC")"
   for v in $(releases); do [ "$(tag_commit "$v")" = "$OLDC" ] && FROM=$v; done
 fi
-changelog "$FROM" "$TO" "$TOC"
+{ is_release "$FROM" && newer "$FROM" "$TO"; } || changelog "$FROM" "$TO" "$TOC"
 [ "$DRY" = 1 ] && mkwt
 apply "$OLDC" "$TOC" "$FROM" "$TO" "base-update: $FROM -> $TO" "Base-Update: $FROM -> $TO"
 report "$FROM" "$TO" "$FROM-to-$TO-$(date -u +%Y%m%dT%H%M%SZ)"

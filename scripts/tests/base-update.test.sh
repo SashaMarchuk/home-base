@@ -164,6 +164,19 @@ printf 'mine\n' > "$H/scripts/new-thing"
 run bash "$H/scripts/base-update"
 [ "$RC" = 1 ] && has "scripts/new-thing" && [ "$(cat "$H/scripts/new-thing")" = mine ] && ok || bad "dirty: an untracked file where the release puts one is refused"
 
+H="$T/folder"; mkhome "$H" v1.0.0
+mkdir -p "$B/scripts/new-thing.d"; printf 'x\n' > "$B/scripts/new-thing.d/x"; printf '1.3.1\n' > "$B/VERSION"
+git -C "$B" add -A; git -C "$B" commit -q -m "release 1.3.1"; git -C "$B" tag -a v1.3.1 -m v1.3.1
+printf 'my notes\n' > "$H/scripts/new-thing.d"
+run bash "$H/scripts/base-update" --dry-run
+[ "$RC" = 1 ] && has "scripts/new-thing.d" && ok || bad "folder: a dry run refuses a file where the release needs a folder"
+run bash "$H/scripts/base-update"
+[ "$RC" = 1 ] && [ "$(cat "$H/scripts/new-thing.d")" = "my notes" ] && ok || bad "folder: an untracked file where the release needs a folder is kept and refused"
+git -C "$H" add -A; git -C "$H" commit -q -m "own file"
+run bash "$H/scripts/base-update"
+[ "$RC" = 1 ] && [ "$(cat "$H/scripts/new-thing.d")" = "my notes" ] && ok || bad "folder: a tracked home file where the release needs a folder is refused"
+git -C "$B" tag -d v1.3.1 >/dev/null; git -C "$B" reset -q --hard HEAD~1
+
 # 8. Offline: clear message, exit 3, nothing changed; rollback still works offline.
 H="$T/offline"; mkhome "$H" v1.0.0
 run bash "$H/scripts/base-update" 1.1.0
