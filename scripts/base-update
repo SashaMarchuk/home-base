@@ -115,7 +115,7 @@ xg() { # xg <list file> <git args...>: git args -- <paths of the list>
 #   old: the base content this home is on; new: the base content it moves to. Runs in $W.
 apply() {
   local old=$1 new=$2 from=$3 to=$4 subject=$5 trailer=$6 pre f p o n path
-  pre=$(G rev-parse HEAD)
+  pre=$(G rev-parse HEAD); LOSTREF=$old
   manifest_of "$new" > "$T/m.new"; manifest_of "$old" > "$T/m.old"
   [ -s "$T/m.new" ] || die 1 "$to has no base.manifest"
   [ -s "$T/m.old" ] || cp "$T/m.new" "$T/m.old"
@@ -211,7 +211,7 @@ report() { # report <from> <to> <patch name>
     dest="$ROOT/.local/base-update/$name.patch"
     if [ "$DRY" = 1 ]; then say "your edits to these base-owned files would be saved to $dest:"
     elif mkdir -p "$ROOT/.local/base-update" && cp "$T/patch" "$dest"; then say "your edits to these base-owned files are saved in $dest:"
-    else say "could not write $dest; your edits are still in git history at $PRE (git diff $PRE HEAD shows them):"; fi
+    else say "could not write $dest; your edits are still in git history (git diff $LOSTREF $PRE -- <these files> shows them):"; fi
     sed 's/^/  /' "$T/lost"
     say "base-owned files take every update as they are. Move that text to your own place: rules to the home section of CLAUDE.md (below the BUFFER lines), settings to home.config or .local/config, your own scripts to tools/, your own skills to .claude/skills/<a name the base does not use>/. A fix the base needs goes to the base."
   fi

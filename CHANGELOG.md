@@ -4,6 +4,16 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.0.1] - 2026-11-22
+
+### Fixed
+- `scripts/base-update`: the home is always the folder above the script's `scripts/` folder. The base's own copy, or a test run from inside a home, no longer updates that home.
+- A release may turn a base file into a folder, or a base folder into a file.
+- Release tags are fetched with `--no-tags`, so they never land among a home's own tags (the sweep's plain fetch did that).
+
+### Changed
+- README and `base.manifest`: an update never deletes a home's own file at a base-only path; `scripts/checks/run` reports it, because a home keeps those names free.
+
 ## [1.0.0] - 2026-11-22
 
 The first release. Homes made before it have no `VERSION` file; their first `scripts/base-update` finds the base commit they last merged and starts from there.
