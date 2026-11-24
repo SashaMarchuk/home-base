@@ -4,6 +4,12 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.1.0] - 2026-11-24
+
+### Added
+- `CLAUDE.md` base block, rule 13: a session is resumed only under the account (profile) it was first launched under, never under another.
+- OpenSpec change `sticky-session-account` (proposed, not built yet): HOME-484, the terminal helpers keep the first profile recorded for a session and report a session that runs under another one.
+
 ## [1.0.1] - 2026-11-22
 
 ### Fixed

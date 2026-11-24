@@ -21,7 +21,7 @@
 10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only the owner's exact words), never erase an unsent draft.
 11. No personal values, secrets, call copies or raw data in git. Links only.
 12. Use the GitHub account this home's config names. Never switch the CLI account.
-13. Model aliases only, never pinned versions.
+13. Model aliases only, never pinned versions. A session is resumed only under the account (profile) it was first launched under, never under another.
 14. No time estimates, dates or deadlines the owner did not ask for.
 15. Files, briefs and worker prompts are written in the configured file language (`lang.files`); questions and every message to the owner, the final one included, in `lang.owner`.
 16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them). A rule of your own goes in the home section below; it may replace a base rule it names. Take base releases with `scripts/base-update` (the `base-update` skill).
