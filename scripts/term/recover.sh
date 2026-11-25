@@ -294,7 +294,7 @@ reopen_message() { # reopen_message <entry json> -> the one message for the reop
 }
 
 cmd_reopen() {
-  local dry=0 msg="" lost=0 sids="[]" live e sid g line m win out rc reopened=0 lsids cands why tty
+  local dry=0 msg="" lost=0 sids="[]" live e sid g p line m win out rc reopened=0 lsids cands why tty
   while [ $# -gt 0 ]; do
     case "$1" in
       --lost) lost=1; shift ;;
@@ -350,6 +350,7 @@ EOF
     case "$line" in *"--resume $sid"*) ;; *) echo "SKIP $sid: no resume line recorded (resume: manual)"; continue ;; esac
     if why=$(reopen_issue_skip "$e"); then echo "SKIP $sid: $why (term.sh forget $sid drops the entry)"; continue; fi
     g=$(printf '%s' "$e" | jq -r .group)
+    p=$(role_window "$(printf '%s' "$e" | jq -r '.role // ""')"); [ -n "$p" ] || p=$g
     m=$msg; [ -n "$m" ] || m=$(reopen_message "$e")
     if [ "$dry" = 1 ]; then echo "PLAN $sid -> group $g: $line"; continue; fi
     if ! ( check_memory ) 2>/dev/null; then
@@ -360,7 +361,7 @@ EOF
     if [ "$rc" = 6 ]; then echo "QUEUED $sid: the worker cap is reached; it stays lost"; continue; fi
     if [ "$rc" = 7 ]; then echo "SKIP $sid: another run reopened, adopted or closed it meanwhile"; continue; fi
     [ "$rc" = 0 ] || { echo "SKIP $sid: the registry could not be written"; continue; }
-    win=$(window_for_group "$g" "$(survey_json)")
+    win=$(window_for_group "$p" "$(survey_json)")
     out=$( launch_tab "$sid" "$line $(shq "$m")" "$sid" "$win" ); rc=$?
     if [ "$rc" != 0 ]; then
       tty=$(printf '%s' "$out" | awk '{ print $2 }')
@@ -375,7 +376,7 @@ EOF
       continue
     fi
     if [ "$win" = new ]; then
-      cache_window "$g" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"
+      cache_window "$p" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"
     fi
     reopened=$((reopened + 1))
     echo "REOPENED $sid $(printf '%s' "$out" | awk '{ print $2 }') (group $g)"
@@ -422,9 +423,9 @@ cmd_regroup() {
   rows=$(survey_json)
   # the group's window: the one holding most of its live tabs (as open and thaw pick it); only registered live tabs move
   plan=$(printf '%s\n' "$rows" | jq -sr '
-    [.[] | select(.registered and (.registry_stale | not) and .group != null)] as $t
-    | ($t | group_by(.group) | map({key: .[0].group, value: (group_by(.window) | map({w: .[0].window, n: length}) | sort_by(-.n) | .[0].w)}) | from_entries) as $win
-    | $t[] | select(.window != $win[.group]) | "MOVE \(.tty) \(.session_id // "-") group \(.group): window \(.window) -> \($win[.group])"')
+    [.[] | select(.registered and (.registry_stale | not) and (.place // .group) != null) | . + {k: (.place // .group)}] as $t
+    | ($t | group_by(.k) | map({key: .[0].k, value: (group_by(.window) | map({w: .[0].window, n: length}) | sort_by(-.n) | .[0].w)}) | from_entries) as $win
+    | $t[] | select(.window != $win[.k]) | "MOVE \(.tty) \(.session_id // "-") group \(.k): window \(.window) -> \($win[.k])"')
   if [ -z "$plan" ]; then echo "every registered tab is in its group's window"; return 0; fi
   printf '%s\n' "$plan"
   [ "$dry" = 1 ] && return 0

@@ -203,6 +203,79 @@ check "groups: group keys in home.config are ignored" [ "$(win_of "$t")" = w3 ]
 check "groups: an unknown group from home.config -> exit 2" [ "$(rc_of ts open "$W1" --group g1)" = 2 ]
 cp "$T/hc.bak" "$HOME_ROOT/home.config"
 
+# ---------------------------------------------------------------- session names and the role window
+DOT=$'\xc2\xb7'
+HC="$T/work/g1 proj/child home"; mkdir -p "$HC"; printf '%s\n' repo=test/child-home > "$HC/home.config"
+launched() { tail -n 1 "$TERM_FAKE_DIR/launches"; }
+sid_of() { jq -r --arg t "$1" '[.[] | select(.tty == $t)] | last | .session_id' "$REG"; }
+closed_entry() { # closed_entry <tty>: its process gone and its entry closed, so resume may reopen it
+  local s; s=$(sid_of "$1")
+  rm -rf "$TERM_FAKE_DIR/proc/$(jq -r --arg s "$s" '.[] | select(.session_id == $s) | .pid' "$REG")"
+  jq --arg s "$s" 'map(if .session_id == $s then . + {closed: "x"} else . end)' "$REG" > "$REG.t" && mv "$REG.t" "$REG"
+  echo "$s"
+}
+reset "${GKEYS[@]}"
+t=$(opened "$HC" --role orchestrator)
+check "names: an orchestrator is named after its folder's home" grep -qF -- "--name 'Orchestrator $DOT child-home'" <(launched)
+check "names: the name comes right after the session id" grep -q -- "--session-id $(sid_of "$t") --name 'Orchestrator" <(launched)
+check "names: the recorded resume line holds no name" [ "$(jq -r --arg t "$t" '.[] | select(.tty == $t) | .resume' "$REG" | grep -c -- --name)" = 0 ]
+t=$(opened "$W2" --role orchestrator)
+check "names: a folder without home.config -> its folder name" grep -qF -- "--name 'Orchestrator $DOT g2'" <(launched)
+t=$(opened "$W2" --issue 7)
+check "names: a worker with an issue -> '<this home> #<issue>'" grep -qF -- "--name 'home #7'" <(launched)
+t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep")
+check "names: open --name is used" grep -qF -- "--name 'home #8 fix the sweep'" <(launched)
+check "names: open --name is recorded" [ "$(jq -r --arg t "$t" '.[] | select(.tty == $t) | .name' "$REG")" = "home #8 fix the sweep" ]
+check "names: a name of two lines -> exit 2" [ "$(rc_of ts open "$W2" --name "$(printf 'a\nb')")" = 2 ]
+check "names: an empty --name -> exit 2" [ "$(rc_of ts open "$W2" --name "")" = 2 ]
+t=$(opened "$HC" --role orchestrator); s=$(closed_entry "$t")
+ts resume "$s" --silent >/dev/null 2>&1
+check "names: resume starts the orchestrator under its name again" [ "$(launched)" = "cd '$HC' && claude --resume $s --name 'Orchestrator $DOT child-home'" ]
+t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep"); s=$(closed_entry "$t")
+ts resume "$s" --message go >/dev/null 2>&1
+check "names: resume keeps the recorded --name of a worker, before the message" [ "$(launched)" = "cd '$W2' && claude --resume $s --name 'home #8 fix the sweep' 'go'" ]
+reset "${GKEYS[@]}"
+jq -n --arg s "$S3" --arg c "$W1" '[{session_id: $s, tty: null, pid: null, cwd: $c, issue: 4, resume: "cd x && claude --resume \($s)",
+  opened: "x", closed: "x", role: "worker", tab: null, match: $s, adopted: true}]' > "$REG"
+ts resume "$S3" --silent >/dev/null 2>&1
+check "names: an adopted tab is resumed" [ "$(launched)" = "cd x && claude --resume $S3" ]
+check "names: an adopted tab gets no name" [ "$(grep -c -- "--name" "$TERM_FAKE_DIR/launches")" = 0 ]
+
+RW="term.role.orchestrator.window=Orchestrators"
+reset "${GKEYS[@]}" "$RW"
+hand_tab ttyg1 701 "claude" "$W1" w7; sess_file work 701 "$S1" idle "$W1"
+t1=$(opened "$HC" --role orchestrator)
+check "role window: an orchestrator from a g1 folder does not open in g1's window" [ "$(win_of "$t1")" != w7 ]
+check "role window: it opens a new window" grep -qx "$(win_of "$t1")" "$TERM_FAKE_DIR/windows"
+check "role window: its group stays g1" [ "$(jq -r --arg t "$t1" '.[] | select(.tty == $t) | .group' "$REG")" = g1 ]
+check "role window: the window is cached under the role window's name" [ "$(jq -r '.[] | select(.group == "Orchestrators") | .window' "$HOME_ROOT/.local/windows.json")" = "$(win_of "$t1")" ]
+check "role window: survey names the place" [ "$(sj "$t1" | jq -r '.group + " " + .place')" = "g1 Orchestrators" ]
+t2=$(opened "$W2" --role orchestrator)
+check "role window: a second orchestrator (g2) joins the same window" [ "$(win_of "$t2")" = "$(win_of "$t1")" ]
+t3=$(opened "$W1/sub")
+check "role window: a g1 worker still opens in g1's window" [ "$(win_of "$t3")" = w7 ]
+check "role window: a worker's place is its group" [ "$(sj "$t3" | jq -r .place)" = g1 ]
+s=$(closed_entry "$t2")
+ts resume "$s" --silent >/dev/null 2>&1
+check "role window: resume brings an orchestrator back to its window" [ "$(win_of "$(jq -r --arg s "$s" '.[] | select(.session_id == $s) | .tty' "$REG")")" = "$(win_of "$t1")" ]
+reset "${GKEYS[@]}" "term.role.orchestrator.window=bad/name"
+hand_tab ttyg1 701 "claude" "$W1" w7; sess_file work 701 "$S1" idle "$W1"
+t=$(opened "$W1" --role orchestrator)
+check "role window: a name that is not plain is ignored (the group's window)" [ "$(win_of "$t")" = w7 ]
+reset "${GKEYS[@]}"
+cp "$HOME_ROOT/home.config" "$T/hc.bak"
+printf '%s\n' "$RW" >> "$HOME_ROOT/home.config"
+hand_tab ttyg1 701 "claude" "$W1" w7; sess_file work 701 "$S1" idle "$W1"
+t=$(opened "$W1" --role orchestrator)
+check "role window: the key in home.config is ignored" [ "$(win_of "$t")" = w7 ]
+cp "$T/hc.bak" "$HOME_ROOT/home.config"
+reset "$RW"
+printf 'w3' > "$TERM_FAKE_DIR/front-window"
+t=$(opened "$W1" --role orchestrator)
+check "role window: works without term.groups (a new window, not the current one)" [ "$(win_of "$t")" != w3 ]
+t=$(opened "$W1")
+check "role window: without term.groups a worker still uses the current window" [ "$(win_of "$t")" = w3 ]
+
 # ---------------------------------------------------------------- freeze --hard
 FKEYS=("${GKEYS[@]}" "term.group.g2.home=peer" term.freeze.hard_grace=1 launch.profile_flag=-p)
 live() { # live <tty> <pid> <cwd> <window> <session id> [status]: a Claude Code tab with its session file

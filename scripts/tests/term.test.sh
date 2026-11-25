@@ -22,6 +22,7 @@ export PATH="$T/bin:$PATH"   # cli-whoami: a stand-in for a CLI identity call th
 REG="$HOME_ROOT/.local/registry.json"
 mkdir -p "$HOME_ROOT/.local" "$T/work dir"
 WORK="$T/work dir"
+DOT=$'\xc2\xb7'   # the middle dot in a default session name
 printf '%s\n' repo=test/home labels.needs_owner=needs-test > "$HOME_ROOT/home.config"
 
 cat > "$TERM_SH_HOME_LOG" <<EOF
@@ -93,10 +94,10 @@ reset; printf 'ttyowner' > "$TERM_FAKE_DIR/front-tab"; new_tab
 check "r0 open types nothing into the new tab" [ -z "$(keys)" ]
 check "r0 the tab's command is the login-shell wrapper" grep -Eq "^/[A-Za-z0-9_./-]+ -lic 'eval .*; exec /[A-Za-z0-9_./-]+ -l'$" "$TERM_FAKE_DIR/commands"
 check "r0 the command holds no character of the launch line" not grep -q -e "$SID" -e session-id -e "work dir" "$TERM_FAKE_DIR/commands"
-check "r0 the shell decodes the launch line" [ "$(cat "$TERM_FAKE_DIR/launches")" = "cd '$WORK' && claude --session-id $SID" ]
+check "r0 the shell decodes the launch line" [ "$(cat "$TERM_FAKE_DIR/launches")" = "cd '$WORK' && claude --session-id $SID --name 'home $DOT work dir'" ]
 check "r0 the focus is given back to the tab that had it" [ "$(cat "$TERM_FAKE_DIR/focus")" = "ttyowner -> $TTY -> ttyowner" ]
 check "r0 the focus is given back to the tab that had it (second half)" [ "$(cat "$TERM_FAKE_DIR/front-tab")" = ttyowner ]
-check "r0 the recorded process is the session, not the shell around it" [ "$(cat "$TERM_FAKE_DIR/proc/$PID/cmd")" = "claude --session-id $SID" ]
+check "r0 the recorded process is the session, not the shell around it" [ "$(cat "$TERM_FAKE_DIR/proc/$PID/cmd")" = "claude --session-id $SID --name home $DOT work dir" ]
 QDIR="$T/it's a \"dir\""; mkdir -p "$QDIR"
 BRIEF="say 'hi' to \"them\" for \$5 \\ back\`tick"
 reset; out=$(ts open "$QDIR" --brief "$BRIEF"); SID=${out%% *}
@@ -104,6 +105,8 @@ got=$(claude() { pwd -P; printf '%s\n' "$@"; }; eval "$(cat "$TERM_FAKE_DIR/laun
 check "r0 quotes: the session starts in that folder with the brief as one argument" [ "$got" = "$(cd "$QDIR" && pwd -P)
 --session-id
 $SID
+--name
+home $DOT $(basename "$QDIR")
 $BRIEF" ]
 check "r0 quotes: none of them is in the tab's command" not grep -q -e '"them"' -e "hi" -e 'tick' "$TERM_FAKE_DIR/commands"
 raw_open() { /bin/bash -c 'TERM_SH_LIB=1; . "$0"; be_open "$1" current' "$TERM_SH" "$1"; }
@@ -539,7 +542,7 @@ check "r10 resume works" [ "$rc" = 0 ]
 NEWTTY=$(echo "$out" | awk '{ print $2 }')
 check "r10 same session id" [ "$(echo "$out" | awk '{ print $1 }')" = "$SID" ]
 check "r10 new tab" [ -n "$NEWTTY" -a "$NEWTTY" != "$OLD" ]
-check "r10 no open question on the issue -> continue prompt" grep -q -- "--resume $SID 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
+check "r10 no open question on the issue -> continue prompt" grep -q -- "--resume $SID --name 'home #21' 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
 check "r10 registry reopened" [ "$(jq -r --arg s "$SID" '.[] | select(.session_id == $s) | (.closed == null and .tty == "'"$NEWTTY"'")' "$REG")" = true ]
 check "r10 resume of an open session -> refused" [ "$(rc_of ts resume "$SID")" = 3 ]
 check "r10 unknown session -> not found" [ "$(rc_of ts resume deadbeef-0000)" = 4 ]
@@ -554,18 +557,18 @@ parked() { # parked: a fresh session on issue 21, parked; sets SID
 }
 parked; run_comment 21 "$SID" "- Open question for the owner: Which branch?"
 check "r10 open question -> resume works" ts resume "$SID"
-check "r10 open question -> re-ask prompt" grep -q -- "--resume $SID 'You were parked.*Re-ask your open question" "$TERM_FAKE_DIR/launches"
+check "r10 open question -> re-ask prompt" grep -q -- "--resume $SID --name 'home #21' 'You were parked.*Re-ask your open question" "$TERM_FAKE_DIR/launches"
 parked; run_comment 21 "$SID" ""; run_comment 21 other-run "- Open question for the owner: Not this run's"
 jq --arg b "<!-- home-log run=$SID state=parked -->" '.comments += [{id: 4, body: $b}]' "$GH_STUB_DIR/test__home/issues/21.json" > "$T/i.json" && mv "$T/i.json" "$GH_STUB_DIR/test__home/issues/21.json"
 check "r10 another run's question -> resume works" ts resume "$SID"
-check "r10 another run's question -> continue prompt" grep -q -- "--resume $SID 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
+check "r10 another run's question -> continue prompt" grep -q -- "--resume $SID --name 'home #21' 'You were resumed. Continue where you stopped.'" "$TERM_FAKE_DIR/launches"
 parked; run_comment 21 "$SID" "- Open question for the owner: Which branch?"
 check "r10 --message replaces the default" ts resume "$SID" --message "The timer fired; run the next step."
-check "r10 --message text sent" grep -q -- "--resume $SID 'The timer fired; run the next step.'" "$TERM_FAKE_DIR/launches"
+check "r10 --message text sent" grep -q -- "--resume $SID --name 'home #21' 'The timer fired; run the next step.'" "$TERM_FAKE_DIR/launches"
 check "r10 --message: no re-ask prompt" not grep -q "Re-ask" "$TERM_FAKE_DIR/launches"
 parked
 check "r10 --silent works" ts resume "$SID" --silent
-check "r10 --silent sends no message" grep -q -- "--resume $SID\$" "$TERM_FAKE_DIR/launches"
+check "r10 --silent sends no message" grep -q -- "--resume $SID --name 'home #21'\$" "$TERM_FAKE_DIR/launches"
 parked
 check "r10 --message with --silent -> usage" [ "$(rc_of ts resume "$SID" --message x --silent)" = 2 ]
 check "r10 empty --message -> usage" [ "$(rc_of ts resume "$SID" --message "")" = 2 ]
@@ -649,13 +652,13 @@ ts open "$WORK" --role orchestrator >/dev/null 2>&1
 check "r14 orchestrator profile" grep -q "claude -p 'oprof' --model 'opus' --session-id" "$TERM_FAKE_DIR/launches"
 reset launch.profile.worker=wprof launch.model=sonnet
 new_tab
-check "r14 no profile flag -> profile not passed" grep -q "&& claude --model 'sonnet' --session-id $SID\$" "$TERM_FAKE_DIR/launches"
+check "r14 no profile flag -> profile not passed" grep -q "&& claude --model 'sonnet' --session-id $SID --name 'home $DOT work dir'\$" "$TERM_FAKE_DIR/launches"
 reset launch.command=mycli launch.profile_flag=--profile launch.profile.worker=w2
 new_tab
-check "r14 launch command and flag from config" grep -q "&& mycli --profile 'w2' --session-id $SID\$" "$TERM_FAKE_DIR/launches"
+check "r14 launch command and flag from config" grep -q "&& mycli --profile 'w2' --session-id $SID --name 'home $DOT work dir'\$" "$TERM_FAKE_DIR/launches"
 reset
 new_tab --brief "run issue #4"
-check "r14 unset profile -> plain command" grep -q "&& claude --session-id $SID 'run issue #4'\$" "$TERM_FAKE_DIR/launches"
+check "r14 unset profile -> plain command" grep -q "&& claude --session-id $SID --name 'home $DOT work dir' 'run issue #4'\$" "$TERM_FAKE_DIR/launches"
 MODEL_ID="claude-opus-4""-1-2025""0805"
 reset "launch.model=$MODEL_ID"
 check "r14 pinned model id -> refused" [ "$(rc_of ts open "$WORK")" = 3 ]
@@ -670,7 +673,7 @@ reset
 cp "$HOME_ROOT/home.config" "$T/home.config.bak"
 printf '%s\n' launch.command=othercli launch.profile_flag=-p launch.profile.worker=shared "launch.model=$MODEL_ID" >> "$HOME_ROOT/home.config"
 new_tab
-check "r14 launch keys in home.config are ignored" grep -q "&& claude --session-id $SID\$" "$TERM_FAKE_DIR/launches"
+check "r14 launch keys in home.config are ignored" grep -q "&& claude --session-id $SID --name 'home $DOT work dir'\$" "$TERM_FAKE_DIR/launches"
 cp "$T/home.config.bak" "$HOME_ROOT/home.config"
 
 # ---------------------------------------------------------------- registry: atomic and concurrent

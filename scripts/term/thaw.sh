@@ -82,7 +82,7 @@ thaw_mark() { # thaw_mark <session id> <thaw outcome> [tty]
 }
 
 cmd_thaw() {
-  local id="" groups="[]" sids="[]" fromissue="" dry=0 live e sid tty line msg win out rc g left reopened=0
+  local id="" groups="[]" sids="[]" fromissue="" dry=0 live e sid tty line msg win out rc g p left reopened=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --group) [ $# -ge 2 ] || die 2 "--group needs a name"; groups=$(printf '%s' "$groups" | jq -c --arg v "$2" '. + [$v]'); shift 2 ;;
@@ -150,6 +150,8 @@ cmd_thaw() {
     fi
     msg=$(thaw_message "$e")
     g=$(printf '%s' "$e" | jq -r '.group // "general"')
+    # a role with a window of its own comes back there; the group stays the snapshot's
+    p=$(role_window "$(printf '%s' "$e" | jq -r '.role // ""')"); [ -n "$p" ] || p=$g
     if [ "$dry" = 1 ]; then echo "PLAN $sid -> group $g: $line"; continue; fi
     if ! ( check_memory ) 2>/dev/null; then
       left=$(jq '[.entries[] | select((.outcome == "exited" or .outcome == "kept:caller") and (.thaw_outcome // "") != "reopened")] | length' "$SNAP")
@@ -160,12 +162,12 @@ cmd_thaw() {
     thaw_reserve "$e" "$line"; rc=$?
     if [ "$rc" = 6 ]; then thaw_mark "$sid" queued:worker-cap; echo "QUEUED $sid: the worker cap is reached"; continue; fi
     [ "$rc" = 0 ] || { echo "SKIP $sid: the registry could not be written"; continue; }
-    win=$(window_for_group "$g" "$(survey_json)")
+    win=$(window_for_group "$p" "$(survey_json)")
     out=$( launch_tab "$sid" "$line $(shq "$msg")" "$sid" "$win" ) || {
       thaw_mark "$sid" failed:open; echo "FAILED $sid: the tab did not open"; continue; }
     tty=$(printf '%s' "$out" | awk '{ print $2 }')
     if [ "$win" = new ]; then
-      cache_window "$g" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"
+      cache_window "$p" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"
     fi
     thaw_mark "$sid" reopened "$tty"
     reopened=$((reopened + 1))

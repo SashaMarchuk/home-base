@@ -281,6 +281,14 @@ check "reopen: nothing typed into any tab" nokeys ttyx1 "$t1" "$t2" "$t3"
 cp "$TERM_FAKE_DIR/launches" "$T/launches.before"
 check "reopen again -> exit 0" [ "$(rc_of ts reopen --lost)" = 0 ]
 check "reopen again opens nothing" cmp -s "$TERM_FAKE_DIR/launches" "$T/launches.before"
+# an orchestrator with term.role.orchestrator.window: its own window and its name; its group stays
+reboot term.role.orchestrator.window=Orchestrators; entry "$S3" ttyx3 tab-old-3 903 "$W1" '{"role": "orchestrator"}'
+check "reopen: with a role window -> exit 0" [ "$(rc_of ts reopen --lost)" = 0 ]
+t1=$(field "$S1" .tty); t3=$(field "$S3" .tty)
+check "reopen: the orchestrator is not placed with its group's worker" [ "$(placed_win "$t3")" != "$(placed_win "$t1")" ]
+check "reopen: the orchestrator keeps its group" [ "$(field "$S3" .group)" = g1 ]
+check "reopen: the orchestrator starts under its name" launched_has "$S3" "--resume $S3 --name 'Orchestrator "$'\xc2\xb7'" $(basename "$W1")'"
+check "reopen: the role window is cached" [ "$(jq -r '.[] | select(.group == "Orchestrators") | .window' "$HOME_ROOT/.local/windows.json")" = "$(placed_win "$t3")" ]
 
 reboot; entry "$S3" ttyx3 tab-old-3 903 "$W1"
 mkdir -p "$TERM_FAKE_DIR/proc/990"; printf 'claude --resume %s' "$S3" > "$TERM_FAKE_DIR/proc/990/cmd"; printf ttyq9 > "$TERM_FAKE_DIR/proc/990/tty"
