@@ -236,6 +236,10 @@ check "names: resume starts the orchestrator under its name again" [ "$(launched
 t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep"); s=$(closed_entry "$t")
 ts resume "$s" --message go >/dev/null 2>&1
 check "names: resume keeps the recorded --name of a worker, before the message" [ "$(launched)" = "cd '$W2' && claude --resume $s --name 'home #8 fix the sweep' 'go'" ]
+reset "${GKEYS[@]}"   # under the worker cap again
+t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep"); s=$(closed_entry "$t")
+ts resume "$s" --message "Retry with --session-id $s" >/dev/null 2>&1
+check "names: a message that holds --session-id <id> does not move the name" [ "$(launched)" = "cd '$W2' && claude --resume $s --name 'home #8 fix the sweep' 'Retry with --session-id $s'" ]
 reset "${GKEYS[@]}"
 jq -n --arg s "$S3" --arg c "$W1" '[{session_id: $s, tty: null, pid: null, cwd: $c, issue: 4, resume: "cd x && claude --resume \($s)",
   opened: "x", closed: "x", role: "worker", tab: null, match: $s, adopted: true}]' > "$REG"

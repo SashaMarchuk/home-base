@@ -288,15 +288,20 @@ EOF
 }
 
 named_line() { # named_line <launch line> <session id> -> the line with "--name <name>" right after the session id
-  local name
+  local name opt best="" pre best_pre=""
   # recorded lines never hold --name (open records none, resume_line drops it), so a brief or message that
   # mentions "--name" is only text and never stops the name
   name=$(session_name "$2")
   if [ -n "$name" ]; then
-    case "$1" in
-      *"--session-id $2"*) printf '%s--session-id %s --name %s%s\n' "${1%%"--session-id $2"*}" "$2" "$(shq "$name")" "${1#*"--session-id $2"}"; return 0 ;;
-      *"--resume $2"*) printf '%s--resume %s --name %s%s\n' "${1%%"--resume $2"*}" "$2" "$(shq "$name")" "${1#*"--resume $2"}"; return 0 ;;
-    esac
+    # the real option comes before any quoted brief or message: take whichever of the two occurs first
+    for opt in "--session-id $2" "--resume $2"; do
+      case "$1" in *"$opt"*) ;; *) continue ;; esac
+      pre=${1%%"$opt"*}
+      if [ -z "$best" ] || [ ${#pre} -lt ${#best_pre} ]; then best=$opt; best_pre=$pre; fi
+    done
+    if [ -n "$best" ]; then
+      printf '%s%s --name %s%s\n' "$best_pre" "$best" "$(shq "$name")" "${1#*"$best"}"; return 0
+    fi
   fi
   printf '%s\n' "$1"
 }
