@@ -1,6 +1,6 @@
 ---
 name: route
-description: Decide which home owns a new request, this one or a home below it in the home tree, before any issue is opened. Use it first for every new owner request in a home (a home with no homes below it uses it too, to refuse work that belongs above or beside it), whenever a request may belong to another domain, when the owner asks "where does this go", "is this for <home>", "send this to the right home", and from step 0 of the orchestrate skill's section 7 and step 3 of the task skill. Reads `home-tree.md` and `home.config` only; it never routes up to a parent or across to a sibling.
+description: Decide which home owns a new request, this one or a home below it in the home tree, before any issue is opened. Use it first for every new owner request in a home (a home with no homes below it uses it too, to refuse work that belongs above or beside it), whenever a request may belong to another domain, when the owner asks "where does this go", "is this for <home>", "send this to the right home", and from step 0 of the orchestrate skill's section 7 and step 3 of the task skill. Reads `home-tree.md` and `home.config` (and, when needed, only the `## This home` section of a home below); it never routes up to a parent or across to a sibling.
 ---
 
 # route

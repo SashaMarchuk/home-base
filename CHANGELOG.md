@@ -4,6 +4,12 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.2.1] - 2026-11-25
+
+### Fixed
+- Wording only, no rule changed: the orchestrate skill and the route skill's description say what routing reads (`home-tree.md`, `home.config` and, when needed, the `## This home` section of a home below); `templates/home.config`, this changelog and the `route-skill` proposal say that with a tree, topics are only hints.
+- The 1.2.0 notes leave out one change: without `home-tree.md`, the topics of a `role=parent` or `role=peer` home no longer route a request there. A child asked for its parent's or a peer's work names that home and opens no issue there; the owner may still pick the peer hand-off.
+
 ## [1.2.0] - 2026-11-25
 
 ### Added
@@ -12,7 +18,7 @@ Take a release into your home with `scripts/base-update` (see "Take base updates
 - OpenSpec change `route-skill`: the design and the evaluation (16 cases).
 
 ### Changed
-- Orchestrate section 7 step 0 and task step 3 call the `route` skill. `homes.<name>.topics` are used only when a home has no `home-tree.md`.
+- Orchestrate section 7 step 0 and task step 3 call the `route` skill. `homes.<name>.topics` decide only when a home has no `home-tree.md`; with a tree they are only hints.
 - `CLAUDE.md` base block: every new request goes through `route` first; `home-tree.md` in "Where things live".
 
 ## [1.1.0] - 2026-11-24

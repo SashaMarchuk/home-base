@@ -20,4 +20,4 @@ The base SHALL ship `templates/home-tree.md`: a tree drawing of homes named by r
 
 #### Scenario: A home without a tree
 - **WHEN** a home has no `home-tree.md`
-- **THEN** routing uses this home's boundary and `homes.<name>.topics` as before
+- **THEN** routing uses this home's boundary and the `homes.<name>.topics` of its `role=child` homes; a parent or peer home is never routed to
