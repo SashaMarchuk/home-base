@@ -2,11 +2,11 @@
 # Home
 
 ## What a home is
-- A home is a plain repo of rules, skills, scripts and a markdown wiki for one domain. A session opened here is that domain's orchestrator: before acting on any request, read `.claude/skills/orchestrate/SKILL.md`, then the skill for the request (`task`, `status`, `wiki`, `decide`, `dreams`, `base-update`).
+- A home is a plain repo of rules, skills, scripts and a markdown wiki for one domain. A session opened here is that domain's orchestrator: before acting on any request, read `.claude/skills/orchestrate/SKILL.md`, then the skill for the request (`task`, `status`, `wiki`, `decide`, `dreams`, `base-update`). Every new request goes through `route` first (down the tree only).
 - Every task is a GitHub issue in the home that owns it. The issue is the only record of task and session state.
 - Git holds knowledge only: rules, decisions, wiki pages, links. Never session state, call copies, raw data or personal values.
 - Nothing runs as a service: no database, no daemon, no state file in git.
-- A home may hand work to other homes (parent, child, peer). The topology is in `home.config` (`homes.*`).
+- A home may hand work to other homes (parent, child, peer). The topology is in `home.config` (`homes.*`); the tree of homes, with what belongs where, is in `home-tree.md`.
 
 ## Hard rules
 1. Every owner request gets an issue in the home that owns it before work starts, even when this session does the work itself. The first call is `scripts/home-log new --title T --body B --start` (it opens and claims the issue; an issue that already exists is claimed with `scripts/home-log start <n>`); an issue the orchestrator hands to a worker is opened with `--ready` instead and claimed by that worker's own `start`; work another home owns gets its one issue in that home (`--repo <its repo> --ready`) and none here; the last is `scripts/home-log finish <n> --text ...`, a question or an explanation included. Work without an issue does not exist. Write a result to the record only after you verified it (read back the effect); never report a count you did not observe. Until `home.config` exists, the only task is the `configure` skill, and it opens no issue.
@@ -32,13 +32,14 @@
 | What | Where |
 |---|---|
 | Settings: repo, tracker, board, labels, homes, limits, proactivity, dreams | `home.config` (committed), `.local/config` (this machine, overrides) |
-| How to work: orchestrate, task, status, wiki, decide, configure, dreams, base-update | `.claude/skills/` (`.agents/skills` is the same folder) |
+| The tree of homes: each home's domain, what belongs there and what does not (the same copy in every home) | `home-tree.md` (the home's own; template `templates/home-tree.md`) |
+| How to work: orchestrate, route, task, status, wiki, decide, configure, dreams, base-update | `.claude/skills/` (`.agents/skills` is the same folder) |
 | Record of work, sweep, combined status, labels, limits, base updates, checks, terminal helpers, voice transcripts | `scripts/` (`home-log`, `home-sweep`, `home-status`, `labels`, `limits`, `base-update`, `checks/run`, `term/term.sh`, `voice-collect`) |
 | Knowledge: projects, systems, people, how-tos | `wiki/` (start at `wiki/index.md`) |
 | The owner's decisions, verbatim | `DECISIONS.md` (append-only) |
 | Codex hooks and settings | `.codex/` (`hooks.json` from the base; `config.toml` the home's own) |
 | Which paths the base owns | `base.manifest` |
-| Your own rules, settings, scripts and skills (never touched by a base update) | the home section of this file, `home.config`, `.local/config`, `tools/`, `.claude/skills/<a name the base does not use>/` |
+| Your own rules, settings, scripts and skills (never touched by a base update) | the home section of this file, `home.config`, `home-tree.md`, `.local/config`, `tools/`, `.claude/skills/<a name the base does not use>/` |
 | The base release this home is on | `VERSION` (`scripts/base-update --check`) |
 <!-- BASE:END -->
 <!-- BUFFER 1/4: these four lines are fixed and identical in the base and in every home. -->

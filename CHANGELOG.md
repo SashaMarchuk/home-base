@@ -4,6 +4,17 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.2.0] - 2026-11-25
+
+### Added
+- `route` skill: decides for each new request whether it stays in this home or goes to a home below it, from `home-tree.md`. One fit below: the issue goes there. Two fits: one question with the fitting homes. Routing goes down only; a request for a home above or beside gets no issue there (HOME-485).
+- `templates/home-tree.md`: the tree of homes, each named by its repo, with Domain, Belongs and Not here (HOME-486). `home-tree.md` is the home's own file.
+- OpenSpec change `route-skill`: the design and the evaluation (16 cases).
+
+### Changed
+- Orchestrate section 7 step 0 and task step 3 call the `route` skill. `homes.<name>.topics` are used only when a home has no `home-tree.md`.
+- `CLAUDE.md` base block: every new request goes through `route` first; `home-tree.md` in "Where things live".
+
 ## [1.1.0] - 2026-11-24
 
 ### Added

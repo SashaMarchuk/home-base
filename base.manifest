@@ -10,6 +10,7 @@ flows .agents/skills
 flows .codex/hooks.json
 flows .claude/skills/orchestrate/
 flows .claude/skills/task/
+flows .claude/skills/route/
 flows .claude/skills/status/
 flows .claude/skills/wiki/
 flows .claude/skills/decide/
