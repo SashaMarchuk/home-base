@@ -223,6 +223,8 @@ t=$(opened "$W2" --role orchestrator)
 check "names: a folder without home.config -> its folder name" grep -qF -- "--name 'Orchestrator $DOT g2'" <(launched)
 t=$(opened "$W2" --issue 7)
 check "names: a worker with an issue -> '<this home> #<issue>'" grep -qF -- "--name 'home #7'" <(launched)
+t=$(ts open "$W2" --issue 9 --brief "Implement the --name option" | awk '{ print $2 }')
+check "names: a brief that mentions --name does not stop the name" [ "$(launched)" = "cd '$W2' && claude --session-id $(sid_of "$t") --name 'home #9' 'Implement the --name option'" ]
 t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep")
 check "names: open --name is used" grep -qF -- "--name 'home #8 fix the sweep'" <(launched)
 check "names: open --name is recorded" [ "$(jq -r --arg t "$t" '.[] | select(.tty == $t) | .name' "$REG")" = "home #8 fix the sweep" ]

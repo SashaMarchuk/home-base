@@ -289,8 +289,9 @@ EOF
 
 named_line() { # named_line <launch line> <session id> -> the line with "--name <name>" right after the session id
   local name
+  # recorded lines never hold --name (open records none, resume_line drops it), so a brief or message that
+  # mentions "--name" is only text and never stops the name
   name=$(session_name "$2")
-  case "$1" in *" --name "*) name="" ;; esac
   if [ -n "$name" ]; then
     case "$1" in
       *"--session-id $2"*) printf '%s--session-id %s --name %s%s\n' "${1%%"--session-id $2"*}" "$2" "$(shq "$name")" "${1#*"--session-id $2"}"; return 0 ;;
