@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # term.sh: open, read, type into and close terminal tabs (iTerm2) for this home.
 #
-#   term.sh open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--brief TEXT | --brief-file F]
-#                                    (placed in its group's window when term.groups is set or --group is given)
+#   term.sh open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--name TEXT] [--brief TEXT | --brief-file F]
+#                                    (placed in its group's window when term.groups is set or --group is given, in
+#                                    the window term.role.<role>.window names when that is set; started with
+#                                    --name: TEXT, else the default name, see "Session names" in sessions.sh)
 #                                    -> prints "<session_id> <tty> <pid>"
 #   term.sh screen <target> [--lines N]
 #   term.sh state  <target>          -> gone | dialog | headsup | busy | bg | draft | idle | shell
@@ -869,10 +871,15 @@ launch_command() { # launch_command <launch line> -> the command a new tab start
   printf "%s -lic 'eval \"\$(printf %%s %s | %s -e \"print pack(q(H*),<STDIN>)\")\"; exec %s -l'\n" "$sh" "$hex" "$perl" "$sh"
 }
 
-launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current] [process name]: open, record tty/tab/window/pid, print the triple
-  local sid=$1 out tab tty pid win name=${5:-} tabcmd
+launch_tab() { # launch_tab <sid> <command line> <match> [<window id>|new|current] [process name] [prompt word]: open, record tty/tab/window/pid, print the triple
+  # <command line> is the command and its options; [prompt word] is the brief or message as one shell word
+  # (built by the caller with shq), added last, after the name
+  local sid=$1 out tab tty pid win name=${5:-} tabcmd line=$2
   [ -n "$name" ] || name=$(launch_name)
-  tabcmd=$(launch_command "$2") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 3 "no tab was opened"; }
+  # a Claude Code session starts with its name (see "Session names" in sessions.sh); a Codex one as recorded
+  [ "$name" = codex ] || line=$(named_line "$line" "$sid")
+  [ -z "${6:-}" ] || line="$line $6"
+  tabcmd=$(launch_command "$line") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 3 "no tab was opened"; }
   out=$(be_open "$tabcmd" "${4:-current}") || { reg_set "$sid" '{closed: $c}' --arg c "$(now_utc)"; die 4 "could not open a tab"; }
   read -r tab tty win <<EOF
 $out
@@ -910,13 +917,15 @@ record_profile() { # record_profile <sid> <pid> <role> <dir>: the resume line na
 
 cmd_open() {
   local dir="" issue="" role=worker brief="" brief_file="" sid prefix line resume match entry group="" gfrom win=current out
-  [ $# -ge 1 ] || die 2 "usage: open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--brief T|--brief-file F]"
+  local name="" place="" prompt
+  [ $# -ge 1 ] || die 2 "usage: open <dir> [--issue N] [--role worker|orchestrator] [--group G] [--name T] [--brief T|--brief-file F]"
   dir=$1; shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --issue) issue=${2:-}; shift 2 ;;
       --role) role=${2:-}; shift 2 ;;
       --group) group=${2:-}; [ -n "$group" ] || die 2 "--group needs a group name"; shift 2 ;;
+      --name) name=${2:-}; [ -n "$name" ] || die 2 "--name needs a text"; shift 2 ;;
       --brief) brief=${2:-}; shift 2 ;;
       --brief-file) brief_file=${2:-}; shift 2 ;;
       *) die 2 "open: unknown option '$1'" ;;
@@ -927,6 +936,8 @@ cmd_open() {
   case "$issue" in *[!0-9]*) die 2 "issue must be a number" ;; esac
   case "$brief" in *"
 "*) die 2 "the brief must be one line; use --brief-file for more" ;; esac
+  case "$name" in *"
+"*) die 2 "the name must be one line" ;; esac
   [ -z "$brief_file" ] || [ -f "$brief_file" ] || die 2 "no brief file '$brief_file'"
   dir=$(cd "$dir" 2>/dev/null && pwd -P) || die 2 "no such directory"
   if [ -n "$group" ]; then
@@ -940,23 +951,29 @@ cmd_open() {
 $(group_of_cwd "$dir")
 EOF
     fi
-    win=$(window_for_group "$group" "$(survey_json)")
+    place=$group
   fi
+  # a role with a window of its own goes there; its group stays as found above
+  out=$(role_window "$role"); [ -n "$out" ] && place=$out
+  [ -n "$place" ] && win=$(window_for_group "$place" "$(survey_json)")
+  out=""
   sid=$(be_uuid)
   resume="cd $(shq "$dir") && $prefix --resume $sid"
   line="cd $(shq "$dir") && $prefix --session-id $sid"
-  [ -n "$brief" ] && line="$line $(shq "$brief")"
-  [ -n "$brief_file" ] && line="$line \"\$(cat $(shq "$(cd "$(dirname "$brief_file")" && pwd -P)/$(basename "$brief_file")"))\""
+  prompt=""
+  [ -n "$brief" ] && prompt=$(shq "$brief")
+  [ -n "$brief_file" ] && prompt="\"\$(cat $(shq "$(cd "$(dirname "$brief_file")" && pwd -P)/$(basename "$brief_file")"))\""
   match=$sid
   entry=$(jq -nc --arg sid "$sid" --arg cwd "$dir" --arg issue "$issue" --arg resume "$resume" \
-    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" --arg group "$group" --arg gfrom "${gfrom:-}" \
+    --arg opened "$(now_utc)" --arg role "$role" --arg match "$match" --arg group "$group" --arg gfrom "${gfrom:-}" --arg name "$name" \
     '{session_id: $sid, tty: null, pid: null, cwd: $cwd, issue: (if $issue == "" then null else ($issue | tonumber) end),
       resume: $resume, opened: $opened, closed: null, role: $role, tab: null, match: $match,
-      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}')
+      group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end)}
+      + (if $name == "" then {} else {name: $name} end)')
   reserve "$entry" "$role"
-  out=$(launch_tab "$sid" "$line" "$match" "$win") || exit $?
+  out=$(launch_tab "$sid" "$line" "$match" "$win" "" "$prompt") || exit $?
   record_profile "$sid" "${out##* }" "$role" "$dir"
-  [ -n "$group" ] && [ "$win" = new ] && { cache_window "$group" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"; }
+  [ -n "$place" ] && [ "$win" = new ] && { cache_window "$place" "$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .window // empty')" || note "window not cached"; }
   echo "$out"
 }
 
@@ -1333,7 +1350,7 @@ run_has_question() { # run_has_question <repo> <n> <run id>: 0 when the run's la
 }
 
 cmd_resume() {
-  local sid line role issue msg="" silent=0 nopt=0 rgroup rwin
+  local sid line role issue msg="" silent=0 nopt=0 rgroup rwin rplace prompt=""
   [ $# -ge 1 ] || die 2 "usage: resume <session_id> [--message TEXT | --silent]"
   sid=$1; shift
   while [ $# -gt 0 ]; do
@@ -1365,11 +1382,14 @@ cmd_resume() {
       esac
     fi
   fi
-  [ "$silent" = 1 ] || line="$line $(shq "$msg")"
+  [ "$silent" = 1 ] || prompt=$(shq "$msg")
   # a session that was opened in a group comes back in that group's window, as open places it
   rgroup=$(reg_read -r --arg s "$sid" '.[] | select(.session_id == $s) | .group // empty')
   rwin=current
-  if [ -n "$rgroup" ] && group_known "$rgroup"; then rwin=$(window_for_group "$rgroup" "$(survey_json)"); fi
+  # a role with a window of its own comes back there
+  rplace=$(role_window "$role")
+  [ -z "$rplace" ] && [ -n "$rgroup" ] && group_known "$rgroup" && rplace=$rgroup
+  [ -n "$rplace" ] && rwin=$(window_for_group "$rplace" "$(survey_json)")
   reg_lock || die 3 "could not lock the registry"
   if [ "$role" = worker ] && [ "$(count_live_workers)" -ge "$(cfg term.max_workers 4)" ]; then
     reg_unlock; die 3 "worker cap reached; not resuming"
@@ -1378,7 +1398,7 @@ cmd_resume() {
     'map(if .session_id == $s then . + {closed: null, parked: false, opened: $o, pid: null, tty: null, tab: null, match: $s} else . end)' ||
     { reg_unlock; die 3 "registry write failed"; }
   reg_unlock
-  if [ "$T_KIND" = codex ]; then launch_tab "$sid" "$line" "$sid" current codex; else launch_tab "$sid" "$line" "$sid" "$rwin"; fi
+  if [ "$T_KIND" = codex ]; then launch_tab "$sid" "$line" "$sid" current codex "$prompt"; else launch_tab "$sid" "$line" "$sid" "$rwin" "" "$prompt"; fi
 }
 
 cmd_survey() {

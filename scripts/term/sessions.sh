@@ -32,6 +32,16 @@
 # live tabs of the group, else the window cached in .local/windows.json while it still exists and holds no
 # tab of another group, else a new window (then cached). With no term.groups and no --group, open uses the
 # current window as before.
+#   term.role.<role>.window=<name>   a window of its own for every session of that role (orchestrator, worker):
+#                                    the tab is placed in the window named <name> as if it were a group, while
+#                                    its group (freeze record, thaw order, selectors) stays the one above. The
+#                                    window key of a tab ("place" in survey --json) is that name, else its group.
+#
+# Session names: open, resume, thaw and reopen start a session with "--name <name>" (Claude Code shows it in
+# the prompt box, the /resume picker and the terminal title, so the tab title follows). The name is the
+# registry entry's "name" (open --name), else "Orchestrator · <home>" for an orchestrator (<home>: the repo name
+# in its folder's home.config, else the folder's name), else "<this home> #<issue>" for a worker with an issue,
+# else "<this home> · <folder>". An adopted tab or a session of another role (the owner's own) is not named.
 
 US=$'\x1f'   # field separator that keeps empty fields
 
@@ -210,15 +220,15 @@ group_repo() { # group_repo <group> -> the repo its freeze record goes to (empty
 
 WINDOWS="$LOCAL_DIR/windows.json"
 
-window_for_group() { # window_for_group <group> <survey --json lines> -> a window id, or "new"
+window_for_group() { # window_for_group <group or role window> <survey --json lines> -> a window id, or "new"
   local g=$1 w cached
-  w=$(printf '%s\n' "$2" | jq -rs --arg g "$g" '[.[] | select(.group == $g)] | group_by(.window)
+  w=$(printf '%s\n' "$2" | jq -rs --arg g "$g" '[.[] | select((.place // .group) == $g)] | group_by(.window)
     | map({w: .[0].window, n: length}) | sort_by(-.n) | .[0].w // empty' 2>/dev/null)
   [ -n "$w" ] && { echo "$w"; return 0; }
   cached=$(jq -r --arg g "$g" '[.[] | select(.group == $g)] | last | .window // empty' "$WINDOWS" 2>/dev/null)
   if [ -n "$cached" ] &&
      printf '%s\n' "$2" | jq -es --arg w "$cached" 'any(.[]; .window == $w)' >/dev/null 2>&1 &&
-     ! printf '%s\n' "$2" | jq -es --arg w "$cached" --arg g "$g" 'any(.[]; .window == $w and .group != null and .group != $g)' >/dev/null 2>&1; then
+     ! printf '%s\n' "$2" | jq -es --arg w "$cached" --arg g "$g" 'any(.[]; .window == $w and (.place // .group) != null and (.place // .group) != $g)' >/dev/null 2>&1; then
     echo "$cached"; return 0
   fi
   echo new
@@ -235,6 +245,61 @@ cache_window() { # cache_window <group> <window id>: remember the group's window
   else
     rm -f "$tmp"; return 1
   fi
+}
+
+role_window() { # role_window <role> -> the window name term.role.<role>.window sets (.local/config only), else nothing
+  local w
+  case "$1" in worker|orchestrator) ;; *) return 0 ;; esac
+  w=$(local_cfg "term.role.$1.window")
+  [ -n "$w" ] || return 0
+  printf '%s' "$w" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9 ._-]*$' || { note "term.role.$1.window must be a plain name, not '$w'; ignored"; return 0; }
+  printf '%s\n' "$w"
+}
+
+# ------------------------------------------------------------------ session names
+
+MIDDOT=$'\xc2\xb7'
+
+home_name() { # home_name <dir> -> the repo name in <dir>/home.config, else the folder's name
+  local r
+  r=$(cfg_read_file "$1/home.config" repo 2>/dev/null) || r=""
+  r=${r##*/}
+  [ -n "$r" ] || r=$(basename "$1")
+  printf '%s\n' "$r"
+}
+
+session_name() { # session_name <session id> -> the name its launch passes with --name; nothing when it gets none
+  local e role cwd issue name adopted h
+  e=$(reg_read -c --arg s "$1" '[.[] | select(.session_id == $s)] | last // empty')
+  [ -n "$e" ] || return 0
+  IFS=$US read -r role cwd issue name adopted <<EOF
+$(printf '%s' "$e" | jq -r '[(.role // ""), (.cwd // ""), (.issue // "" | tostring), (.name // ""), (if .adopted == true then "1" else "0" end)] | join("\u001f")')
+EOF
+  [ "$adopted" = 1 ] && return 0
+  case "$role" in
+    orchestrator) [ -n "$name" ] || name="Orchestrator $MIDDOT $(home_name "${cwd:-.}")" ;;
+    worker)
+      h=${HOME_REPO##*/}; [ -n "$h" ] || h=$(basename "$HOME_ROOT")
+      if [ -n "$name" ]; then :; elif [ -n "$issue" ]; then name="$h #$issue"; else name="$h $MIDDOT $(basename "${cwd:-.}")"; fi ;;
+    *) return 0 ;;
+  esac
+  printf '%s' "$name" | LC_ALL=C tr -d '\000-\037\177'
+  echo
+}
+
+named_line() { # named_line <launch line> <session id> -> the line with "--name <name>" at its end; unchanged when it gets none
+  # The line is the command and its options only: the caller adds the brief or message after this (launch_tab).
+  # The name goes at the end, and only when the line ends with the session's own "--session-id <id>" or
+  # "--resume <id>": that option is the last word, outside every quote. Nothing inside the line (a quoted
+  # folder, a profile) is searched, so text that repeats the option or the id never moves the name.
+  local name
+  name=$(session_name "$2")
+  if [ -n "$name" ] && is_uuid "$2"; then
+    case "$1" in
+      *" --session-id $2"|*" --resume $2") printf '%s --name %s\n' "$1" "$(shq "$name")"; return 0 ;;
+    esac
+  fi
+  printf '%s\n' "$1"
 }
 
 # ------------------------------------------------------------------ the calling session
@@ -375,7 +440,7 @@ EOF
   jq -nc --arg tty "$tty" --arg win "$win" --arg tab "$tab" --arg pid "$pid" --arg kind "$kind" --argjson n "$n" \
     --arg cmd "$cmd" --arg sid "$sid" --arg src "$src" --arg prof "$prof" --arg pdir "$pdir" --arg status "$status" \
     --arg cwd "$cwd" --arg name "$sname" --argjson reg "$reg" --arg issue "$issue" --arg role "$role" \
-    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" --arg moved "$moved" \
+    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" --arg moved "$moved" --arg place "$(role_window "$role")" \
     '{tty: $tty, window: $win, tab: $tab, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
       processes: $n, command: $cmd, session_id: (if $sid == "" then null else $sid end), id_from: $src,
       profile: $prof, profile_dir: $pdir, status: (if $status == "" then null else $status end), cwd: $cwd,
@@ -383,6 +448,7 @@ EOF
       role: (if $role == "" then null else $role end), adopted: $adopted,
       resume: (if $resume == "" then null else $resume end), caller: $caller,
       group: (if $group == "" then null else $group end), group_from: (if $gfrom == "" then null else $gfrom end),
+      place: (if $place != "" then $place elif $group == "" then null else $group end),
       registry_stale: $stale, moved_from: (if $moved == "" then null else $moved end)}'
 }
 

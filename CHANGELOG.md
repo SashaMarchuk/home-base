@@ -4,6 +4,13 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.3.0] - 2026-11-26
+
+### Added
+- Terminal helpers: every Claude Code session that `open`, `resume`, `thaw` or `reopen` starts gets a clear name with `--name`: `Orchestrator · <home>` for an orchestrator, `<home> #<issue>` for a worker, or the text of the new `open --name`. Claude Code shows it in the prompt box, the `/resume` picker and the tab title. Adopted tabs keep their own name. Resume lines in issues and freeze snapshots do not change (HOME-487).
+- `term.role.<role>.window=<name>` in `.local/config`: every session of that role opens in one window of its own, for example all home orchestrators in an "Orchestrators" window. The tab's group (freeze record, thaw order, selectors) stays as before; `survey --json` shows the `place` (HOME-488).
+- OpenSpec change `session-names`.
+
 ## [1.2.1] - 2026-11-25
 
 ### Fixed
