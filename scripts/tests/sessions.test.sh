@@ -241,6 +241,10 @@ t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep"); s=$(closed_entry "$t
 ts resume "$s" --message "Retry with --session-id $s" >/dev/null 2>&1
 check "names: a message that holds --session-id <id> does not move the name" [ "$(launched)" = "cd '$W2' && claude --resume $s --name 'home #8 fix the sweep' 'Retry with --session-id $s'" ]
 reset "${GKEYS[@]}"
+t=$(opened "$W2" --issue 8 --name "home #8 fix the sweep"); s=$(closed_entry "$t")
+ts resume "$s" --message "Run claude --resume $s --name x" >/dev/null 2>&1
+check "names: a message that holds --resume <id> and --name does not move the name" [ "$(launched)" = "cd '$W2' && claude --resume $s --name 'home #8 fix the sweep' 'Run claude --resume $s --name x'" ]
+reset "${GKEYS[@]}"
 jq -n --arg s "$S3" --arg c "$W1" '[{session_id: $s, tty: null, pid: null, cwd: $c, issue: 4, resume: "cd x && claude --resume \($s)",
   opened: "x", closed: "x", role: "worker", tab: null, match: $s, adopted: true}]' > "$REG"
 ts resume "$S3" --silent >/dev/null 2>&1
@@ -800,6 +804,21 @@ check "thaw --issue: the issue's resume text is never typed" not grep -q injecte
 reset "${FKEYS[@]}"; transcript work "$S1"; fissue 8 'work; rm -rf x' "claude --resume $S1"
 ts thaw --issue test/home#8 >/dev/null 2>&1
 check "thaw --issue: a profile that is not one word -> nothing launched" [ ! -f "$TERM_FAKE_DIR/launches" ]
+# a folder whose name repeats "--resume <id>" and holds shell text: the name goes after the real option, and the
+# launched line, run by a real shell with a stand-in claude, starts claude in that folder and runs nothing else
+reset "${FKEYS[@]}"; transcript work "$S1"
+EVIL="$T/evil --resume $S1; touch PWNED; #"; mkdir -p "$EVIL" "$T/bin"
+fissue 9 work "claude --resume $S1"
+jq --arg c "$EVIL" '.body |= sub("\"cwd\":\"[^\"]*\""; "\"cwd\":\(($c | tojson)),\"role\":\"orchestrator\"")' \
+  "$GH_STUB_DIR/test__home/issues/9.json" > "$T/i9" && mv "$T/i9" "$GH_STUB_DIR/test__home/issues/9.json"
+ts thaw --issue test/home#9 >/dev/null 2>&1
+check "thaw --issue: a folder that repeats --resume <id> -> the name after the real option" \
+  grep -qF -- "&& 'claude' -p 'work' --resume $S1 --name 'Orchestrator $DOT evil --resume $S1; touch PWNED; #' 'You were resumed." <(launch_of "$S1")
+printf '#!/bin/sh\npwd > "%s/claude-cwd"; printf "%%s\\n" "$@" > "%s/claude-args"\n' "$T" "$T" > "$T/bin/claude"; chmod +x "$T/bin/claude"
+(cd "$T" && PATH="$T/bin:$PATH" /bin/bash -c "$(launch_of "$S1" | tail -n 1)") >/dev/null 2>&1
+check "thaw --issue: the launched line runs no text of the folder name" [ ! -e "$T/PWNED" ] && [ ! -e "$EVIL/PWNED" ]
+check "thaw --issue: the launched line starts claude in that folder" [ "$(cat "$T/claude-cwd" 2>/dev/null)" = "$(cd "$EVIL" && pwd -P)" ]
+check "thaw --issue: claude gets the name as one argument" [ "$(sed -n 6p "$T/claude-args" 2>/dev/null)" = "Orchestrator $DOT evil --resume $S1; touch PWNED; #" ]
 
 # 6. --window <group> refuses a window shared with another group
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; live ttyw2 802 "$W2" w7 "$S2"

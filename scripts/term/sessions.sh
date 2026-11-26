@@ -287,21 +287,17 @@ EOF
   echo
 }
 
-named_line() { # named_line <launch line> <session id> -> the line with "--name <name>" right after the session id
-  local name opt best="" pre best_pre=""
-  # recorded lines never hold --name (open records none, resume_line drops it), so a brief or message that
-  # mentions "--name" is only text and never stops the name
+named_line() { # named_line <launch line> <session id> -> the line with "--name <name>" at its end; unchanged when it gets none
+  # The line is the command and its options only: the caller adds the brief or message after this (launch_tab).
+  # The name goes at the end, and only when the line ends with the session's own "--session-id <id>" or
+  # "--resume <id>": that option is the last word, outside every quote. Nothing inside the line (a quoted
+  # folder, a profile) is searched, so text that repeats the option or the id never moves the name.
+  local name
   name=$(session_name "$2")
-  if [ -n "$name" ]; then
-    # the real option comes before any quoted brief or message: take whichever of the two occurs first
-    for opt in "--session-id $2" "--resume $2"; do
-      case "$1" in *"$opt"*) ;; *) continue ;; esac
-      pre=${1%%"$opt"*}
-      if [ -z "$best" ] || [ ${#pre} -lt ${#best_pre} ]; then best=$opt; best_pre=$pre; fi
-    done
-    if [ -n "$best" ]; then
-      printf '%s%s --name %s%s\n' "$best_pre" "$best" "$(shq "$name")" "${1#*"$best"}"; return 0
-    fi
+  if [ -n "$name" ] && is_uuid "$2"; then
+    case "$1" in
+      *" --session-id $2"|*" --resume $2") printf '%s --name %s\n' "$1" "$(shq "$name")"; return 0 ;;
+    esac
   fi
   printf '%s\n' "$1"
 }

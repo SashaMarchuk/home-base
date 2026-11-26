@@ -163,7 +163,7 @@ cmd_thaw() {
     if [ "$rc" = 6 ]; then thaw_mark "$sid" queued:worker-cap; echo "QUEUED $sid: the worker cap is reached"; continue; fi
     [ "$rc" = 0 ] || { echo "SKIP $sid: the registry could not be written"; continue; }
     win=$(window_for_group "$p" "$(survey_json)")
-    out=$( launch_tab "$sid" "$line $(shq "$msg")" "$sid" "$win" ) || {
+    out=$( launch_tab "$sid" "$line" "$sid" "$win" "" "$(shq "$msg")" ) || {
       thaw_mark "$sid" failed:open; echo "FAILED $sid: the tab did not open"; continue; }
     tty=$(printf '%s' "$out" | awk '{ print $2 }')
     if [ "$win" = new ]; then

@@ -362,7 +362,7 @@ EOF
     if [ "$rc" = 7 ]; then echo "SKIP $sid: another run reopened, adopted or closed it meanwhile"; continue; fi
     [ "$rc" = 0 ] || { echo "SKIP $sid: the registry could not be written"; continue; }
     win=$(window_for_group "$p" "$(survey_json)")
-    out=$( launch_tab "$sid" "$line $(shq "$m")" "$sid" "$win" ); rc=$?
+    out=$( launch_tab "$sid" "$line" "$sid" "$win" "" "$(shq "$m")" ); rc=$?
     if [ "$rc" != 0 ]; then
       tty=$(printf '%s' "$out" | awk '{ print $2 }')
       if [ "$rc" = 5 ]; then
