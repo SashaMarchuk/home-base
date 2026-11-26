@@ -819,6 +819,12 @@ printf '#!/bin/sh\npwd > "%s/claude-cwd"; printf "%%s\\n" "$@" > "%s/claude-args
 check "thaw --issue: the launched line runs no text of the folder name" [ ! -e "$T/PWNED" ] && [ ! -e "$EVIL/PWNED" ]
 check "thaw --issue: the launched line starts claude in that folder" [ "$(cat "$T/claude-cwd" 2>/dev/null)" = "$(cd "$EVIL" && pwd -P)" ]
 check "thaw --issue: claude gets the name as one argument" [ "$(sed -n 6p "$T/claude-args" 2>/dev/null)" = "Orchestrator $DOT evil --resume $S1; touch PWNED; #" ]
+# a snapshot entry with a name and no registry entry keeps that name, not the default
+reset "${FKEYS[@]}"; transcript work "$S1"; fissue 10 work "claude --resume $S1"
+jq '.body |= sub("\"group\":\"g1\""; "\"group\":\"g1\",\"role\":\"worker\",\"issue\":8,\"name\":\"home #8 fix the sweep\"")' \
+  "$GH_STUB_DIR/test__home/issues/10.json" > "$T/i10" && mv "$T/i10" "$GH_STUB_DIR/test__home/issues/10.json"
+ts thaw --issue test/home#10 >/dev/null 2>&1
+check "thaw: a snapshot name is kept when the registry entry is gone" grep -qF -- "--resume $S1 --name 'home #8 fix the sweep' 'You were resumed." <(launch_of "$S1")
 
 # 6. --window <group> refuses a window shared with another group
 reset "${FKEYS[@]}"; live ttyw1 801 "$W1" w7 "$S1"; live ttyw2 802 "$W2" w7 "$S2"

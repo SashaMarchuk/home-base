@@ -48,7 +48,8 @@ thaw_reserve() { # thaw_reserve <entry json> <resume line> [lost]: registry entr
   else
     reg_write --argjson e "$(printf '%s' "$e" | jq -c --arg o "$(now_utc)" --arg r "$2" \
       '{session_id, tty: null, pid: null, cwd, issue, resume: $r, opened: $o, closed: null, role: (.role // "owner"),
-        tab: null, match: .session_id, group, group_from, adopted: (.adopted // false)}')" '. + [$e]'
+        tab: null, match: .session_id, group, group_from, adopted: (.adopted // false)}
+       + (if (.name // "") == "" then {} else {name} end)')" '. + [$e]'
   fi
   rc=$?
   reg_unlock
