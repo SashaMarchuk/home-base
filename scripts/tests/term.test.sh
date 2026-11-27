@@ -169,22 +169,51 @@ reset; new_tab; : > "$(tabdir "$TTY")/busy"
 check "r3 busy turn -> timeout" [ "$(rc_of ts send "$TTY" hi --timeout 1)" = 5 ]
 check "r3 nothing typed while busy" [ -z "$(keys)" ]
 
-# ---------------------------------------------------------------- rule 4: heads-up dismissed first
+# ---------------------------------------------------------------- rule 4: a heads-up notice is not a blocker
+notice() { printf 'Heads up \xc2\xb7 a hint from a plugin\n  1: Learn more   2: Knew this already   0: Dismiss\n' > "$(tabdir "$TTY")/headsup"; }
+reset; new_tab; notice
+check "r4 notice + empty box -> sent" ts send "$TTY" hello --timeout 2
+check "r4 text submitted with the notice shown" [ "$(sent)" = hello ]
+check "r4 no 0 typed" not has_key 'type:0'
+check "r4 the notice is still there" [ -f "$(tabdir "$TTY")/headsup" ]
+check "r4 no key went to the notice" [ ! -f "$(tabdir "$TTY")/notice-keys" ]
+reset; new_tab; notice
+check "r4 notice + empty box -> state idle" [ "$(ts state "$TTY")" = idle ]
+reset; new_tab; notice; put box "half written"
+check "r4 notice + draft -> state draft" [ "$(ts state "$TTY")" = draft ]
+check "r4 notice + draft -> send waits, nothing sent" [ "$(rc_of ts send "$TTY" hello --timeout 1)" = 5 ]
+check "r4 notice + draft: draft kept" [ "$(cat "$(tabdir "$TTY")/box")" = "half written" ]
+reset; new_tab; notice; : > "$(tabdir "$TTY")/busy"
+check "r4 notice + running turn -> state busy" [ "$(ts state "$TTY")" = busy ]
+check "r4 notice + running turn -> send waits" [ "$(rc_of ts send "$TTY" hello --timeout 1)" = 5 ]
+check "r4 notice + running turn: nothing typed" [ -z "$(keys)" ]
+reset; new_tab; notice; dialog 1
+check "r4 notice + dialog -> state dialog" [ "$(ts state "$TTY")" = dialog ]
+for d in 0 1 2; do
+  reset; new_tab; notice
+  check "r4 text starting with $d + notice -> sent whole" ts send "$TTY" "$d of 3 done" --timeout 2
+  check "r4 text starting with $d: no key went to the notice" [ ! -f "$(tabdir "$TTY")/notice-keys" ]
+  check "r4 text starting with $d: the submitted line holds the whole text" [ "$(sent | sed 's/^ //')" = "$d of 3 done" ]
+done
+raw_type() { /bin/bash -c 'TERM_SH_LIB=1; . "$0"; be_type "$1" "" "$2"' "$TERM_SH" "$TTY" "$1"; }
+reset; new_tab; notice; raw_type "0 of 3"
+check "r4 must-fail: a digit typed bare into the empty box goes to the notice" [ "$(cat "$(tabdir "$TTY")/notice-keys")" = 0 ]
+check "r4 must-fail: and is lost from the text" [ "$(cat "$(tabdir "$TTY")/box")" = " of 3" ]
 reset; new_tab
-printf 'Heads up: something changed\n  0: Dismiss\n' > "$(tabdir "$TTY")/headsup"
-check "r4 heads-up -> sent" ts send "$TTY" hello --timeout 2
-check "r4 dismissed with 0 before typing" [ "$(keys | head -1)" = "type:0" ]
-check "r4 text sent after dismiss" [ "$(sent)" = hello ]
+check "r4 text starting with a digit, no notice -> no leading space" ts send "$TTY" "7 files" --timeout 2
+check "r4 no notice: line as given" [ "$(sent)" = "7 files" ]
 reset; new_tab
 printf 'Heads up: just words in the output\n' > "$(tabdir "$TTY")/body"
 check "r4 plain words are not a notice" ts send "$TTY" hello --timeout 2
 check "r4 no 0 typed without a notice" not has_key 'type:0'
-
-reset; new_tab
-printf 'old output line\n  0: Dismiss\n' > "$(tabdir "$TTY")/body"
-check "r4 notice that does not go away -> refused" [ "$(rc_of ts send "$TTY" hello --timeout 2)" = 3 ]
-check "r4 dismissed once only" [ "$(keys | grep -c 'type:0')" = 1 ]
-check "r4 stray 0 taken back" [ -z "$(cat "$(tabdir "$TTY")/box")" ]
+reset; new_tab --issue 12; issue 12 final; notice
+check "r4 close with a notice shown" ts close "$TTY" --issue 12
+check "r4 close: /exit typed, no 0" [ "$(sent | head -1)" = /exit ]
+check "r4 close: no 0 typed" not has_key 'type:0'
+reset; new_tab --issue 21; notice
+check "r4 park with a notice shown" ts park "$TTY"
+check "r4 park: no 0 typed" not has_key 'type:0'
+check "r4 park: session exited" not alive "$PID"
 
 # ---------------------------------------------------------------- rule 5: ghost probe
 reset; new_tab; put ghost "try running the tests"
@@ -434,7 +463,7 @@ check "finished: a suggestion is unsure:box too (only close probes)" untouched_b
 check "finished: close accepts it after its own probe" ts close "$TTY"
 reset; new_tab --issue 12; issue 12 final
 printf 'Heads up: something changed\n  0: Dismiss\n' > "$(tabdir "$TTY")/headsup"
-check "finished: a notice -> unsure:notice, not dismissed" untouched_by_finished unsure:notice
+check "finished: a notice over an empty box -> closable" untouched_by_finished closable
 check "finished: the notice is still there" [ -f "$(tabdir "$TTY")/headsup" ]
 reset; new_tab --issue 12; issue 12 final; put mode shell
 check "finished: no input box on a live session -> unsure:no-box" untouched_by_finished unsure:no-box

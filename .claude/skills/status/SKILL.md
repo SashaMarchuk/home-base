@@ -13,7 +13,7 @@ Read only: the status itself writes nothing, and uses no tool beyond `scripts/ho
 4. Issues labelled `dreams` are already skipped (an open PR labelled `dreams` goes under **Needs you**: its proposals wait for the owner's review). Group, in this order, one line per issue (`<home name>#<n> <title>`, plus why when it needs the owner):
    - **Needs you**: `question` lines. Say the question in plain words.
    - **Only you can do**: `blocked` whose reason is an owner action (pay, sign in, approve).
-   - **Running**: `claimed`, with the home's `live` sessions; a `stopped?` session (its process gone, one signal only) is said once as "may have stopped", never as finished; a `lost` session (marked by `term.sh reconcile`: its tab and process are gone) is said as lost, with `term.sh reopen --lost --dry-run` as the way back.
+   - **Running**: `claimed`, with the home's `live` sessions, each named by its tab title (`title` in `scripts/term/term.sh survey --json`) next to any id; a `stopped?` session (its process gone, one signal only) is said once as "may have stopped", never as finished; a `lost` session (marked by `term.sh reconcile`: its tab and process are gone) is said as lost, with `term.sh reopen --lost --dry-run` as the way back.
    - **Frozen**: `frozen`, the open issues whose title starts with `Freeze ` (one per freeze of sessions). One line each, from that issue's body: how many sessions it holds and how many of them hold an open question of the owner (the rows of its table whose open question is not `-`). Not listed again under Parked.
    - **Parked**: `parked`.
    - **Can close**: `review` (`status:review` and `needs-summary`).

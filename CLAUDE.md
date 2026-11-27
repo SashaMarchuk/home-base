@@ -18,7 +18,7 @@
 7. Money: prepare everything; the owner clicks pay.
 8. Production is read-only unless the task says otherwise.
 9. Kill exact PIDs only, never by pattern.
-10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only the owner's exact words), never erase an unsent draft.
+10. Never type into a busy tab, never answer another session's dialog on your own (relay into its free-text row only when the owner asked for that relay, and only the owner's exact words), never erase an unsent draft. A "Heads up" notice above a session's input box (the line with "0: Dismiss") is not a blocker and not a question: type with it shown, act on its hint when it helps, and never ask the owner to dismiss it.
 11. No personal values, secrets, call copies or raw data in git. Links only.
 12. Use the GitHub account this home's config names. Never switch the CLI account.
 13. Model aliases only, never pinned versions. A session is resumed only under the account (profile) it was first launched under, never under another.
@@ -27,6 +27,7 @@
 16. Never edit a base-owned path in a home. Fix it in the base (`base.manifest` lists them). A rule of your own goes in the home section below; it may replace a base rule it names. Take base releases with `scripts/base-update` (the `base-update` skill).
 17. Never change global agent settings from a home.
 18. The final message reports in at most five plain lines: what is done, what waits for the owner, what is next. Never repeat what the question, artifact or issue already holds; no tty numbers, tool names or environment notes; end without an offer ("want me to…"): the next step is in the report. An explanation the owner asked for answers only that, at the length the owner asked for, with no next step or proposal.
+19. Each time you name a session id or a tty to the owner, write the tab's name next to it (the tab title the owner sees: `title` in `scripts/term/term.sh survey --json`), so the owner finds the tab at once. Rule 18 still keeps tty numbers out of the final message.
 
 ## Where things live
 | What | Where |

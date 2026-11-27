@@ -4,6 +4,17 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.4.0] - 2026-11-27
+
+### Changed
+- Terminal helpers: a "Heads up" notice above a session's input box (the line with "0: Dismiss") is no longer a blocker. `term.sh state` reports the state under it (the word `headsup` is gone), `send`, `park`, `close` and `freeze` type with it shown and never press 0, and `finished` judges the box under it (`unsure:notice` is gone). A text that starts with a digit gets one leading space while a notice shows, so the notice never takes that key (HOME-489).
+- `term.sh regroup --dry-run` also plans a tab out of a window it shares with live sessions of another group or place, to a new window (HOME-491).
+- `CLAUDE.md` base block: rule 10 says orchestrators never ask the owner to dismiss a notice; new rule 19: the tab's name goes next to each session id or tty named to the owner. The orchestrate and status skills say the same and how an orchestrator gets its name.
+
+### Added
+- `term.sh survey --json` gives each tab its `title`: the tab title the owner sees, without the status glyph and " (claude)". For display only, never a target (HOME-490).
+- OpenSpec change `notice-and-tab-titles`.
+
 ## [1.3.0] - 2026-11-26
 
 ### Added

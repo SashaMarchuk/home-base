@@ -422,10 +422,21 @@ cmd_regroup() {
   need_helpers
   rows=$(survey_json)
   # the group's window: the one holding most of its live tabs (as open and thaw pick it); only registered live tabs move
+  # A window shared with live sessions of another group or place that stay there (tabs this home did not open count
+  # by their cwd's group; a registered tab planned to leave does not count) is no group's window: its registered
+  # tabs go to a new window ("-> new").
   plan=$(printf '%s\n' "$rows" | jq -sr '
     [.[] | select(.registered and (.registry_stale | not) and (.place // .group) != null) | . + {k: (.place // .group)}] as $t
     | ($t | group_by(.k) | map({key: .[0].k, value: (group_by(.window) | map({w: .[0].window, n: length}) | sort_by(-.n) | .[0].w)}) | from_entries) as $win
-    | $t[] | select(.window != $win[.k]) | "MOVE \(.tty) \(.session_id // "-") group \(.k): window \(.window) -> \($win[.k])"')
+    | [$t[] | select(.window != $win[.k]) | .tty] as $leaving
+    | [.[] | select(.kind != "shell" and (.place // .group) != null) | select(.tty as $y | $leaving | index($y) | not)
+        | {window, k: (.place // .group)}] as $all
+    | $t[] | . as $r
+    | ([$all[] | select(.window == $win[$r.k] and .k != $r.k) | .k] | unique) as $others
+    | (if ($others | length) > 0 then "new" else $win[.k] end) as $to
+    | select(.window != $to)
+    | "MOVE \(.tty) \(.session_id // "-") group \(.k): window \(.window) -> \($to)"
+      + (if ($others | length) > 0 then " (window \($win[.k]) also holds \($others | join(", ")))" else "" end)')
   if [ -z "$plan" ]; then echo "every registered tab is in its group's window"; return 0; fi
   printf '%s\n' "$plan"
   [ "$dry" = 1 ] && return 0

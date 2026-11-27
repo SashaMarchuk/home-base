@@ -7,7 +7,7 @@
 #                                    --name: TEXT, else the default name, see "Session names" in sessions.sh)
 #                                    -> prints "<session_id> <tty> <pid>"
 #   term.sh screen <target> [--lines N]
-#   term.sh state  <target>          -> gone | dialog | headsup | busy | bg | draft | idle | shell
+#   term.sh state  <target>          -> gone | dialog | busy | bg | draft | idle | shell
 #   term.sh send   <target> <text> [--after "<check command>"] [--timeout S]
 #   term.sh send   <target> --relay "<the owner's own words>"
 #   term.sh send   <target> --cancel-dialog
@@ -30,11 +30,14 @@
 #                                    -> reopens lost sessions after a reboot, one window per group
 #   term.sh forget <session_id> [--reason TEXT]
 #                                    -> closes a lost entry that must not be reopened (types nothing)
-#   term.sh regroup [--dry-run]      -> the plan to move registered tabs into their group's window; moving is
-#                                       not supported by the iTerm2 AppleScript backend, so nothing moves
+#   term.sh regroup [--dry-run]      -> the plan to move registered tabs into their group's window, and out of
+#                                       a window that also holds live sessions of another group or place ("-> new");
+#                                       moving is not supported by the iTerm2 AppleScript backend, so nothing moves
 #   term.sh survey --json            -> one JSON object per live tab: tty, window, tab, pid, kind (claude,
 #                                       codex or shell), session_id and where it came from, profile, status,
-#                                       cwd, registered, issue, role, resume line (null = resume: manual), caller
+#                                       cwd, registered, issue, role, resume line (null = resume: manual), caller,
+#                                       title (the tab title the owner sees, without the status glyph and
+#                                       " (claude)"; for display next to an id only, never a target)
 #
 # A tab counts as a session when a claude process runs on it. A Codex tab (a codex process) has a
 # thread id only while its record matches the live tab (see sessions.sh); then park, resume and
@@ -54,7 +57,7 @@
 # otherwise; park with --adopt needs the session's id (from its command line, --session-id or --resume,
 # or from its session file, see sessions.sh) and a resume line, and a home-log comment of that session's run on the issue (run
 # 'scripts/home-log start <n> --run-id <session id>' first). The tab is recorded in the registry
-# with "adopted": true and no issue before the first keystroke (a notice dismissal, a ghost probe
+# with "adopted": true and no issue before the first keystroke (a ghost probe
 # or the exit command); the issue is added only after the park checkpoint or the close's
 # finished-issue check succeeded, so a failed call leaves the tab bound to no issue.
 #
@@ -64,7 +67,9 @@
 #  1 tabs are addressed by tty and verified against the recorded tab id and pid
 #  2 every file it writes is under <home>/.local/
 #  3 send waits for no dialog, no running turn and an empty input box
-#  4 a "Heads up" notice ("0: Dismiss") is dismissed first
+#  4 a "Heads up" notice ("0: Dismiss") above the box is not a blocker: it is never dismissed, state reads
+#    the screen under it, and send, park, close and freeze type into the empty box with it shown. Its digit
+#    keys act only on an empty box, so a text that starts with a digit gets a leading space first
 #  5 ghost probe: a box with text gets one probe character; exactly that character back means
 #    the text was a suggestion (cleared, then send); anything else is a real draft (kept, wait)
 #  6 after Enter the screen is re-read; a swallowed Enter is pressed once more, never twice
@@ -281,6 +286,25 @@ return out
 OSA
 ) || return 1
   printf '%s\n' "$out" | sed 's#/dev/##'
+}
+
+be_titles() { # -> "<tab id> TAB <title>" for every live session, the title as iTerm2 shows it; rc 1 when unreadable
+  local run
+  run=$(osascript -e 'application "iTerm2" is running' 2>/dev/null) || return 1
+  [ "$run" = true ] || return 0
+  osascript <<'OSA'
+set out to ""
+tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        set out to out & (id of s) & tab & (name of s) & linefeed
+      end repeat
+    end repeat
+  end repeat
+end tell
+return out
+OSA
 }
 
 be_front_window() { # -> id of the frontmost window
@@ -644,8 +668,10 @@ ghost_probe() { # ghost_probe <current box>: rc 0 = suggestion (box now empty), 
 submit() { # submit <text>: type into an empty box, press Enter, re-check once (rule 6)
   local want scr b
   want=$(norm "$1"); want=${want:0:30}
-  local i
-  type_text "$1"
+  local i lead=""
+  # a "Heads up" notice takes a digit typed into the empty box as its choice (rule 4): a space goes first
+  case "$1" in [0-9]*) has_headsup "$(screen_now)" && lead=" " ;; esac
+  type_text "$lead$1"
   # a real terminal can redraw the box seconds after the keys: look a few times before deciding
   for i in 1 2 3 4 5; do
     scr=$(screen_now)
@@ -711,16 +737,6 @@ trivial_check() { # trivial_check <command>: rc 0 when the check proves nothing 
   local c
   c=$(printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/^ *//; s/ *$//; s/  */ /g')
   case "$c" in ''|true|:|'exit 0'|echo|'echo '*|'test 1') return 0 ;; esac
-  return 1
-}
-
-dismiss_headsup() { # one "0" press; if the notice stays, take the 0 back and report
-  local scr b
-  be_type "$T_TTY" "$T_TAB" "0" || return 1
-  settle
-  scr=$(screen_now)
-  has_headsup "$scr" || return 0
-  b=$(box_text "$scr") && [ "$b" = 0 ] && { be_key "$T_TTY" "$T_TAB" bs; settle; }
   return 1
 }
 
@@ -990,7 +1006,6 @@ cmd_screen() {
 state_of() { # state_of <screen>
   local b n
   if has_dialog "$1"; then echo dialog; return; fi
-  if has_headsup "$1"; then echo headsup; return; fi
   if is_busy "$1"; then echo busy; return; fi
   b=$(box_text "$1") || { echo shell; return; }
   n=$(bg_count "$1")
@@ -1043,10 +1058,6 @@ cmd_send() {
         return 0
       fi
       be_sleep "$POLL"; continue
-    fi
-    if has_headsup "$scr"; then
-      dismiss_headsup || die 3 "the notice on $T_TTY did not go away after one dismiss; nothing sent"
-      continue
     fi
     if is_busy "$scr"; then be_sleep "$POLL"; continue; fi
     if ! b=$(box_text "$scr"); then be_sleep "$POLL"; continue; fi
@@ -1178,11 +1189,6 @@ cmd_close() {
     codex_same_thread
     word=$(exit_word) || exit $?
     scr=$(screen_now)
-    if has_headsup "$scr"; then
-      adopt_record
-      dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not closing"
-      scr=$(screen_now)
-    fi
     has_dialog "$scr" && die 3 "a question is open on $T_TTY; not closing"
     is_busy "$scr" && die 3 "a turn is running on $T_TTY; not closing"
     n=$(bg_count "$scr")
@@ -1234,11 +1240,6 @@ cmd_park() {
     esac
   fi
   scr=$(screen_now)
-  if has_headsup "$scr"; then
-    adopt_record
-    dismiss_headsup || die 3 "the notice on $T_TTY did not go away; not parking"
-    scr=$(screen_now)
-  fi
   if has_dialog "$scr"; then
     [ "$T_KIND" = codex ] && die 3 "a dialog is open on the Codex tab $T_TTY; not parking (Esc could answer it)"
     dialog=1
@@ -1310,7 +1311,6 @@ EOF
     ct=$(codex_thread "$tty" "$pid") && [ "${ct%%"$US"*}" = "$sid" ] || { F_VERDICT=keep:codex-no-thread; return 0; }
   fi
   scr=$(be_screen "$tty" "$live" 2>/dev/null) || { F_VERDICT=unsure:screen; return 0; }
-  has_headsup "$scr" && { F_VERDICT=unsure:notice; return 0; }
   has_dialog "$scr" && { F_VERDICT=keep:dialog; return 0; }
   is_busy "$scr" && { F_VERDICT=keep:busy; return 0; }
   n=$(bg_count "$scr")

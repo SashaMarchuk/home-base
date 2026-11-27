@@ -89,6 +89,19 @@ check "identity: status from the session file" [ "$(printf '%s' "$out" | jq -r .
 check "identity: resume keeps profile and model, drops the prompt" \
   [ "$(printf '%s' "$out" | jq -r .resume)" = "cd '$W1' && 'claude' -p 'work' --model 'opus' --resume $S1" ]
 check "identity: window column" [ "$(printf '%s' "$out" | jq -r .window)" = w1 ]
+check "title: a tab without a title -> empty" [ "$(printf '%s' "$out" | jq -r .title)" = "" ]
+printf '\xe2\x9c\xb3 Orchestrator \xc2\xb7 home (claude)' > "$(tabdir ttya1)/title"
+check "title: the status glyph and the process name are dropped" [ "$(sj ttya1 | jq -r .title)" = "Orchestrator $(printf '\xc2\xb7') home" ]
+printf '\xe2\xa0\x82 home #82 (claude)' > "$(tabdir ttya1)/title"
+check "title: a spinner glyph is dropped too" [ "$(sj ttya1 | jq -r .title)" = "home #82" ]
+printf 'Issue #71 via orchestrate skill (claude)' > "$(tabdir ttya1)/title"
+check "title: a title with no glyph keeps its first word" [ "$(sj ttya1 | jq -r .title)" = "Issue #71 via orchestrate skill" ]
+printf '\xe9\xa1\xb9\xe7\x9b\xae #82 (claude)' > "$(tabdir ttya1)/title"
+check "title: a leading CJK word is kept" [ "$(sj ttya1 | jq -r .title)" = "$(printf '\xe9\xa1\xb9\xe7\x9b\xae') #82" ]
+printf '\xe2\x97\x91 sf-home#73 release (claude)' > "$(tabdir ttya1)/title"
+check "title: a shape glyph is dropped" [ "$(sj ttya1 | jq -r .title)" = "sf-home#73 release" ]
+printf 'tmux' > "$(tabdir ttya1)/title"
+check "title: a plain title stays as it is" [ "$(sj ttya1 | jq -r .title)" = tmux ]
 reset launch.profile_flag=-p
 hand_tab ttya1 501 "claude --dangerously-skip-permissions --add-dir /x --model claude-opus-x --resume $S2" "$W1"
 out=$(sj ttya1)
@@ -391,6 +404,14 @@ check "caller: inside a session whose tab is not found -> --all exits 3" [ "$(CL
 check "caller: nothing touched" nokeys ttyw1 ttyw2 ttyw3
 check "caller: no snapshot written" [ -z "$(snapf)" ]
 check "caller: explicit targets still allowed" [ "$(CLAUDE_CODE_SESSION_ID=$S4 rc_of ts freeze ttyw1 --hard)" = 0 ]
+
+# a "Heads up" notice is not a blocker: the tab is frozen with it shown, and it is never dismissed
+reset "${FKEYS[@]}"; live ttyn1 821 "$W1" w7 "$S1"
+printf 'Heads up \xc2\xb7 a hint\n  1: Learn more   0: Dismiss\n' > "$(tabdir ttyn1)/headsup"
+check "notice: freeze --hard exits 0" [ "$(rc_of ts freeze ttyn1 --hard)" = 0 ]
+check "notice: the tab exited with the notice shown" [ "$(outcome ttyn1)" = exited ]
+check "notice: no 0 typed" not grep -qx 'type:0' <(keys ttyn1)
+check "notice: the notice was not dismissed" [ -f "$(tabdir ttyn1)/headsup" ]
 
 # non-claude tabs and sessions that cannot be reopened
 setup_main

@@ -79,7 +79,7 @@ secs_cfg() { local v; v=$(cfg "$1" "$2"); case "$v" in ''|*[!0-9]*) die 3 "$1 mu
 
 agree() { # agree <screen state> <session file status>: the two signals say the same
   case "$1:$2" in
-    idle:idle|draft:idle|bg:idle|headsup:idle|busy:busy|dialog:waiting) return 0 ;;
+    idle:idle|draft:idle|bg:idle|busy:busy|dialog:waiting) return 0 ;;
   esac
   return 1
 }
@@ -193,7 +193,7 @@ record_adopted() { # record_adopted <entry json>: a tab this home did not open e
 # ------------------------------------------------------------------ acting on one tab (phase C)
 
 freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints the outcome; rc 0 exited, 5 linger
-  local e=$1 grace end scr st fs b escaped=0 dismissed=0 live
+  local e=$1 grace end scr st fs b escaped=0 live
   trap reg_unlock EXIT
   T_TTY=$(printf '%s' "$e" | jq -r .tty); T_TAB=$(printf '%s' "$e" | jq -r .tab)
   T_PID=$(printf '%s' "$e" | jq -r .pid); T_SID=$(printf '%s' "$e" | jq -r .session_id)
@@ -213,11 +213,6 @@ freeze_tab_hard() { # freeze_tab_hard <entry json>: run in a subshell; prints th
       be_sleep "$POLL"; continue
     fi
     case "$st" in
-      headsup)
-        [ "$dismissed" = 0 ] || { echo "kept:headsup"; return 3; }
-        dismissed=1
-        dismiss_headsup || { echo "kept:headsup"; return 3; }
-        continue ;;
       busy)
         [ $SECONDS -ge $end ] && { echo "kept:busy"; return 3; }   # busy=wait: never interrupted
         be_sleep "$POLL"; continue ;;
@@ -258,7 +253,7 @@ soft_done() { # soft_done <checkpoint path> <nonce>: the session wrote its file,
 }
 
 freeze_tab_soft() { # freeze_tab_soft <entry json> <checkpoint path> <nonce>: in a subshell; prints the outcome
-  local e=$1 cp=$2 nonce=$3 end scr st fs b sent=0 dismissed=0 probed=""
+  local e=$1 cp=$2 nonce=$3 end scr st fs b sent=0 probed=""
   trap reg_unlock EXIT
   T_TTY=$(printf '%s' "$e" | jq -r .tty); T_TAB=$(printf '%s' "$e" | jq -r .tab)
   T_PID=$(printf '%s' "$e" | jq -r .pid); T_SID=$(printf '%s' "$e" | jq -r .session_id)
@@ -270,9 +265,6 @@ freeze_tab_soft() { # freeze_tab_soft <entry json> <checkpoint path> <nonce>: in
     scr=$(be_screen "$T_TTY" "$T_TAB") || { echo "kept:gone"; return 4; }
     st=$(state_of "$scr")
     fs=$(session_of_pid "$T_PID" | cut -d"$US" -f2)
-    if [ "$st" = headsup ] && [ "$fs" = idle ] && [ "$dismissed" = 0 ]; then
-      dismissed=1; dismiss_headsup || { echo "kept:headsup"; return 3; }; continue
-    fi
     if [ "$st" = draft ] && [ "$fs" = idle ]; then
       b=$(box_text "$scr")
       if [ "$b" != "$probed" ]; then
