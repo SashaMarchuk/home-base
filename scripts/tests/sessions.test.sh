@@ -96,6 +96,10 @@ printf '\xe2\xa0\x82 home #82 (claude)' > "$(tabdir ttya1)/title"
 check "title: a spinner glyph is dropped too" [ "$(sj ttya1 | jq -r .title)" = "home #82" ]
 printf 'Issue #71 via orchestrate skill (claude)' > "$(tabdir ttya1)/title"
 check "title: a title with no glyph keeps its first word" [ "$(sj ttya1 | jq -r .title)" = "Issue #71 via orchestrate skill" ]
+printf '\xe9\xa1\xb9\xe7\x9b\xae #82 (claude)' > "$(tabdir ttya1)/title"
+check "title: a leading CJK word is kept" [ "$(sj ttya1 | jq -r .title)" = "$(printf '\xe9\xa1\xb9\xe7\x9b\xae') #82" ]
+printf '\xe2\x97\x91 sf-home#73 release (claude)' > "$(tabdir ttya1)/title"
+check "title: a shape glyph is dropped" [ "$(sj ttya1 | jq -r .title)" = "sf-home#73 release" ]
 printf 'tmux' > "$(tabdir ttya1)/title"
 check "title: a plain title stays as it is" [ "$(sj ttya1 | jq -r .title)" = tmux ]
 reset launch.profile_flag=-p

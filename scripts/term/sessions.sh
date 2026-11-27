@@ -453,8 +453,9 @@ EOF
 }
 
 tab_title() { # tab_title <tab id> <be_titles output> -> the title the owner sees, without the status glyph and " (claude)"
+  # The glyph: one leading character of the sets Claude Code draws (a spinner in Braille, a dingbat, a shape, a dot)
   printf '%s\n' "$2" | awk -F '\t' -v t="$1" '$1 == t && !f { sub(/^[^\t]*\t/, ""); print; f = 1 }' |
-    perl -CSD -pe 's/^[\x{2000}-\x{2BFF}\x{2E00}-\x{FFFF}]+\s+//; s/\s+\([A-Za-z0-9._-]+\)\s*$//; s/[\x00-\x1f\x7f]//g'
+    perl -CSD -pe 's/^[\x{2800}-\x{28FF}\x{2700}-\x{27BF}\x{25A0}-\x{25FF}\x{2022}\x{00B7}*]\s+//; s/\s+\([A-Za-z0-9._-]+\)\s*$//; s/[\x00-\x1f\x7f]//g'
 }
 
 survey_json() { # one JSON line per live tab
