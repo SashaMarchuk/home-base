@@ -8,11 +8,13 @@
 #   placeholder  a hint shown whenever the box is empty (it comes back after the text is deleted)
 #   dialog  an open dialog (rows "N. label"); free-text focus in "freetext", typed text in "answer"
 #   headsup a notice with "0: Dismiss" busy  a running turn ("esc to interrupt")
+#           (a digit typed into the empty box goes to the notice, logged in notice-keys; 0 removes it)
 #   status  status line under the box  swallow  how many next Enters are lost
 #   linger  the process survives /exit pid  the process of the session
 #   drop-typing  typed text is lost (a silently dropped write)
 #   sticky-dialog  Esc leaves the dialog open
 #   window  the window id of the tab (default w1)
+#   title   the tab title as the terminal shows it (survey --json "title")
 #   on-submit  a script run with the submitted line as $1 (stands in for the session acting on it)
 #   on-key     a script run with the key name (cr, esc, bs) as $1 after the key took effect
 #   on-screen  a script run before each screen read (stands in for a session that changes on its own)
@@ -81,9 +83,19 @@ be_type() {
     esac
     return 0
   fi
-  if [ "$mode" = claude ] && [ -f "$d/headsup" ] && [ "$3" = 0 ]; then rm -f "$d/headsup"; return 0; fi
+  local txt=$3 c
+  if [ "$mode" = claude ] && [ -f "$d/headsup" ] && [ -z "$(fake_get "$1" box)" ]; then
+    # the notice takes a digit typed into the empty box as its choice ("N: label"); 0 dismisses it
+    c=${txt:0:1}
+    case "$c" in
+      [0-9]) if grep -q "$c: " "$d/headsup"; then
+               printf '%s\n' "$c" >> "$d/notice-keys"; [ "$c" = 0 ] && rm -f "$d/headsup"; txt=${txt:1}
+             fi ;;
+    esac
+    [ -n "$txt" ] || return 0
+  fi
   rm -f "$d/ghost"
-  fake_put "$1" box "$(fake_get "$1" box)$3"
+  fake_put "$1" box "$(fake_get "$1" box)$txt"
 }
 
 be_key() {
@@ -176,6 +188,15 @@ be_open() { # mirrors the real launch: the tab starts with "<shell> -lic '<wrapp
   fi
   [ -f "$TERM_FAKE_DIR/on-open" ] && /bin/bash "$TERM_FAKE_DIR/on-open" "$tty" "$pid" "$line" >/dev/null 2>&1
   echo "fake-$n $tty $w"
+}
+
+be_titles() { # the tab's file "title" (none: an empty title)
+  local d
+  for d in "$TERM_FAKE_DIR"/tabs/*; do
+    [ -d "$d" ] || continue
+    [ "$(cat "$d/mode" 2>/dev/null)" = closed ] && continue
+    printf '%s\t%s\n' "$(cat "$d/tab" 2>/dev/null)" "$(cat "$d/title" 2>/dev/null)"
+  done
 }
 
 fake_window_live() { be_tabs | awk -v w="$1" '$3 == w { f = 1 } END { exit !f }'; }

@@ -363,8 +363,8 @@ live_entry() { # live_entry <tty> <tab id> <pid> -> the open registry entry that
     '[.[] | select(.tty == $t and .closed == null and (.tab == null or .tab == $tab) and ((.pid // "") | tostring) == $p)] | last // empty'
 }
 
-tab_json() { # tab_json <tab id> <tty> <window> <procs>: one JSON object for a live tab
-  local tab=$1 tty=$2 win=$3 procs=$4 name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
+tab_json() { # tab_json <tab id> <tty> <window> <procs> [title]: one JSON object for a live tab
+  local tab=$1 tty=$2 win=$3 procs=$4 title=${5:-} name pids n=0 pid="" kind=shell cmd="" cwd="" sid="" src=none
   local sf="" status="" prof="" pdir="" sname="" entry="" reg=false issue="" role="" adopted=false resume="" caller=false
   local group="" gfrom="" stale=false ct="" moved=""
   name=$(launch_name)
@@ -440,8 +440,8 @@ EOF
   jq -nc --arg tty "$tty" --arg win "$win" --arg tab "$tab" --arg pid "$pid" --arg kind "$kind" --argjson n "$n" \
     --arg cmd "$cmd" --arg sid "$sid" --arg src "$src" --arg prof "$prof" --arg pdir "$pdir" --arg status "$status" \
     --arg cwd "$cwd" --arg name "$sname" --argjson reg "$reg" --arg issue "$issue" --arg role "$role" \
-    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" --arg moved "$moved" --arg place "$(role_window "$role")" \
-    '{tty: $tty, window: $win, tab: $tab, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
+    --argjson adopted "$adopted" --arg resume "$resume" --argjson caller "$caller" --arg group "$group" --arg gfrom "$gfrom" --argjson stale "$stale" --arg moved "$moved" --arg place "$(role_window "$role")" --arg title "$title" \
+    '{tty: $tty, window: $win, tab: $tab, title: $title, pid: (if $pid == "" then null else ($pid | tonumber) end), kind: $kind,
       processes: $n, command: $cmd, session_id: (if $sid == "" then null else $sid end), id_from: $src,
       profile: $prof, profile_dir: $pdir, status: (if $status == "" then null else $status end), cwd: $cwd,
       name: $name, registered: $reg, issue: (if $issue == "" then null else ($issue | tonumber) end),
@@ -452,13 +452,19 @@ EOF
       registry_stale: $stale, moved_from: (if $moved == "" then null else $moved end)}'
 }
 
+tab_title() { # tab_title <tab id> <be_titles output> -> the title the owner sees, without the status glyph and " (claude)"
+  printf '%s\n' "$2" | awk -F '\t' -v t="$1" '$1 == t && !f { sub(/^[^\t]*\t/, ""); print; f = 1 }' |
+    perl -CSD -pe 's/^[\x{2000}-\x{2BFF}\x{2E00}-\x{FFFF}]+\s+//; s/\s+\([A-Za-z0-9._-]+\)\s*$//; s/[\x00-\x1f\x7f]//g'
+}
+
 survey_json() { # one JSON line per live tab
-  local procs tab tty win
+  local procs tab tty win titles
   find_caller
   procs=$(be_procs)
+  titles=$(be_titles 2>/dev/null) || titles=""
   while read -r tab tty win; do
     [ -n "$tty" ] || continue
-    tab_json "$tab" "$tty" "${win:-}" "$procs"
+    tab_json "$tab" "$tty" "${win:-}" "$procs" "$(tab_title "$tab" "$titles")"
   done <<EOF
 $(be_tabs)
 EOF

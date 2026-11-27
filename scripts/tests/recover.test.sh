@@ -450,6 +450,17 @@ check "regroup left the registry" cmp -s "$REG" "$T/reg.before"
 printf w1 > "$(tabdir ttyr3)/window"
 check "regroup: all in place -> exit 0" [ "$(rc_of ts regroup)" = 0 ]
 check "regroup: says so" grep -q "every registered tab is in its group's window" "$T/out"
+# a window shared with sessions of another group that stay there is no group's window
+reset
+live ttyr1 801 "$W1" "$S1" w1; hand_tab ttyr2 802 "claude --model opus" "$W2" w1
+ts adopt ttyr1 >/dev/null 2>&1
+check "regroup shared: --dry-run -> exit 0" [ "$(rc_of ts regroup --dry-run)" = 0 ]
+check "regroup shared: the g1 tab goes to a new window" [ "$(cat "$T/out")" = "MOVE ttyr1 $S1 group g1: window w1 -> new (window w1 also holds g2)" ]
+check "regroup shared: the tab this home did not open is not planned" not grep -q ttyr2 "$T/out"
+reset; live ttyr1 801 "$W1" "$S1" w1; hand_tab ttyr2 802 "-zsh" "$W2" w1 shell
+ts adopt ttyr1 >/dev/null 2>&1
+check "regroup shared: a plain shell tab does not count" [ "$(rc_of ts regroup --dry-run; cat "$T/out")" = "0
+every registered tab is in its group's window" ]
 
 echo "recover.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
