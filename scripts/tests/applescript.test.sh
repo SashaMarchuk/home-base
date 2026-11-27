@@ -33,6 +33,15 @@ for f in "$SRC"/scripts/term/*.sh; do
   if /bin/bash -n "$f" 2>/dev/null; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $(basename "$f") does not parse under /bin/bash"; fi
 done
 [ "$BLOCKS" -ge 5 ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL fewer AppleScript blocks found than expected ($BLOCKS)"; }
+# inside a tell iTerm2 block the word "tab" names iTerm2's tab class, not the tab character: a block that joins
+# text with "& tab &" writes the word "tab" (a separator goes in a variable set before the tell block)
+tab_word() { grep -qE '&[[:space:]]*tab[[:space:]]*&' "$1"; }
+for f in "$T"/*/*.applescript; do
+  [ -f "$f" ] || continue
+  if tab_word "$f"; then FAIL=$((FAIL + 1)); echo "FAIL $(basename "$(dirname "$f")"): block $(basename "$f") joins text with the word tab"; else PASS=$((PASS + 1)); fi
+done
+printf 'tell application "iTerm2"\n  set out to (id of s) & tab & (name of s)\nend tell\n' > "$T/tabword.applescript"
+tab_word "$T/tabword.applescript" && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL the tab-word check misses a bare tab"; }
 # the block that creates a tab: it starts the tab with its command, types nothing and gives the focus back;
 # no block ever activates the app
 creates_quietly() { # creates_quietly <block file>

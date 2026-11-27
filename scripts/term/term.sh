@@ -289,16 +289,18 @@ OSA
 }
 
 be_titles() { # -> "<tab id> TAB <title>" for every live session, the title as iTerm2 shows it; rc 1 when unreadable
+  # (the separator is set outside the tell block: inside it, "tab" names iTerm2's tab class)
   local run
   run=$(osascript -e 'application "iTerm2" is running' 2>/dev/null) || return 1
   [ "$run" = true ] || return 0
   osascript <<'OSA'
 set out to ""
+set sep to ASCII character 9
 tell application "iTerm2"
   repeat with w in windows
     repeat with t in tabs of w
       repeat with s in sessions of t
-        set out to out & (id of s) & tab & (name of s) & linefeed
+        set out to out & (id of s) & sep & (name of s) & linefeed
       end repeat
     end repeat
   end repeat
