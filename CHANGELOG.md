@@ -4,6 +4,11 @@ Every release of the base, newest first. The format follows [Keep a Changelog](h
 
 Take a release into your home with `scripts/base-update` (see "Take base updates" in the README).
 
+## [1.4.1] - 2026-11-27
+
+### Fixed
+- `term.sh survey --json` gave every tab an empty `title` on a real iTerm2: inside the tell block, AppleScript reads `tab` as iTerm2's tab class and wrote the word "tab" instead of a tab character. The separator is now set before the block. A new AppleScript check fails on a block that joins text with a bare `tab` (HOME-490).
+
 ## [1.4.0] - 2026-11-27
 
 ### Changed
